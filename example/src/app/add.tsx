@@ -53,7 +53,7 @@ export default function AddPlantScreen() {
     mutationFn: addPlant,
     onSuccess: (plant) => {
       queryClient.setQueryData<Plant[]>(['plants'], (old) =>
-        old ? [...old, plant] : old,
+        old ? [plant, ...old] : old,
       )
       void queryClient.invalidateQueries({ queryKey: ['plants'] })
       setForm(EMPTY)

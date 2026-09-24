@@ -47,7 +47,8 @@ function addPlant(input: NewPlant) {
     // Just watered: the next one is a full interval away.
     waterInDays: input.waterEveryDays,
   }
-  plants.push(plant)
+  // Newest first, like the list shows them.
+  plants.unshift(plant)
   return { status: 201, json: plant }
 }
 

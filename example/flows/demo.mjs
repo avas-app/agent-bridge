@@ -11,11 +11,6 @@ const plants = [
   { id: 's3', name: 'Cactus', species: 'Echinopsis', emoji: '🌵', waterInDays: 60 },
 ]
 
-const inbox = [
-  { id: 's1', icon: 'sparkles', tint: 'accent', title: 'Hello from your agent', body: 'Seeded by the agent in one call.', time: 'now', unread: true },
-  { id: 's2', icon: 'water', tint: 'danger', title: 'Orchid is 3 days late', body: 'Water it today.', time: 'now', unread: true },
-]
-
 export default async ({ step, call }) => {
   // Each HUD line goes out alongside the step's own call and carries the
   // previous step's round trip, so a step still costs one round trip.
@@ -45,15 +40,19 @@ export default async ({ step, call }) => {
   const t0 = performance.now()
 
   await shown('open Plants', 'router.navigate', '/')
-  await shown('seed plants', 'query.pin', ['plants'], plants)
-  expectOnScreen(await shown('overdue pill?', 'screen.findText', '3 days late'), 1)
   await shown('flag: Shop off', 'query.pin', ['flags'], { ...flags, shop: false })
   expectOnScreen(await shown('Shop tab gone?', 'screen.findText', 'Shop', { exact: true }), 0)
   await shown('dark mode', 'store.call', 'settings', 'setTheme', 'dark')
-  await shown('seed Inbox', 'query.pin', ['inbox'], inbox)
-  await shown('open Inbox', 'router.navigate', '/inbox')
-  expectOnScreen(await shown('agent message?', 'screen.findText', 'Seeded by the agent'), 1)
-  await shown('reset everything', 'bridge.restore')
+  await shown('tap +', 'screen.press', 'add-plant')
+  await shown('save empty form', 'screen.press', 'save-plant')
+  await shown('error shown?', 'screen.waitFor', 'Name is required')
+  await shown('type name', 'screen.fill', 'plant-name', 'Fiddle leaf fig')
+  await shown('type days', 'screen.fill', 'water-days', '7')
+  await shown('save', 'screen.press', 'save-plant')
+  await shown('new plant listed?', 'screen.waitFor', 'Fiddle leaf fig')
+  await shown('seed edge cases', 'query.pin', ['plants'], plants)
+  expectOnScreen(await shown('overdue pill?', 'screen.findText', '3 days late'), 1)
+  await shown('undo everything', 'bridge.restore')
 
   const wall = (performance.now() - t0) / 1000
   const summary = HOLD_MS
