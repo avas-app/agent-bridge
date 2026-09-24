@@ -32,6 +32,21 @@ Works on Expo (dev-tools socket) and on bare React Native (CDP over Metro). Dev 
 bun add -d @avasapp/agent-bridge   # or npm / yarn / pnpm
 ```
 
+### Teach your agent
+
+The package ships an agent skill that tells your agent when and how to drive the app. Add it to Claude Code, Cursor, Codex and other agents:
+
+```sh
+npx skills add avas-app/agent-bridge
+```
+
+In Claude Code you can install it as a plugin instead:
+
+```
+/plugin marketplace add avas-app/agent-bridge
+/plugin install agent-bridge@agent-bridge
+```
+
 ## In the app
 
 Mount the hook in a file that only runs in development. You choose every tool; adapters for common libraries are one import away.

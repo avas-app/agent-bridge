@@ -1,0 +1,30 @@
+{
+  "name": "agent-bridge",
+  "owner": {
+    "name": "Avas Enterprises"
+  },
+  "metadata": {
+    "description": "Agent skill for driving React Native and Expo dev builds with @avasapp/agent-bridge."
+  },
+  "plugins": [
+    {
+      "name": "agent-bridge",
+      "source": "./",
+      "strict": false,
+      "description": "Drive a running React Native or Expo dev build directly: see the screen, fill forms, press buttons, seed data, flip flags, navigate, mock the network and undo it all, in milliseconds per call.",
+      "homepage": "https://github.com/avas-app/agent-bridge",
+      "repository": "https://github.com/avas-app/agent-bridge",
+      "license": "MIT",
+      "keywords": [
+        "react-native",
+        "expo",
+        "testing",
+        "devtools"
+      ],
+      "category": "development",
+      "skills": [
+        "./skills/agent-bridge"
+      ]
+    }
+  ]
+}
