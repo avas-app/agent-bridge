@@ -1,6 +1,6 @@
 {
   "name": "@avasapp/agent-bridge",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Let coding agents drive a running React Native app directly: seed state, flip flags, navigate and check the screen in about a millisecond per call, with no taps.",
   "type": "module",
   "license": "MIT",
