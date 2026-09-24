@@ -1,6 +1,7 @@
 import { cdpTransport, type ToolDefinition, useAgentBridge } from '@avasapp/agent-bridge'
 import { expoTransport } from '@avasapp/agent-bridge/expo'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
+import { networkTools } from '@avasapp/agent-bridge/network'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { useQueryClient } from '@tanstack/react-query'
@@ -23,6 +24,7 @@ export function AgentBridge() {
       ...query,
       ...storeTools({ settings: useSettings }),
       ...routerTools(router),
+      ...networkTools(),
       ...hudTools,
       'app.reset': {
         description: 'Unpin every query and restore settings.',
