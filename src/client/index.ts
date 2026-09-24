@@ -1,8 +1,8 @@
 import type { DeviceInfo, ToolInfo } from '../shared/protocol'
-import { connectCdp } from './cdp'
-import type { Connection, TransportName } from './connection'
+import type { TransportName } from './connection'
 import { listCdpTargets, metroHost } from './discover'
-import { connectExpo, listExpoDevices } from './expo'
+import { listExpoDevices } from './expo'
+import { openConnection } from './open'
 
 export type ConnectOptions = {
   /** Metro's host:port. Defaults to $AGENT_BRIDGE_METRO, then localhost:8081. */
@@ -44,32 +44,8 @@ export type AgentBridge = {
 export async function connect(
   options: ConnectOptions = {},
 ): Promise<AgentBridge> {
-  const metro = metroHost(options.metro)
-  const want = options.transport ?? 'auto'
   const timeoutMs = options.timeoutMs ?? 10_000
-
-  let connection: Connection | undefined
-  let expoError: unknown
-  if (want !== 'cdp') {
-    try {
-      connection = await connectExpo(metro, options.device)
-    } catch (error) {
-      if (want === 'expo') throw error
-      expoError = error
-    }
-  }
-  if (!connection) {
-    try {
-      connection = await connectCdp(metro, options.device)
-    } catch (error) {
-      const expoNote = expoError ? ` (Expo socket: ${String(expoError)})` : ''
-      throw new Error(
-        `${error instanceof Error ? error.message : String(error)}${expoNote}`,
-      )
-    }
-  }
-
-  const conn = connection
+  const conn = await openConnection(options)
   const timed = async <T>(
     tool: string,
     ...args: unknown[]
@@ -122,5 +98,7 @@ export async function listDevices(
   ]
 }
 
+export { type SessionConnectOptions, connectSession } from './session/client'
+export { type SessionState, listSessions } from './session/state'
 export type { DeviceInfo, ToolInfo } from '../shared/protocol'
 export type { TransportName } from './connection'
