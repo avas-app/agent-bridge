@@ -1,4 +1,4 @@
-import type { DeviceInfo, ToolInfo } from '../shared/protocol'
+import type { DeviceInfo, LogEntry, ToolInfo } from '../shared/protocol'
 import { connectCdp } from './cdp'
 import type { Connection, TransportName } from './connection'
 import { listCdpTargets, metroHost } from './discover'
@@ -19,13 +19,21 @@ export class AgentBridgeCallError extends Error {
   constructor(
     readonly tool: string,
     message: string,
+    /** Errors the app attached to the failed reply. */
+    readonly logs: LogEntry[] = [],
   ) {
     super(`${tool}: ${message}`)
     this.name = 'AgentBridgeCallError'
   }
 }
 
-export type Timed<T> = { value: T; ms: number; appMs: number }
+/** `logs`: errors the app recorded since its previous reply. */
+export type Timed<T> = {
+  value: T
+  ms: number
+  appMs: number
+  logs: LogEntry[]
+}
 
 export type AgentBridge = {
   transport: TransportName
@@ -77,8 +85,9 @@ export async function connect(
     const t0 = performance.now()
     const result = await conn.call(tool, args, timeoutMs)
     const ms = performance.now() - t0
-    if (!result.ok) throw new AgentBridgeCallError(tool, result.error)
-    return { value: result.value as T, ms, appMs: result.ms }
+    const logs = result.logs ?? []
+    if (!result.ok) throw new AgentBridgeCallError(tool, result.error, logs)
+    return { value: result.value as T, ms, appMs: result.ms, logs }
   }
 
   return {
@@ -122,5 +131,5 @@ export async function listDevices(
   ]
 }
 
-export type { DeviceInfo, ToolInfo } from '../shared/protocol'
+export type { DeviceInfo, LogEntry, ToolInfo } from '../shared/protocol'
 export type { TransportName } from './connection'

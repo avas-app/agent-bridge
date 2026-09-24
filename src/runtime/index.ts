@@ -8,6 +8,7 @@ import {
 } from '../shared/protocol'
 import { builtinTools } from './builtin-tools'
 import { cdpTransport } from './cdp-transport'
+import { startLogCapture } from './logs'
 import { createRegistry } from './registry'
 import type { AgentBridgeOptions, Tools, TransportContext } from './types'
 
@@ -20,11 +21,12 @@ export function startAgentBridge(options: AgentBridgeOptions = {}): () => void {
     typeof options.tools === 'function'
       ? options.tools()
       : (options.tools ?? {})
+  const logs = startLogCapture()
   const allTools = (): Tools => ({
-    ...builtinTools(() => registry.list(), allTools),
+    ...builtinTools(() => registry.list(), allTools, logs.capture),
     ...userTools(),
   })
-  const registry = createRegistry(allTools)
+  const registry = createRegistry(allTools, logs.capture)
   const info = (): DeviceInfo => ({
     deviceId,
     name: options.name ?? Platform.OS,
@@ -41,6 +43,7 @@ export function startAgentBridge(options: AgentBridgeOptions = {}): () => void {
   )
   return () => {
     for (const stop of stops) stop()
+    logs.stop()
   }
 }
 
@@ -78,6 +81,7 @@ export type {
 export type {
   CallMessage,
   DeviceInfo,
+  LogEntry,
   ResultMessage,
   ToolInfo,
 } from '../shared/protocol'

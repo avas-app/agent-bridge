@@ -6,10 +6,14 @@ import { parseArgs } from 'node:util'
 
 import {
   type AgentBridge,
+  AgentBridgeCallError,
   type ConnectOptions,
   connect,
+  type LogEntry,
   listDevices,
+  type Timed,
 } from './client/index'
+import { logLine } from './client/log-lines'
 import { RUNTIME_MARKER } from './shared/protocol'
 
 const HELP = `agent-bridge: drive a running React Native app from an agent
@@ -26,7 +30,12 @@ Options
   --device <text>        Pick an app when several are connected
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
+  --strict               run: exit non-zero if the app logged an error
 `
+
+/** Errors a failed call brought back, for printing before the failure. */
+const failedLogs = (error: unknown): LogEntry[] =>
+  error instanceof AgentBridgeCallError ? error.logs : []
 
 function parseCallArgs(raw: string | undefined): unknown[] {
   if (raw === undefined) return []
@@ -47,6 +56,7 @@ async function main() {
       device: { type: 'string' },
       transport: { type: 'string' },
       timeout: { type: 'string' },
+      strict: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   })
@@ -91,11 +101,14 @@ async function main() {
       const [tool, raw] = rest
       if (!tool) throw new Error('Usage: agent-bridge call <tool> [args]')
       return withBridge(async (bridge) => {
-        const { value, ms, appMs } = await bridge.timed(
-          tool,
-          ...parseCallArgs(raw),
-        )
+        const { value, ms, appMs, logs } = await bridge
+          .timed(tool, ...parseCallArgs(raw))
+          .catch((error: unknown) => {
+            for (const e of failedLogs(error)) console.error(logLine(e))
+            throw error
+          })
         console.log(JSON.stringify(value, null, 2))
+        for (const e of logs) console.error(logLine(e))
         console.error(
           `${tool} via ${bridge.transport}: ${ms.toFixed(1)} ms round trip, ${appMs} ms in the app`,
         )
@@ -118,23 +131,51 @@ async function main() {
       return withBridge(async (bridge) => {
         let n = 0
         let total = 0
+        let errors = 0
         const t0 = performance.now()
+        const report = (logs: LogEntry[]) => {
+          errors += logs.length
+          for (const e of logs) console.log(`   ${logLine(e)}`)
+        }
+        // Every call the flow makes reports the errors its reply carried.
+        const timed = async <T>(
+          tool: string,
+          ...args: unknown[]
+        ): Promise<Timed<T>> => {
+          try {
+            const result = await bridge.timed<T>(tool, ...args)
+            report(result.logs)
+            return result
+          } catch (error) {
+            report(failedLogs(error))
+            throw error
+          }
+        }
+        const call = async <T>(tool: string, ...args: unknown[]) =>
+          (await timed<T>(tool, ...args)).value
         const step = async (
           label: string,
           tool: string,
           ...args: unknown[]
         ) => {
-          const { value, ms } = await bridge.timed(tool, ...args)
+          const { value, ms, logs } = await bridge.timed(tool, ...args).catch(
+            (error: unknown) => {
+              report(failedLogs(error))
+              throw error
+            },
+          )
           total += ms
           console.log(
             `${String(++n).padStart(2, '0')} ${label.padEnd(30)} ${ms.toFixed(1).padStart(7)} ms`,
           )
+          report(logs)
           return value
         }
-        await flow.default({ bridge, call: bridge.call, step })
+        await flow.default({ bridge: { ...bridge, timed, call }, call, step })
         console.log(
-          `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})`,
+          `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}`,
         )
+        if (values.strict && errors) process.exitCode = 1
       })
     }
     case 'assert-absent': {

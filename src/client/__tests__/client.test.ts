@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import WebSocket from 'ws'
 
 import { cdpTransport } from '../../runtime/cdp-transport'
+import { createLogCapture } from '../../runtime/logs'
 import { createRegistry } from '../../runtime/registry'
 import type { Tools } from '../../runtime/types'
 import {
@@ -97,6 +98,45 @@ describe('CDP transport', () => {
     )
   })
 
+  test('timed returns the errors the reply carried, escaped for Hermes', async () => {
+    const metro = await startFakeMetro({
+      acceptOrigin: (port) => `http://localhost:${port}`,
+    })
+    const capture = createLogCapture()
+    const registry = createRegistry(
+      () => ({
+        'app.logError': (message: string) =>
+          capture.record('error', [message]),
+        'app.fail': () => {
+          capture.record('error', ['before failing'])
+          throw new Error('failed')
+        },
+      }),
+      capture,
+    )
+    const context = appContext('Fake Phone', 'dev-cdp')
+    cleanups.push(
+      metro.close,
+      cdpTransport().start({
+        info: context.info,
+        dispatch: (call) => registry.dispatch(call, 'dev-cdp'),
+      }),
+    )
+    const bridge = await connect({ metro: metro.metro, transport: 'cdp' })
+    cleanups.push(bridge.close)
+
+    const car = String.fromCodePoint(0x1f697)
+    const { logs } = await bridge.timed('app.logError', `no ${car}`)
+    expect(logs).toMatchObject([
+      { level: 'error', message: `no ${car}`, during: 'app.logError' },
+    ])
+    const failure = await bridge.call('app.fail').catch((e: unknown) => e)
+    expect(failure).toBeInstanceOf(AgentBridgeCallError)
+    expect((failure as AgentBridgeCallError).logs).toMatchObject([
+      { message: 'before failing' },
+    ])
+  })
+
   test('explains a dropped socket in terms of the Origin it sent', async () => {
     const metro = await startFakeMetro({
       hostUri: (port) => `fakehost:${port}`,
@@ -148,8 +188,9 @@ describe('Expo transport', () => {
     })
     cleanups.push(bridge.close)
     expect(bridge.device.deviceId).toBe('dev-b')
-    const { value, appMs } = await bridge.timed('demo.echo', 'hi')
+    const { value, appMs, logs } = await bridge.timed('demo.echo', 'hi')
     expect(value).toEqual(['hi'])
+    expect(logs).toEqual([])
     expect(appMs).toBeGreaterThanOrEqual(0)
     await expect(bridge.call('demo.fail')).rejects.toThrow(
       'demo.fail: it broke',

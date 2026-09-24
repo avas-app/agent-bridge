@@ -21,6 +21,13 @@ export function AgentBridge() {
       ...storeTools({ settings: useSettings }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...hudTools,
+      // For flows/checks/logs.mjs: errors come back with the next reply.
+      'app.logError': (message: string) => console.error(message),
+      'app.throwLater': () => {
+        setTimeout(() => {
+          throw new Error('boom from a timer')
+        }, 0)
+      },
     },
   })
   return null
