@@ -54,6 +54,7 @@ function AppTabs() {
           name="index"
           options={{ title: 'Plants', tabBarIcon: icon('leaf') }}
         />
+        <Tabs.Screen name="add" options={{ title: 'Add plant', href: null }} />
         <Tabs.Screen
           name="shop"
           options={{

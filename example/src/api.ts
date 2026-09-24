@@ -38,6 +38,19 @@ async function get<T>(path: string): Promise<T> {
 export const usePlants = () =>
   useQuery({ queryKey: ['plants'], queryFn: () => get<Plant[]>('/plants') })
 
+export type NewPlant = { name: string; species?: string; waterEveryDays: number }
+
+/** Adds a plant that was just watered. */
+export async function addPlant(input: NewPlant): Promise<Plant> {
+  const res = await fetch(`${API_URL}/plants`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) throw new Error(`POST /plants failed with ${res.status}`)
+  return (await res.json()) as Plant
+}
+
 export const useFlags = () =>
   useQuery({ queryKey: ['flags'], queryFn: () => get<Flags>('/flags') })
 

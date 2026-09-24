@@ -8,11 +8,14 @@ export function Screen({
   eyebrow,
   title,
   subtitle,
+  action,
   children,
 }: {
   eyebrow?: string
   title: string
   subtitle?: string
+  /** Shown at the end of the title row, e.g. an add button. */
+  action?: ReactNode
   children: ReactNode
 }) {
   const c = useColors()
@@ -25,7 +28,10 @@ export function Screen({
       {eyebrow ? (
         <Text style={[styles.eyebrow, { color: c.accent }]}>{eyebrow}</Text>
       ) : null}
-      <Text style={[styles.title, { color: c.text }]}>{title}</Text>
+      <View style={styles.titleRow}>
+        <Text style={[styles.title, { color: c.text }]}>{title}</Text>
+        {action}
+      </View>
       {subtitle ? (
         <Text style={[styles.subtitle, { color: c.muted }]}>{subtitle}</Text>
       ) : null}
@@ -80,7 +86,8 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 4,
   },
-  title: { fontSize: 34, fontWeight: '800', letterSpacing: -0.6 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  title: { flex: 1, fontSize: 34, fontWeight: '800', letterSpacing: -0.6 },
   subtitle: { fontSize: 15, marginTop: 4 },
   body: { marginTop: 20, gap: 10 },
   card: {

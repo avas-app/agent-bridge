@@ -20,8 +20,8 @@ export type FindTextResult = {
   matches: TextMatch[]
 }
 
-const HOST_COMPONENT = 5
-const HOST_TEXT = 6
+export const HOST_COMPONENT = 5
+export const HOST_TEXT = 6
 
 type DevToolsHook = {
   renderers: Map<number, unknown>
@@ -82,7 +82,7 @@ export function measureHost(host: Fiber): Rect | null {
  * Native gives text its own fiber; react-dom puts a lone string child in the
  * host component's props instead.
  */
-function textOf(fiber: Fiber): { text: string; host: Fiber | null } | null {
+export function textOf(fiber: Fiber): { text: string; host: Fiber | null } | null {
   if (fiber.tag === HOST_TEXT && typeof fiber.memoizedProps === 'string') {
     let host = fiber.return
     while (host && host.tag !== HOST_COMPONENT) host = host.return
