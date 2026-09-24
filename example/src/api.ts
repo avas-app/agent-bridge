@@ -52,7 +52,26 @@ const later = <T,>(value: T, ms = 400) =>
   new Promise<T>((resolve) => setTimeout(() => resolve(value), ms))
 
 export const usePlants = () =>
-  useQuery({ queryKey: ['plants'], queryFn: () => later(plants) })
+  useQuery({ queryKey: ['plants'], queryFn: () => later([...plants]) })
+
+export type NewPlant = { name: string; species?: string; waterEveryDays: number }
+
+const emojis = ['🌱', '🌿', '🪴', '🌵', '🍃']
+
+/** Adds a plant that was just watered. */
+export function addPlant(input: NewPlant): Promise<Plant> {
+  const plant: Plant = {
+    id: `p${Date.now()}`,
+    name: input.name,
+    species: input.species ?? '',
+    emoji: emojis[plants.length % emojis.length] ?? '🌱',
+    waterInDays: input.waterEveryDays,
+  }
+  return later(plant, 300).then((saved) => {
+    plants.push(saved)
+    return saved
+  })
+}
 
 export const useFlags = () =>
   useQuery({ queryKey: ['flags'], queryFn: () => later<Flags>({ shop: true }) })

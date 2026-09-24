@@ -9,6 +9,7 @@ import {
 import { builtinTools } from './builtin-tools'
 import { cdpTransport } from './cdp-transport'
 import { createRegistry } from './registry'
+import { settle } from './screen/settle'
 import type { AgentBridgeOptions, Tools, TransportContext } from './types'
 
 const randomId = () => Math.random().toString(36).slice(2, 10)
@@ -67,6 +68,11 @@ export function useAgentBridge(options: AgentBridgeOptions = {}): void {
 
 // Exported so the marker survives minification in every non-release bundle.
 export { cdpTransport, RUNTIME_MARKER }
+// For custom tools that change what's on screen: await settle() before
+// returning so the agent's next check sees the render.
+export { settle }
+export type { SettleResult } from './screen/settle'
+export type { ScreenElement, Target } from './screen'
 export type {
   AgentBridgeOptions,
   ToolDefinition,
