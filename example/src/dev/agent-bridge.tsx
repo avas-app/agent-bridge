@@ -1,4 +1,4 @@
-import { cdpTransport, type ToolDefinition, useAgentBridge } from '@avasapp/agent-bridge'
+import { cdpTransport, useAgentBridge } from '@avasapp/agent-bridge'
 import { expoTransport } from '@avasapp/agent-bridge/expo'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
@@ -8,10 +8,7 @@ import { router, useNavigationContainerRef } from 'expo-router'
 
 import { useSettings } from '@/settings'
 
-import { hudTools } from './hud'
-
-const run = (tool: ToolDefinition | undefined) =>
-  typeof tool === 'function' ? tool() : tool?.run()
+import { hideHud, hudTools } from './hud'
 
 export function AgentBridge() {
   const queryClient = useQueryClient()
@@ -24,11 +21,12 @@ export function AgentBridge() {
       ...storeTools({ settings: useSettings }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...hudTools,
-      'app.reset': {
-        description: 'Unpin every query and restore settings.',
+      // bridge.restore runs this along with query.restore and store.restore.
+      'app.restore': {
+        description: 'Hide the step overlay.',
         run: () => {
-          useSettings.setState(useSettings.getInitialState())
-          return { unpinned: run(query['query.unpinAll']) }
+          hideHud()
+          return true
         },
       },
     },

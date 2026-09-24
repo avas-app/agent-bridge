@@ -38,4 +38,18 @@ describe('mmkvTools', () => {
       expect(storage.data.has('k')).toBe(false)
     }
   })
+
+  test('mmkv.restore puts back changed keys and deletes new ones, across rebuilt tools', () => {
+    const storage = fakeMmkv('remove')
+    storage.data.set('theme', 'light')
+    storage.data.set('token', 'abc')
+    run(mmkvTools({ storage }), 'mmkv.set', 'storage', 'theme', 'dark')
+    run(mmkvTools({ storage }), 'mmkv.set', 'storage', 'theme', 'darker')
+    run(mmkvTools({ storage }), 'mmkv.delete', 'storage', 'token')
+    run(mmkvTools({ storage }), 'mmkv.set', 'storage', 'seeded', { a: 1 })
+
+    expect(run(mmkvTools({ storage }), 'mmkv.restore')).toBe(3)
+    expect(Object.fromEntries(storage.data)).toEqual({ theme: 'light', token: 'abc' })
+    expect(run(mmkvTools({ storage }), 'mmkv.restore')).toBe(0)
+  })
 })

@@ -36,4 +36,27 @@ describe('storeTools', () => {
     expect(() => run(tools, 'store.get', 'nope')).toThrow('Known: settings')
     expect(() => run(tools, 'store.call', 'settings', 'missing')).toThrow('has no action "missing"')
   })
+
+  test('store.restore puts back state from before the first change, across rebuilt tools', () => {
+    const store = createStore<Settings>()((set) => ({
+      colorScheme: 'system',
+      auth: { isLoggedIn: true },
+      setColorScheme: (colorScheme) => set({ colorScheme }),
+    }))
+    const other = createStore(() => ({ n: 1 }))
+    run(storeTools({ store, other }), 'store.call', 'store', 'setColorScheme', 'dark')
+    run(storeTools({ store, other }), 'store.set', 'store', { auth: { isLoggedIn: false }, extra: 1 })
+
+    expect(run(storeTools({ store, other }), 'store.restore')).toEqual(['store'])
+    const state = store.getState() as Settings & { extra?: number }
+    expect(state.colorScheme).toBe('system')
+    expect(state.auth.isLoggedIn).toBe(true)
+    expect('extra' in state).toBe(false)
+    state.setColorScheme('light')
+    expect(store.getState().colorScheme).toBe('light')
+
+    // The snapshot is cleared, so a later restore has nothing to do.
+    expect(run(storeTools({ store, other }), 'store.restore')).toEqual([])
+    expect(store.getState().colorScheme).toBe('light')
+  })
 })

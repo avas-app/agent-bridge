@@ -20,10 +20,11 @@ export function startAgentBridge(options: AgentBridgeOptions = {}): () => void {
     typeof options.tools === 'function'
       ? options.tools()
       : (options.tools ?? {})
-  const registry = createRegistry(() => ({
-    ...builtinTools(() => registry.list()),
+  const allTools = (): Tools => ({
+    ...builtinTools(() => registry.list(), allTools),
     ...userTools(),
-  }))
+  })
+  const registry = createRegistry(allTools)
   const info = (): DeviceInfo => ({
     deviceId,
     name: options.name ?? Platform.OS,

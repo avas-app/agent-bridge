@@ -4,6 +4,8 @@ import type { Tools } from '../runtime/types'
 
 type PinState = {
   pins: Map<string, { key: QueryKey; data: unknown }>
+  /** Keys the agent overwrote with query.set, by hash, for query.restore. */
+  changed: Map<string, QueryKey>
   seeded: WeakSet<object>
   applying: boolean
   unsubscribe: (() => void) | null
@@ -17,6 +19,7 @@ function pinStateFor(queryClient: QueryClient): PinState {
   if (!state) {
     state = {
       pins: new Map(),
+      changed: new Map(),
       seeded: new WeakSet(),
       applying: false,
       unsubscribe: null,
@@ -75,6 +78,26 @@ export function queryTools(queryClient: QueryClient): Tools {
     return removed
   }
 
+  // Put a query the agent touched back to real data: refetch it (active or
+  // not), or drop it when it has nothing to fetch with, since only the agent
+  // put it there.
+  const refetchReal = (key: QueryKey) => {
+    const query = cache.find({ queryKey: key, exact: true })
+    if (!query) return false
+    const queryFn =
+      query.options.queryFn ?? queryClient.getDefaultOptions().queries?.queryFn
+    if (!queryFn) {
+      cache.remove(query)
+      return false
+    }
+    void queryClient.invalidateQueries({
+      queryKey: key,
+      exact: true,
+      refetchType: 'all',
+    })
+    return true
+  }
+
   return {
     'query.list': {
       description: 'Cached queries: key, status, observer count, pinned.',
@@ -94,6 +117,8 @@ export function queryTools(queryClient: QueryClient): Tools {
       description:
         'Replace cached data once. A refetch will overwrite it; use query.pin to keep it.',
       run: async (key: QueryKey, data: unknown) => {
+        const hash = hashOf(key)
+        if (!state.changed.has(hash)) state.changed.set(hash, key)
         queryClient.setQueryData(key, data)
         await rendered()
         return queryClient.getQueryData(key)
@@ -125,6 +150,24 @@ export function queryTools(queryClient: QueryClient): Tools {
         await queryClient.refetchQueries({ queryKey: key })
         await rendered()
         return queryClient.getQueryData(key)
+      },
+    },
+    'query.restore': {
+      description:
+        'Undo the agent: unpin everything and refetch real data for keys changed with query.set.',
+      run: async () => {
+        const unpinned = [...pins.values()].map((p) => p.key)
+        const changed = [...state.changed]
+          .filter(([hash]) => !pins.has(hash))
+          .map(([, key]) => key)
+        pins.clear()
+        state.changed.clear()
+        state.unsubscribe?.()
+        state.unsubscribe = null
+        for (const key of unpinned) refetchReal(key)
+        const refetched = changed.filter((key) => refetchReal(key)).length
+        await rendered()
+        return { unpinned: unpinned.length, refetched }
       },
     },
     'query.invalidate': {

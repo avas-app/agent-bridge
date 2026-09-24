@@ -53,7 +53,7 @@ export default async ({ step, call }) => {
   await shown('seed Inbox', 'query.pin', ['inbox'], inbox)
   await shown('open Inbox', 'router.navigate', '/inbox')
   expectOnScreen(await shown('agent message?', 'screen.findText', 'Seeded by the agent'), 1)
-  await shown('reset everything', 'app.reset')
+  await shown('reset everything', 'bridge.restore')
 
   const wall = (performance.now() - t0) / 1000
   const summary = HOLD_MS

@@ -5,8 +5,22 @@ export type MMKVLike = {
   getAllKeys: () => string[]
   getString: (key: string) => string | undefined
   set: (key: string, value: string | number | boolean) => void
+  contains?: (key: string) => boolean
   delete?: (key: string) => void
   remove?: (key: string) => unknown
+}
+
+// Each key's value from before the agent first wrote it (undefined when it
+// did not exist), per instance, so tools rebuilt on every render still find it.
+const originals = new WeakMap<
+  MMKVLike,
+  Map<string, string | undefined | null>
+>()
+
+function remove(mmkv: MMKVLike, name: string, key: string) {
+  if (mmkv.remove) mmkv.remove(key)
+  else if (mmkv.delete) mmkv.delete(key)
+  else throw new Error(`MMKV instance "${name}" has neither remove() nor delete()`)
 }
 
 /** Read and write named MMKV instances. */
@@ -18,6 +32,14 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
         `Unknown MMKV instance "${name}". Known: ${Object.keys(instances).join(', ')}`,
       )
     return mmkv
+  }
+  const beforeChange = (mmkv: MMKVLike, key: string) => {
+    let saved = originals.get(mmkv)
+    if (!saved) originals.set(mmkv, (saved = new Map()))
+    if (saved.has(key)) return
+    const exists = mmkv.contains?.(key) ?? mmkv.getAllKeys().includes(key)
+    // null: the key holds something getString can't read, so leave it be.
+    saved.set(key, exists ? (mmkv.getString(key) ?? null) : undefined)
   }
 
   return {
@@ -46,7 +68,9 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
           typeof value === 'boolean'
             ? value
             : JSON.stringify(value)
-        get(name).set(key, stored)
+        const mmkv = get(name)
+        beforeChange(mmkv, key)
+        mmkv.set(key, stored)
         return true
       },
     },
@@ -54,13 +78,28 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
       description: 'Delete a key.',
       run: (name: string, key: string) => {
         const mmkv = get(name)
-        if (mmkv.remove) mmkv.remove(key)
-        else if (mmkv.delete) mmkv.delete(key)
-        else
-          throw new Error(
-            `MMKV instance "${name}" has neither remove() nor delete()`,
-          )
+        beforeChange(mmkv, key)
+        remove(mmkv, name, key)
         return true
+      },
+    },
+    'mmkv.restore': {
+      description:
+        'Undo the agent: put back keys changed with mmkv.set or mmkv.delete, deleting ones that did not exist. Returns how many.',
+      run: () => {
+        let restored = 0
+        for (const [name, mmkv] of Object.entries(instances)) {
+          const saved = originals.get(mmkv)
+          if (!saved) continue
+          for (const [key, value] of saved) {
+            if (value === null) continue
+            if (value === undefined) remove(mmkv, name, key)
+            else mmkv.set(key, value)
+            restored += 1
+          }
+          originals.delete(mmkv)
+        }
+        return restored
       },
     },
   }

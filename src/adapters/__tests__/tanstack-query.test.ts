@@ -72,4 +72,28 @@ describe('queryTools', () => {
     await fetchFlags()
     expect(client.getQueryData<unknown>(['flags'])).toBe('real-2')
   })
+
+  test('query.restore unpins, refetches set keys and drops agent-only ones, across rebuilt tools', async () => {
+    const client = new QueryClient()
+    let fetches = 0
+    const observe = (name: string) =>
+      new QueryObserver(client, { queryKey: [name], queryFn: async () => `real-${name}-${++fetches}` }).subscribe(
+        () => {},
+      )
+    const stops = [observe('plants'), observe('user')]
+    await client.refetchQueries()
+
+    await run(queryTools(client), 'query.pin', ['plants'], ['seeded'])
+    await run(queryTools(client), 'query.set', ['user'], { name: 'x' })
+    await run(queryTools(client), 'query.set', ['user'], { name: 'y' })
+    await run(queryTools(client), 'query.set', ['agentOnly'], 1)
+
+    expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 1, refetched: 1 })
+    await new Promise((r) => setTimeout(r, 10)) // the refetches restore started
+    expect(client.getQueryData<string>(['plants'])).toStartWith('real-plants')
+    expect(client.getQueryData<string>(['user'])).toStartWith('real-user')
+    expect(client.getQueryData(['agentOnly'])).toBeUndefined()
+    expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 0, refetched: 0 })
+    for (const stop of stops) stop()
+  })
 })
