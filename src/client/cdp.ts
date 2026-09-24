@@ -21,6 +21,8 @@ import {
   pickOne,
 } from './discover'
 
+class CannotEvaluate extends Error {}
+
 const targetLabel = (t: CdpTarget) =>
   `${t.title}${t.deviceName ? ` [${t.deviceName}]` : ''}`
 
@@ -87,6 +89,8 @@ export async function connectCdp(
       expression,
       returnByValue: true,
     })
+    // -32601: the debugger has no Runtime.evaluate (Expo Go on Android).
+    if (message.error?.code === -32601) throw new CannotEvaluate()
     const details = message.result?.exceptionDetails
     if (details) {
       const text: string =
@@ -104,10 +108,12 @@ export async function connectCdp(
     info = JSON.parse(
       String(await evaluate(`${CDP_GLOBAL}.info()`)),
     ) as DeviceInfo
-  } catch {
+  } catch (error) {
     ws.close()
     throw new Error(
-      `agent-bridge isn't running in ${targetLabel(target)}. Is useAgentBridge mounted in a dev build?`,
+      error instanceof CannotEvaluate
+        ? `The debugger for ${targetLabel(target)} can't run code (no Runtime.evaluate, as in Expo Go on Android). Use --transport expo, or a dev build.`
+        : `agent-bridge isn't running in ${targetLabel(target)}. Is useAgentBridge mounted in a dev build?`,
     )
   }
 

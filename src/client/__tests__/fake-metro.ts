@@ -14,6 +14,8 @@ type Options = {
   acceptOrigin?: (port: number) => string
   /** Serve Expo's broadcast socket. */
   expo?: boolean
+  /** Answer Runtime.evaluate with "method not found", like Expo Go on Android. */
+  noEvaluate?: boolean
 }
 
 export async function startFakeMetro(options: Options = {}) {
@@ -58,7 +60,7 @@ export async function startFakeMetro(options: Options = {}) {
       inspector.handleUpgrade(req, socket, head, (ws) => {
         const expected = options.acceptOrigin?.(port)
         if (expected && req.headers.origin !== expected) ws.terminate()
-        else serveCdp(ws)
+        else serveCdp(ws, options)
       })
     } else if (path === '/expo-dev-plugins/broadcast' && options.expo) {
       broadcast.handleUpgrade(req, socket, head, (ws) => {
@@ -89,11 +91,13 @@ export async function startFakeMetro(options: Options = {}) {
   }
 }
 
-function serveCdp(ws: WebSocket) {
+function serveCdp(ws: WebSocket, options: Options) {
   const g = globalThis as Record<string, unknown>
   ws.on('message', (data) => {
     const { id, method, params } = JSON.parse(String(data))
-    if (method === 'Runtime.addBinding') {
+    if (method === 'Runtime.evaluate' && options.noEvaluate) {
+      ws.send(JSON.stringify({ id, error: { code: -32601, message: method } }))
+    } else if (method === 'Runtime.addBinding') {
       g[params.name] = (payload: string) =>
         ws.send(
           JSON.stringify({

@@ -151,6 +151,20 @@ describe('CDP transport', () => {
     ).rejects.toThrow('Origin sent: http://fakehost:')
   })
 
+  test('says so when the debugger cannot run code, instead of blaming the app', async () => {
+    const metro = await startFakeMetro({
+      acceptOrigin: (port) => `http://localhost:${port}`,
+      noEvaluate: true,
+    })
+    cleanups.push(
+      metro.close,
+      cdpTransport().start(appContext('Fake Phone', 'dev-cdp')),
+    )
+    const failure = connect({ metro: metro.metro, transport: 'cdp' })
+    await expect(failure).rejects.toThrow("can't run code")
+    await expect(failure).rejects.toThrow('--transport expo')
+  })
+
   test('auto falls back to CDP when Metro has no Expo socket', async () => {
     const metro = await startFakeMetro({
       acceptOrigin: (port) => `http://localhost:${port}`,

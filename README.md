@@ -149,6 +149,7 @@ npx agent-bridge assert-absent path/to/main.jsbundle
 - **Run the agent on the machine with the simulator.** Every call pays the network otherwise.
 - **Hidden tabs stay mounted.** `screen.findText` skips anything under an inactive `RNSScreen`.
 - **Expo checks the debugger's Origin** against the host Metro advertises and drops mismatches silently. The client reads it from the manifest.
+- **Expo Go on Android has no CDP `Runtime.evaluate`.** Use the Expo socket there (the default); CDP works in dev builds and in Expo Go on iOS.
 - **Expo's socket broadcasts to every app.** Calls are addressed to one device; pick it with `--device` when several are connected.
 - **Screen checks through the accessibility tree are slow** (hundreds of ms each). Check in-app, and keep one real UI check per flow.
 - **`screen.fill` skips the keyboard.** It runs the input's handlers, so validation and state are real, but autocorrect, native `maxLength` and uncontrolled inputs' native text are not.
