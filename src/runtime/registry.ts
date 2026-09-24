@@ -1,4 +1,5 @@
 import type { CallMessage, ResultMessage, ToolInfo } from '../shared/protocol'
+import type { LogCapture } from './logs'
 import { toJson } from './to-json'
 import type { ToolDefinition, ToolFn, Tools } from './types'
 
@@ -9,7 +10,11 @@ function unwrap(definition: ToolDefinition): {
   return typeof definition === 'function' ? { run: definition } : definition
 }
 
-export function createRegistry(getTools: () => Tools) {
+/** With `logs`, each reply carries the errors recorded since the previous one. */
+export function createRegistry(
+  getTools: () => Tools,
+  logs?: Pick<LogCapture, 'begin' | 'takeErrors'>,
+) {
   const list = (): ToolInfo[] =>
     Object.entries(getTools())
       .map(([name, definition]) => ({
@@ -22,6 +27,13 @@ export function createRegistry(getTools: () => Tools) {
     call: CallMessage,
     from: string,
   ): Promise<ResultMessage> {
+    const end = logs?.begin(call.tool)
+    const result = await run(call, from).finally(end)
+    const errors = logs?.takeErrors()
+    return errors?.length ? { ...result, logs: errors } : result
+  }
+
+  async function run(call: CallMessage, from: string): Promise<ResultMessage> {
     const t0 = performance.now()
     const ms = () => Math.round((performance.now() - t0) * 100) / 100
     try {

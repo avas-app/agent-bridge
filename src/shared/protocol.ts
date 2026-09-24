@@ -20,9 +20,25 @@ export type CallMessage = {
   to?: string
 }
 
-export type ResultMessage =
+/** An error or warning the app logged, threw or left unhandled. */
+export type LogEntry = {
+  level: 'error' | 'warn'
+  message: string
+  /** First lines of the stack, when there was an Error. */
+  stack?: string
+  /** Date.now() in the app. */
+  at: number
+  /** The tool that was running when it was logged. */
+  during?: string
+  /** Otherwise, the last tool that had finished. */
+  after?: string
+}
+
+/** `logs`: errors the app recorded since its previous reply. Old clients ignore it. */
+export type ResultMessage = (
   | { id: string; from: string; ok: true; value: unknown; ms: number }
   | { id: string; from: string; ok: false; error: string; ms: number }
+) & { logs?: LogEntry[] }
 
 export type ToolInfo = { name: string; description?: string }
 
