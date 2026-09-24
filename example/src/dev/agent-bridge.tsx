@@ -8,7 +8,7 @@ import { router, useNavigationContainerRef } from 'expo-router'
 
 import { useSettings } from '@/settings'
 
-import { hideHud, hudTools } from './hud'
+import { hudTools } from './hud'
 
 export function AgentBridge() {
   const queryClient = useQueryClient()
@@ -21,14 +21,6 @@ export function AgentBridge() {
       ...storeTools({ settings: useSettings }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...hudTools,
-      // bridge.restore runs this along with query.restore and store.restore.
-      'app.restore': {
-        description: 'Hide the step overlay.',
-        run: () => {
-          hideHud()
-          return true
-        },
-      },
     },
   })
   return null
