@@ -8,6 +8,8 @@ import { type ColorValue, View } from 'react-native'
 
 import { useFlags, useInbox } from '@/api'
 import { AgentBridge } from '@/dev/agent-bridge'
+// Registers the fake backend's routes in development, before the first query.
+import '@/dev/fake-backend'
 import { AgentHud } from '@/dev/hud'
 import { useColors, useScheme } from '@/theme'
 

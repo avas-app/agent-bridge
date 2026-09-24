@@ -47,6 +47,10 @@
       "types": "./dist/adapters/expo-router.d.cts",
       "default": "./entries/expo-router.cjs"
     },
+    "./network": {
+      "types": "./dist/network/index.d.cts",
+      "default": "./entries/network.cjs"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",

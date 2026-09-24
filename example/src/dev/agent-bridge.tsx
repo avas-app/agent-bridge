@@ -1,6 +1,7 @@
 import { cdpTransport, useAgentBridge } from '@avasapp/agent-bridge'
 import { expoTransport } from '@avasapp/agent-bridge/expo'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
+import { networkTools } from '@avasapp/agent-bridge/network'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { useQueryClient } from '@tanstack/react-query'
@@ -20,6 +21,7 @@ export function AgentBridge() {
       ...query,
       ...storeTools({ settings: useSettings }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
+      ...networkTools(),
       ...hudTools,
       // For flows/checks/logs.mjs: errors come back with the next reply.
       'app.logError': (message: string) => console.error(message),
