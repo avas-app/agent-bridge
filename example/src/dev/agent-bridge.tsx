@@ -4,7 +4,7 @@ import { routerTools } from '@avasapp/agent-bridge/expo-router'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { useQueryClient } from '@tanstack/react-query'
-import { router } from 'expo-router'
+import { router, useNavigationContainerRef } from 'expo-router'
 
 import { useSettings } from '@/settings'
 
@@ -22,7 +22,7 @@ export function AgentBridge() {
     tools: {
       ...query,
       ...storeTools({ settings: useSettings }),
-      ...routerTools(router),
+      ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...hudTools,
       'app.reset': {
         description: 'Unpin every query and restore settings.',
