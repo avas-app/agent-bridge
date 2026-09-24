@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Sprout",
+    "slug": "agent-bridge-example",
+    "scheme": "sprout",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "plugins": ["expo-router"]
+  }
+}

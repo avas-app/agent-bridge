@@ -1,0 +1,116 @@
+{
+  "name": "@avasapp/agent-bridge",
+  "version": "0.0.0",
+  "description": "Let coding agents drive a running React Native app directly: seed state, flip flags, navigate and check the screen in about a millisecond per call, with no taps.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/avas-app/agent-bridge#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avas-app/agent-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/avas-app/agent-bridge/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false,
+  "main": "./entries/index.cjs",
+  "types": "./dist/runtime/index.d.cts",
+  "exports": {
+    ".": {
+      "types": "./dist/runtime/index.d.cts",
+      "default": "./entries/index.cjs"
+    },
+    "./expo": {
+      "types": "./dist/expo/index.d.cts",
+      "default": "./entries/expo.cjs"
+    },
+    "./tanstack-query": {
+      "types": "./dist/adapters/tanstack-query.d.cts",
+      "default": "./entries/tanstack-query.cjs"
+    },
+    "./zustand": {
+      "types": "./dist/adapters/zustand.d.cts",
+      "default": "./entries/zustand.cjs"
+    },
+    "./react-native-mmkv": {
+      "types": "./dist/adapters/react-native-mmkv.d.cts",
+      "default": "./entries/react-native-mmkv.cjs"
+    },
+    "./expo-router": {
+      "types": "./dist/adapters/expo-router.d.cts",
+      "default": "./entries/expo-router.cjs"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js",
+      "require": "./dist/client/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "agent-bridge": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "entries",
+    "skills"
+  ],
+  "keywords": [
+    "react-native",
+    "expo",
+    "ai",
+    "agents",
+    "testing",
+    "e2e",
+    "devtools",
+    "cdp",
+    "tanstack-query",
+    "zustand",
+    "mmkv"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsup",
+    "test": "bun test src/",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "bun run typecheck && bun run test && bun run build && bun run check:gates",
+    "check:gates": "node scripts/check-gates.mjs",
+    "changeset": "changeset",
+    "release": "bun run check && changeset publish",
+    "prepublishOnly": "bun run check"
+  },
+  "peerDependencies": {
+    "@tanstack/query-core": ">=5",
+    "expo": ">=52",
+    "react": ">=18",
+    "react-native": ">=0.76"
+  },
+  "peerDependenciesMeta": {
+    "@tanstack/query-core": {
+      "optional": true
+    },
+    "expo": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^3.0.3",
+    "@expo/devtools": "^57.0.1",
+    "@tanstack/query-core": "^5.90.0",
+    "@types/bun": "^1.4.2",
+    "@types/react": "^19.3.0",
+    "@types/ws": "^8.18.1",
+    "tsup": "^8.5.1",
+    "typescript": "~6.0.3",
+    "zustand": "^5.0.15"
+  }
+}
