@@ -4,7 +4,7 @@ Let coding agents drive a running React Native app directly. Seed data, flip fla
 
 ## Demo
 
-![An agent seeds data, hides a tab, turns on dark mode, checks the screen and resets the example app](example/media/demo.gif)
+![An agent hides a tab, turns on dark mode, fills in a form, seeds data, checks the screen and undoes it all](example/media/demo.gif)
 
 <!-- TODO: upload example/media/demo-x.mp4 in GitHub's web editor and put the URL it gives here. GitHub only plays an mp4 uploaded that way. -->
 
@@ -13,12 +13,13 @@ Let coding agents drive a running React Native app directly. Seed data, flip fla
 | Call | Round trip |
 | --- | --- |
 | `bridge.ping` | 1–4 ms |
-| `screen.findText` | 3–9 ms |
+| `screen.findText`, `screen.waitFor` (already there) | 3–9 ms |
+| `screen.fill`, `screen.press` | 20–65 ms, render included |
 | `query.pin`, `store.call`, `router.navigate` | 11–44 ms, render included |
-| 10 steps, no pauses | 150–200 ms, 0.2 s wall |
+| 14 steps, no pauses | 0.8 s wall, 0.4 s of it waiting on a save |
 
 ```
-10 steps, all local on one Mac:   150 ms of calls, 0.2 s wall with no pauses
+14 steps, all local on one Mac:   0.8 s wall with no pauses
 same flow from another machine:   ~57 ms per call (network)
 same screen check via a11y tree:  450–970 ms
 ```
@@ -42,18 +43,20 @@ import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { mmkvTools } from '@avasapp/agent-bridge/react-native-mmkv'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
-import { router } from 'expo-router'
+import { networkTools } from '@avasapp/agent-bridge/network'
+import { router, useNavigationContainerRef } from 'expo-router'
 
 export function AgentBridge() {
   const queryClient = useQueryClient()
   useAgentBridge({
-    name: 'rider',
+    name: 'my-app',
     transports: [expoTransport(), cdpTransport()],
     tools: {
       ...queryTools(queryClient),
       ...storeTools({ settings: useSettingsStore, auth: useAuthStore }),
       ...mmkvTools({ storage }),
-      ...routerTools(router),
+      ...routerTools(router, { navigation: useNavigationContainerRef() }),
+      ...networkTools(),
       // Your own tools: any function, JSON in and out.
       'auth.signIn': (session) => signInWith(session),
     },
@@ -62,48 +65,66 @@ export function AgentBridge() {
 }
 ```
 
-Every app also gets `bridge.ping`, `bridge.tools` and `screen.findText`.
+Every app also gets:
+
+- `screen.snapshot`: buttons, inputs, text and `testID` views on screen, with positions.
+- `screen.fill`, `screen.press`: call an input's or button's own handlers, found by `testID`, label, placeholder or text, and return once React has rendered the result.
+- `screen.waitFor`, `screen.findText`: wait for, or check, text or a target on screen.
+- `bridge.restore`: undo what the agent changed, by running every `*.restore` tool.
+- `bridge.logs`, `bridge.ping`, `bridge.tools`.
+
+Custom tools that change the screen can `await settle()` (from `@avasapp/agent-bridge`) so the next check sees the render.
+
+Errors come back on their own: each reply carries what the app logged with `console.error`, threw or left unhandled since the previous reply, tagged with the call it happened during or after.
 
 ## From the agent
 
 ```sh
-npx agent-bridge devices
+npx agent-bridge session start            # hold one connection; call/tools/run reuse it
 npx agent-bridge tools
-npx agent-bridge call query.pin '[["features"], {"wallet": false}]'
-npx agent-bridge call router.navigate /inbox
-npx agent-bridge call screen.findText '"Seeded by the agent"'
-npx agent-bridge run flows/wallet-off.mjs
+npx agent-bridge call query.pin '[["features"], {"beta": false}]'
+npx agent-bridge call screen.press '"add-plant"'
+npx agent-bridge call screen.fill '["plant-name", "Fiddle leaf fig"]'
+npx agent-bridge call screen.waitFor '"Name is required"'
+npx agent-bridge run flows/add-plant.mjs --strict   # fail if the app logged an error
+npx agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
+
+A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads.
 
 ```ts
 import { connect } from '@avasapp/agent-bridge/client'
 
 const app = await connect({ metro: 'localhost:8081' })
-await app.call('query.pin', ['features'], { wallet: false })
-await app.call('router.navigate', '/inbox')
-const { onScreen } = await app.call<{ onScreen: number }>('screen.findText', 'Seeded by the agent')
+await app.call('router.navigate', '/add')
+await app.call('screen.fill', 'plant-name', 'Fiddle leaf fig')
+await app.call('screen.press', 'save-plant')
 ```
 
 A flow is a module the CLI runs without a model in the loop:
 
 ```js
 export default async ({ step }) => {
-  await step('flag: wallet off', 'query.pin', ['features'], { wallet: false })
-  await step('open Inbox', 'router.navigate', '/inbox')
-  await step('check message', 'screen.findText', 'Seeded by the agent')
+  await step('flag: beta off', 'query.pin', ['features'], { beta: false })
+  await step('save empty form', 'screen.press', 'save-plant')
+  await step('error shown', 'screen.waitFor', 'Name is required')
+  await step('undo', 'bridge.restore')
 }
 ```
+
+No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
 
 ## Adapters
 
 | Import | Tools | Needs |
 | --- | --- | --- |
-| `@avasapp/agent-bridge/tanstack-query` | `query.list` `get` `set` `pin` `unpin` `unpinAll` `refetch` `invalidate` | your `QueryClient` |
-| `@avasapp/agent-bridge/zustand` | `store.list` `get` `set` `call` | your stores |
-| `@avasapp/agent-bridge/react-native-mmkv` | `mmkv.list` `keys` `get` `set` `delete` | your MMKV instances |
-| `@avasapp/agent-bridge/expo-router` | `router.navigate` `push` `replace` `back` | `router` from expo-router |
+| `@avasapp/agent-bridge/tanstack-query` | `query.list` `get` `set` `pin` `unpin` `unpinAll` `refetch` `invalidate` `restore` | your `QueryClient` |
+| `@avasapp/agent-bridge/zustand` | `store.list` `get` `set` `call` `restore` | your stores |
+| `@avasapp/agent-bridge/react-native-mmkv` | `mmkv.list` `keys` `get` `set` `delete` `restore` | your MMKV instances |
+| `@avasapp/agent-bridge/expo-router` | `router.navigate` `push` `replace` `back` `current` | `router` and `useNavigationContainerRef()` from expo-router |
+| `@avasapp/agent-bridge/network` | `net.log` `mock` `mocks` `unmock` `clear` `restore` | nothing: patches `fetch` and `XMLHttpRequest` in dev |
 
-A pin keeps seeded data in place through refetches until you unpin it.
+A pin keeps seeded data in place through refetches until you unpin it. `net.mock('/inbox', { status: 500 })` or `{ offline: true }` fails a route; apps can fake a whole backend with `mockRequests` from the same import.
 
 ## Transports
 
@@ -130,6 +151,8 @@ npx agent-bridge assert-absent path/to/main.jsbundle
 - **Expo checks the debugger's Origin** against the host Metro advertises and drops mismatches silently. The client reads it from the manifest.
 - **Expo's socket broadcasts to every app.** Calls are addressed to one device; pick it with `--device` when several are connected.
 - **Screen checks through the accessibility tree are slow** (hundreds of ms each). Check in-app, and keep one real UI check per flow.
+- **`screen.fill` skips the keyboard.** It runs the input's handlers, so validation and state are real, but autocorrect, native `maxLength` and uncontrolled inputs' native text are not.
+- **Keep your `QueryClient` in state** (`useState(() => new QueryClient())`). Created at module level, a Fast Refresh can leave the bridge holding a different client than the screen.
 
 ## License
 
