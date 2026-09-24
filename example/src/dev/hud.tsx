@@ -18,6 +18,9 @@ const withLastMs = (lines: Line[], ms?: number | null): Line[] => {
   return [...lines.slice(0, -1), { ...last, ms }]
 }
 
+export const hideHud = () =>
+  useHud.setState({ visible: false, title: '', lines: [] })
+
 export const hudTools: Tools = {
   'hud.show': {
     description: 'Show the step overlay with a title.',
@@ -43,7 +46,7 @@ export const hudTools: Tools = {
   },
   'hud.hide': {
     description: 'Hide the overlay.',
-    run: () => useHud.setState({ visible: false, title: '', lines: [] }),
+    run: hideHud,
   },
 }
 
