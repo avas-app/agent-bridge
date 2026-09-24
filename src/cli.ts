@@ -14,6 +14,13 @@ import {
   type Timed,
 } from './client/index'
 import { logLine } from './client/log-lines'
+import {
+  DAEMON_COMMAND,
+  daemonMain,
+  sessionCommand,
+  sessionFor,
+} from './client/session/cli'
+import { connectSession } from './client/session/client'
 import { RUNTIME_MARKER } from './shared/protocol'
 
 const HELP = `agent-bridge: drive a running React Native app from an agent
@@ -25,12 +32,20 @@ Usage
   agent-bridge run <flow.mjs|.ts>         Run a flow: export default async ({ step, call }) => {}
   agent-bridge assert-absent <files...>   Fail if a release bundle contains the bridge
 
+Sessions: one connection for all of an agent's calls
+  agent-bridge session start [--name n] [--idle 15m]   Connect once in the background
+  agent-bridge session stop [--name n] [--keep]        bridge.restore (unless --keep), then end
+  agent-bridge session list | status [--name n]
+  While a session matches --metro/--device, call, tools and run use it.
+
 Options
   --metro <host:port>    Metro dev server (env AGENT_BRIDGE_METRO, default localhost:8081)
   --device <text>        Pick an app when several are connected
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
   --strict               run: exit non-zero if the app logged an error
+  --session <name>       Use this session (env AGENT_BRIDGE_SESSION)
+  --no-session           Connect directly even if a session is running
 `
 
 /** Errors a failed call brought back, for printing before the failure. */
@@ -57,6 +72,11 @@ async function main() {
       transport: { type: 'string' },
       timeout: { type: 'string' },
       strict: { type: 'boolean' },
+      name: { type: 'string' },
+      idle: { type: 'string' },
+      keep: { type: 'boolean' },
+      session: { type: 'string' },
+      'no-session': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
   })
@@ -72,7 +92,13 @@ async function main() {
     timeoutMs: values.timeout ? Number(values.timeout) : undefined,
   }
   const withBridge = async (fn: (bridge: AgentBridge) => Promise<void>) => {
-    const bridge = await connect(options)
+    const session = sessionFor(values)
+    const bridge = session
+      ? await connectSession({
+          name: session.name,
+          timeoutMs: options.timeoutMs,
+        })
+      : await connect(options)
     try {
       await fn(bridge)
     } finally {
@@ -178,6 +204,10 @@ async function main() {
         if (values.strict && errors) process.exitCode = 1
       })
     }
+    case 'session':
+      return sessionCommand(rest[0], values)
+    case DAEMON_COMMAND:
+      return daemonMain(values)
     case 'assert-absent': {
       if (!rest.length)
         throw new Error('Usage: agent-bridge assert-absent <bundle files...>')
