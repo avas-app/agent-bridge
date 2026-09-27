@@ -1,12 +1,28 @@
 ---
 name: agent-bridge
-description: "Drive a running React Native or Expo dev build directly through @avasapp/agent-bridge: see what's on screen, fill in forms, press buttons, seed query data, flip feature flags, set store state, navigate, mock the network, fake realtime messages and undo it all, in milliseconds per call instead of tapping through the app. Use whenever you need the app in a particular state to test a change, or need to verify what a screen shows."
+description: "Drive a running React Native or Expo dev build directly through @avasapp/agent-bridge: see what's on screen, fill in forms, press buttons, seed query data, flip feature flags, set store state, navigate, mock the network, fake realtime messages and undo it all, in milliseconds per call instead of tapping through the app. Pairs with agent-device, which opens the app and covers native UI, real taps and screenshots. Use whenever you need the app in a particular state to test a change, or need to verify what a screen shows."
 ---
 
 # Driving an app with agent-bridge
 
 The app mounts `useAgentBridge({ tools })` in a dev build. You call those tools
 by name. Nothing is tapped, so there is no setup to click through.
+
+## Pair it with agent-device
+
+agent-bridge works inside the app's JavaScript; agent-device works the device.
+Use both, each for what it's good at:
+
+| agent-bridge | agent-device |
+| --- | --- |
+| Put the app in a state: flags, query data, store values, network mocks, realtime messages | Install and open the app, reload, relaunch |
+| Navigate, fill forms, press buttons, check text on screen | System alerts, permission prompts, native sheets, the keyboard |
+| Undo it all with `bridge.restore` | Screenshots, recordings, one real tap to prove the UI responds |
+
+A typical run: `agent-device open` the app, set up and check the screen with
+agent-bridge, then finish with one real tap or a screenshot from agent-device.
+Don't tap through setup screens or edit backend data to reach a state that one
+bridge call can set.
 
 ## Start a session
 
@@ -32,7 +48,7 @@ npx agent-bridge call screen.waitFor '"Name is required"'      # {"gone": true} 
 
 `press` and `fill` return once the app has rendered the result, so the next
 check sees it. `fill` skips the keyboard: autocorrect and native-only input
-behaviour need one real typing step from your device tool.
+behaviour need one real typing step from agent-device.
 
 ## Get the app into a state
 
@@ -105,5 +121,5 @@ the next run starts from the real state.
 
 - Run next to the simulator. From another machine every call pays the network.
 - It can't see native UI (system alerts, permission prompts, native sheets) or
-  overlap. Finish a flow with one real UI check or screenshot from your device tool.
+  overlap. Finish a flow with one real UI check or screenshot from agent-device.
 - With several apps on one Metro, pass `--device`.

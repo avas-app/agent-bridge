@@ -1,25 +1,29 @@
 # @avasapp/agent-bridge
 
-Let coding agents drive a running React Native app directly. Seed data, flip flags, navigate and check the screen in **milliseconds**, without tapping through the app.
+Let coding agents drive a running React Native app directly. Seed data, flip flags, fake realtime messages, navigate and check the screen in **milliseconds**, without tapping through the app. It works alongside [agent-device](https://github.com/callstack/agent-device): agent-device opens the app and handles native UI, and agent-bridge handles everything inside the app.
 
 ## Demo
 
-![An agent hides a tab, turns on dark mode, fills in a form, seeds data, checks the screen and undoes it all](example/media/demo.gif)
+![The same checks with agent-device alone (22.4 s) and with agent-bridge (1.4 s): hide a tab, turn on dark mode, fill in a form, seed data, fake a live message and undo it all](example/media/demo.gif)
 
-<!-- TODO: upload example/media/demo-x.mp4 in GitHub's web editor and put the URL it gives here. GitHub only plays an mp4 uploaded that way. -->
+The same checks on [the example app](example) in Expo Go, both at real speed, all on one Mac:
 
-[`example/flows/demo.mjs`](example/flows/demo.mjs) driving [the example app](example) in Expo Go, all on one Mac:
+- **agent-device alone** ([`demo-agent-device.mjs`](example/flows/demo-agent-device.mjs)) taps and types through the UI, edits the fake backend and reloads to change the flag and the data, and asks the realtime server to push a message.
+- **agent-device + agent-bridge** ([`demo.mjs`](example/flows/demo.mjs)) makes each change with one call, then undoes them all with `bridge.restore`.
+
+agent-device 0.21.15 won't press or fill most of this screen by selector on the iOS 27 simulator ([callstack/agent-device#2996](https://github.com/callstack/agent-device/issues/2996)), so the agent-device side looks up each element's frame and taps its centre. That adds one lookup per tap or fill.
 
 | Call | Round trip |
 | --- | --- |
 | `bridge.ping` | 1–4 ms |
 | `screen.findText`, `screen.waitFor` (already there) | 3–9 ms |
-| `screen.fill`, `screen.press` | 20–65 ms, render included |
-| `query.pin`, `store.call`, `router.navigate` | 11–44 ms, render included |
-| 14 steps, no pauses | 0.8 s wall, 0.4 s of it waiting on a save |
+| `screen.fill`, `screen.press` | 20–120 ms, render included |
+| `query.pin`, `store.call`, `router.navigate` | 11–55 ms, render included |
+| 19 steps, no pauses | 1.3–1.5 s wall, 0.9 s of it waiting on the fake backend |
 
 ```
-14 steps, all local on one Mac:   0.8 s wall with no pauses
+19 steps with agent-bridge:       1.4 s wall
+same checks, agent-device alone:  22.4 s wall
 same flow from another machine:   ~57 ms per call (network)
 same screen check via a11y tree:  450–970 ms
 ```
