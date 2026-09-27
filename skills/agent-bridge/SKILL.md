@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: "Drive a running React Native or Expo dev build directly through @avasapp/agent-bridge: see what's on screen, fill in forms, press buttons, seed query data, flip feature flags, set store state, navigate, mock the network and undo it all, in milliseconds per call instead of tapping through the app. Use whenever you need the app in a particular state to test a change, or need to verify what a screen shows."
+description: "Drive a running React Native or Expo dev build directly through @avasapp/agent-bridge: see what's on screen, fill in forms, press buttons, seed query data, flip feature flags, set store state, navigate, mock the network, fake realtime messages and undo it all, in milliseconds per call instead of tapping through the app. Use whenever you need the app in a particular state to test a change, or need to verify what a screen shows."
 ---
 
 # Driving an app with agent-bridge
@@ -48,6 +48,25 @@ npx agent-bridge call net.log
 Arguments are a JSON array (or a single JSON value). Read the current value
 first (`query.get`, `store.get`) and change only what you need.
 
+## Realtime messages
+
+If the app has `realtime.*` tools, you can see its realtime messages and fake
+them instead of waiting for a backend to send one:
+
+```sh
+npx agent-bridge call realtime.channels                         # what the app listens on
+npx agent-bridge call realtime.log '{"channel": "chat"}'        # recent messages, real and faked
+npx agent-bridge call realtime.mute '"chat"'                    # stop real ones overwriting your state
+npx agent-bridge call realtime.emit '["chat", {"name": "message", "data": {"text": "hi"}}]'
+npx agent-bridge call realtime.connection '"disconnected"'      # null goes back to the real state
+```
+
+Copy the shape of a real message from `realtime.log` before you emit one. With
+Ably, pass `{ name, data }`; with socket.io, pass the arguments after the
+channel (the event name). Muting still lets your emitted messages through.
+`emit` fails and lists the live channels when nothing listens on yours: open
+the screen that subscribes first.
+
 ## Watch for errors
 
 Every reply carries errors the app logged or threw since the previous reply,
@@ -78,8 +97,9 @@ npx agent-bridge run flow.mjs --strict    # --strict fails if the app logged an 
 npx agent-bridge session stop             # runs bridge.restore; --keep leaves the app as is
 ```
 
-`bridge.restore` unpins queries, puts back store and MMKV values and removes
-network mocks, so the next run starts from the real state.
+`bridge.restore` unpins queries, puts back store and MMKV values, removes
+network mocks, unmutes realtime channels and ends a faked connection state, so
+the next run starts from the real state.
 
 ## Traps
 

@@ -54,8 +54,15 @@ export async function addPlant(input: NewPlant): Promise<Plant> {
 export const useFlags = () =>
   useQuery({ queryKey: ['flags'], queryFn: () => get<Flags>('/flags') })
 
+// The realtime feed keeps the inbox current (src/realtime.ts), so it isn't
+// refetched on every mount, which would also drop messages that arrived
+// while the fetch was in flight.
 export const useInbox = () =>
-  useQuery({ queryKey: ['inbox'], queryFn: () => get<Message[]>('/inbox') })
+  useQuery({
+    queryKey: ['inbox'],
+    queryFn: () => get<Message[]>('/inbox'),
+    staleTime: Infinity,
+  })
 
 export const useProducts = () =>
   useQuery({ queryKey: ['products'], queryFn: () => get<Product[]>('/products') })

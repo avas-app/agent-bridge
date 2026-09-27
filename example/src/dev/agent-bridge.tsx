@@ -7,6 +7,7 @@ import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { useQueryClient } from '@tanstack/react-query'
 import { router, useNavigationContainerRef } from 'expo-router'
 
+import { realtimeDevTools } from '@/realtime'
 import { useSettings } from '@/settings'
 
 import { hudTools } from './hud'
@@ -22,6 +23,7 @@ export function AgentBridge() {
       ...storeTools({ settings: useSettings }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...networkTools(),
+      ...realtimeDevTools,
       ...hudTools,
       // For flows/checks/logs.mjs: errors come back with the next reply.
       'app.logError': (message: string) => console.error(message),

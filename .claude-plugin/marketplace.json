@@ -11,7 +11,7 @@
       "name": "agent-bridge",
       "source": "./",
       "strict": false,
-      "description": "Drive a running React Native or Expo dev build directly: see the screen, fill forms, press buttons, seed data, flip flags, navigate, mock the network and undo it all, in milliseconds per call.",
+      "description": "Drive a running React Native or Expo dev build directly: see the screen, fill forms, press buttons, seed data, flip flags, navigate, mock the network, fake realtime messages and undo it all, in milliseconds per call.",
       "homepage": "https://github.com/avas-app/agent-bridge",
       "repository": "https://github.com/avas-app/agent-bridge",
       "license": "MIT",
