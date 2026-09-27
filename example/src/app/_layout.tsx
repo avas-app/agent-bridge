@@ -1,16 +1,21 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryClientProvider,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router'
 import { Tabs } from 'expo-router/js-tabs'
 import { StatusBar } from 'expo-status-bar'
-import { type ComponentProps, useState } from 'react'
+import { type ComponentProps, useEffect, useState } from 'react'
 import { type ColorValue, View } from 'react-native'
 
-import { useFlags, useInbox } from '@/api'
+import { type Message, useFlags, useInbox } from '@/api'
 import { AgentBridge } from '@/dev/agent-bridge'
 // Registers the fake backend's routes in development, before the first query.
 import '@/dev/fake-backend'
 import { AgentHud } from '@/dev/hud'
+import { socket } from '@/realtime'
 import { useColors, useScheme } from '@/theme'
 
 const icon =
@@ -19,7 +24,24 @@ const icon =
     <Ionicons name={name} color={color} size={size} />
   )
 
+// New messages from the realtime server go to the top of the inbox.
+function useLiveInbox() {
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    const onMessage = (message: Message) =>
+      queryClient.setQueryData<Message[]>(['inbox'], (messages = []) => [
+        message,
+        ...messages.filter((m) => m.id !== message.id),
+      ])
+    socket.on('inbox:new', onMessage)
+    return () => {
+      socket.off('inbox:new', onMessage)
+    }
+  }, [queryClient])
+}
+
 function AppTabs() {
+  useLiveInbox()
   const scheme = useScheme()
   const c = useColors()
   const { data: flags } = useFlags()
