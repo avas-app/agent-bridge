@@ -51,6 +51,18 @@
       "types": "./dist/network/index.d.cts",
       "default": "./entries/network.cjs"
     },
+    "./realtime": {
+      "types": "./dist/realtime/index.d.cts",
+      "default": "./entries/realtime.cjs"
+    },
+    "./ably": {
+      "types": "./dist/adapters/ably.d.cts",
+      "default": "./entries/ably.cjs"
+    },
+    "./socket.io": {
+      "types": "./dist/adapters/socket-io.d.cts",
+      "default": "./entries/socket.io.cjs"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",
@@ -77,7 +89,10 @@
     "cdp",
     "tanstack-query",
     "zustand",
-    "mmkv"
+    "mmkv",
+    "realtime",
+    "ably",
+    "socket.io"
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
@@ -113,6 +128,8 @@
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
     "@types/ws": "^8.18.1",
+    "ably": "^2.29.0",
+    "socket.io-client": "^4.8.4",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",
     "zustand": "^5.0.15"

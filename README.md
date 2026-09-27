@@ -138,8 +138,56 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 | `@avasapp/agent-bridge/react-native-mmkv` | `mmkv.list` `keys` `get` `set` `delete` `restore` | your MMKV instances |
 | `@avasapp/agent-bridge/expo-router` | `router.navigate` `push` `replace` `back` `current` | `router` and `useNavigationContainerRef()` from expo-router |
 | `@avasapp/agent-bridge/network` | `net.log` `mock` `mocks` `unmock` `clear` `restore` | nothing: patches `fetch` and `XMLHttpRequest` in dev |
+| `@avasapp/agent-bridge/ably` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your Ably `Realtime` client |
+| `@avasapp/agent-bridge/socket.io` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your socket.io `Socket` |
+| `@avasapp/agent-bridge/realtime` | `realtime.channels` `log` `emit` `mute` `unmute` `restore` | two lines in your own subscribe function |
 
 A pin keeps seeded data in place through refetches until you unpin it. `net.mock('/inbox', { status: 500 })` or `{ offline: true }` fails a route; apps can fake a whole backend with `mockRequests` from the same import.
+
+## Realtime
+
+The realtime tools let an agent see realtime messages, send the app a fake one, and stop real ones from overwriting a state it set up. They work with any library.
+
+With Ably or socket.io, pass the client where you create it, **before the app subscribes**. Listeners added earlier stay invisible.
+
+```ts
+import { ablyTools } from '@avasapp/agent-bridge/ably'
+import { socketIoTools } from '@avasapp/agent-bridge/socket.io'
+
+export const ably = new Ably.Realtime(options)
+export const realtimeDevTools = ablyTools(ably)     // or socketIoTools(socket)
+
+// in AgentBridge: tools: { ...realtimeDevTools, ... }
+```
+
+With any other library, or your own subscribe layer, wrap each listener:
+
+```ts
+import { createRealtimeTap } from '@avasapp/agent-bridge/realtime'
+
+export const realtimeTap = createRealtimeTap()   // tools: { ...realtimeTap.tools }
+
+export function subscribe(channel: string, onMessage: (message: Message) => void) {
+  const { listener, unsubscribe } = realtimeTap.wrap(channel, onMessage)
+  const off = client.subscribe(channel, listener)
+  return () => { off(); unsubscribe() }
+}
+```
+
+```sh
+npx agent-bridge call realtime.channels
+npx agent-bridge call realtime.mute '"order-42"'                       # the real feed goes quiet
+npx agent-bridge call realtime.emit '["order-42", {"name": "status", "data": {"status": "arrived"}}]'
+npx agent-bridge call realtime.log '{"channel": "order-42"}'
+npx agent-bridge call realtime.connection '"disconnected"'             # null goes back
+```
+
+- `realtime.emit` runs the app's own handlers. Ably gets an Ably message (`{ id, name, data, timestamp }` plus what you pass), socket.io gets the arguments after the event name (`["chat", "a", "b"]` calls `listener("a", "b")`), and `createRealtimeTap` gets the value as is, or what its `toMessage` option builds.
+- `realtime.mute` drops real messages; injected ones still get through unless you pass `{ "dropInjected": true }`. `"*"` mutes every channel.
+- `realtime.connection` fakes a state through the client's own events (Ably's `connection.on`, socket.io's `connect` / `disconnect` and `socket.connected`) and drops real messages until the state is `connected` again. Ably channel states don't follow.
+- `realtime.log` keeps the last 50 messages, and logs a message once however many listeners get it.
+- `createRealtimeTap` takes `describe` (what to log), `toMessage` (what `emit` delivers), `channelInfo` (extras for `realtime.channels`), `connection` (to add `realtime.connection`) and `namespace` (for a second tap).
+- socket.io `onAny` listeners don't get injected events.
 
 ## Transports
 

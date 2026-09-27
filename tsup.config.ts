@@ -8,6 +8,9 @@ const appEntries = {
   'adapters/react-native-mmkv': 'src/adapters/react-native-mmkv.ts',
   'adapters/expo-router': 'src/adapters/expo-router.ts',
   'network/index': 'src/network/index.ts',
+  'realtime/index': 'src/realtime/index.ts',
+  'adapters/ably': 'src/adapters/ably.ts',
+  'adapters/socket-io': 'src/adapters/socket-io.ts',
 }
 
 const noopEntries = {
@@ -18,6 +21,9 @@ const noopEntries = {
   'noop/react-native-mmkv': 'src/noop/react-native-mmkv.ts',
   'noop/expo-router': 'src/noop/expo-router.ts',
   'noop/network': 'src/noop/network.ts',
+  'noop/realtime': 'src/noop/realtime.ts',
+  'noop/ably': 'src/noop/ably.ts',
+  'noop/socket-io': 'src/noop/socket-io.ts',
 }
 
 export default defineConfig([
