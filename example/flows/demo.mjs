@@ -52,7 +52,19 @@ export default async ({ step, call }) => {
   await shown('new plant listed?', 'screen.waitFor', 'Fiddle leaf fig')
   await shown('seed edge cases', 'query.pin', ['plants'], plants)
   expectOnScreen(await shown('overdue pill?', 'screen.findText', '3 days late'), 1)
+  // Realtime: no server needed. Mute the live feed so nothing real lands
+  // mid-demo, then send the app a message through its own socket handler.
+  await shown('open Inbox', 'router.navigate', '/inbox')
+  await shown('mute live feed', 'realtime.mute', 'inbox:new')
+  await shown('fake a live message', 'realtime.emit', 'inbox:new', {
+    id: 'demo-live', icon: 'sparkles', tint: 'violet', title: 'Monstera has a new leaf',
+    body: 'Spotted just now.', time: 'Now', unread: true,
+  })
+  await shown('message shown?', 'screen.waitFor', 'Monstera has a new leaf')
   await shown('undo everything', 'bridge.restore')
+  // bridge.restore unmutes, but the faked message is app state now; a refetch
+  // puts the inbox back to what the backend has.
+  await shown('inbox back to real', 'query.refetch', ['inbox'])
 
   const wall = (performance.now() - t0) / 1000
   const summary = HOLD_MS
