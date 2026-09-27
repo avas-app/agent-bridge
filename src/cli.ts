@@ -12,7 +12,12 @@ import {
   type LogEntry,
   listDevices,
 } from './client/index'
-import { type FlowModule, flowScenarios, runFlow } from './client/flow'
+import {
+  type FlowModule,
+  flowScenarios,
+  parseScenarioFlag,
+  runFlow,
+} from './client/flow'
 import { logLine } from './client/log-lines'
 import {
   DAEMON_COMMAND,
@@ -47,6 +52,8 @@ Options
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
   --strict               run: exit non-zero if the app logged an error
+  --scenario <name>      run: also apply this scenario (repeatable). Options as
+                         JSON after "=": --scenario 'signedIn={"user":{"name":"Ada"}}'
   --session <name>       Use this session (env AGENT_BRIDGE_SESSION)
   --no-session           Connect directly even if a session is running
 `
@@ -75,6 +82,7 @@ async function main() {
       transport: { type: 'string' },
       timeout: { type: 'string' },
       strict: { type: 'boolean' },
+      scenario: { type: 'string', multiple: true },
       name: { type: 'string' },
       idle: { type: 'string' },
       keep: { type: 'boolean' },
@@ -149,8 +157,14 @@ async function main() {
       const flow = (await import(pathToFileURL(resolve(file)).href)) as FlowModule
       // Before connecting, so a bad declaration fails fast.
       flowScenarios(flow)
+      const extra = (values.scenario ?? []).map(parseScenarioFlag)
       return withBridge(async (bridge) => {
-        const { errors, restoreErrors } = await runFlow(bridge, flow)
+        const { errors, restoreErrors } = await runFlow(
+          bridge,
+          flow,
+          console.log,
+          extra,
+        )
         if ((values.strict && errors) || restoreErrors.length)
           process.exitCode = 1
       })

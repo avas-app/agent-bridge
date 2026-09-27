@@ -70,4 +70,6 @@ export type StrictOptions = {
   allow?: Array<string | RegExp>
   /** Status of the error response. Default 501. */
   status?: number
+  /** Fail like a network failure instead of answering with a status. */
+  offline?: boolean
 }

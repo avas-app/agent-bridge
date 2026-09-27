@@ -76,7 +76,8 @@ export function mockApi(
 
 /**
  * Strict mode: a fetch or XMLHttpRequest that no mock answers fails with an
- * error response (501 by default) and a console error naming it, instead of
+ * error response (501 by default, or like offline with `offline: true`) and
+ * a console error naming it, instead of
  * reaching a server. Only JS requests: native networking (images, native
  * SDKs, WebSockets) isn't covered. Returns a function that turns it off.
  */
@@ -165,7 +166,7 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
     },
     'net.strict': {
       description:
-        'Strict mode: requests no mock answers fail with a 501 instead of reaching a server. [true | false | { allow?: [substring | { regex }], status? }] sets it for the agent, [null] follows the app again; no args reads it. Returns { strict, source, allow, blocked }.',
+        'Strict mode: requests no mock answers fail with a 501 (or like offline) instead of reaching a server. [true | false | { allow?: [substring | { regex }], status?, offline? }] sets it for the agent, [null] follows the app again; no args reads it. Returns { strict, source, allow, blocked }.',
       run: (...args: unknown[]) => {
         if (args.length) {
           const value = args[0]
@@ -173,7 +174,7 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
           else if (value === false) state.strictAgent = false
           else if (value === true) state.strictAgent = strictRule()
           else if (typeof value === 'object') state.strictAgent = strictRule(value as StrictOptions)
-          else throw new Error('Pass true, false, null or { allow?, status? }')
+          else throw new Error('Pass true, false, null or { allow?, status?, offline? }')
         }
         const rules = strictRules(state)
         return {

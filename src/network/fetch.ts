@@ -137,8 +137,12 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     const passOn = () => {
       const blocked = blockedResponse(state, method, url)
       if (!blocked) return real()
-      const { status, text } = responseParts(blocked)
       entry.blocked = true
+      if (isOffline(blocked)) {
+        finishEntry(entry, { error: `${OFFLINE_MESSAGE} (strict network)` })
+        return Promise.reject(new TypeError(OFFLINE_MESSAGE))
+      }
+      const { status, text } = responseParts(blocked)
       finishEntry(entry, { status, responseBody: formatBody(text) })
       return Promise.resolve(mockedResponse(blocked))
     }

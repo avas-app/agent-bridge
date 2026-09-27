@@ -6,7 +6,13 @@ import { restoreTools } from '../../runtime/tools/restore'
 import { resetScenarios, scenarioTools } from '../../runtime/tools/scenario'
 import type { Scenarios, Tools } from '../../runtime/types'
 import { PROTOCOL_VERSION } from '../../shared/protocol'
-import { type FlowModule, flowScenarios, runFlow } from '../flow'
+import {
+  type FlowModule,
+  flowScenarios,
+  mergeScenarios,
+  parseScenarioFlag,
+  runFlow,
+} from '../flow'
 import { type AgentBridge, connect } from '../index'
 import { startFakeMetro } from './fake-metro'
 
@@ -58,7 +64,46 @@ describe('flowScenarios', () => {
   })
 })
 
+describe('--scenario', () => {
+  test('parses a name, or a name with JSON options', () => {
+    expect(parseScenarioFlag('signedIn')).toEqual({ name: 'signedIn' })
+    expect(parseScenarioFlag('signedIn={"user":{"name":"A=B"}}')).toEqual({
+      name: 'signedIn',
+      options: { user: { name: 'A=B' } },
+    })
+    expect(() => parseScenarioFlag('signedIn={nope')).toThrow('must be JSON')
+  })
+
+  test('adds to the flow\'s scenarios, replacing one of the same name', () => {
+    expect(
+      mergeScenarios(
+        [{ name: 'signedIn', options: 1 }, { name: 'cart' }],
+        [{ name: 'signedIn', options: 2 }, { name: 'dark' }],
+      ),
+    ).toEqual([{ name: 'cart' }, { name: 'signedIn', options: 2 }, { name: 'dark' }])
+  })
+})
+
 describe('runFlow', () => {
+  test('applies extra scenarios to a flow that declares none', async () => {
+    const order: string[] = []
+    const bridge = await app({
+      signedIn: {
+        apply: ({ options, onUndo }) => {
+          order.push(`apply ${JSON.stringify(options)}`)
+          onUndo(() => order.push('undo'))
+        },
+      },
+    })
+    await runFlow(
+      bridge,
+      { default: async () => void order.push('flow') },
+      quiet().print,
+      [parseScenarioFlag('signedIn={"user":"Ada"}')],
+    )
+    expect(order).toEqual(['apply {"user":"Ada"}', 'flow', 'undo'])
+  })
+
   test('applies declared scenarios, hands the flow their results, then restores', async () => {
     const order: string[] = []
     const bridge = await app(

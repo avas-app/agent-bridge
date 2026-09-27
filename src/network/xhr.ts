@@ -178,7 +178,12 @@ export function patchXhr(state: NetworkState): (() => void) | null {
       }
       const { status, text: out } = responseParts(blocked)
       entry.blocked = true
-      finishEntry(entry, { status, responseBody: formatBody(out) })
+      finishEntry(
+        entry,
+        isOffline(blocked)
+          ? { error: `${OFFLINE_MESSAGE} (strict network)` }
+          : { status, responseBody: formatBody(out) },
+      )
       // Answered after send returns, as a real response would be.
       void Promise.resolve().then(() => {
         if (!meta.aborted) respond(this, blocked, url)

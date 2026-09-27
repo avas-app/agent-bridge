@@ -128,6 +128,7 @@ export default async ({ step }) => {
 
 ```sh
 npx agent-bridge run flow.mjs --strict    # --strict fails if the app logged an error
+npx agent-bridge run flow.mjs --scenario signedIn   # add a scenario the flow doesn't declare
 ```
 
 ## Clean up

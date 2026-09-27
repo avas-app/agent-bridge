@@ -46,19 +46,51 @@ export function flowScenarios(
   })
 }
 
+/**
+ * A `--scenario` value: `signedIn`, or `signedIn={"user":{"name":"Ada"}}`
+ * with JSON options after the `=`.
+ */
+export function parseScenarioFlag(value: string): {
+  name: string
+  options?: unknown
+} {
+  const at = value.indexOf('=')
+  if (at === -1) return { name: value }
+  const name = value.slice(0, at)
+  const raw = value.slice(at + 1)
+  try {
+    return { name, options: JSON.parse(raw) }
+  } catch {
+    throw new Error(
+      `--scenario ${name}: the options after "=" must be JSON, got ${raw}`,
+    )
+  }
+}
+
+/** The flow's scenarios plus extra ones; an extra one replaces the flow's of the same name. */
+export function mergeScenarios(
+  declared: Array<{ name: string; options?: unknown }>,
+  extra: Array<{ name: string; options?: unknown }>,
+): Array<{ name: string; options?: unknown }> {
+  const names = new Set(extra.map((s) => s.name))
+  return [...declared.filter((s) => !names.has(s.name)), ...extra]
+}
+
 const failedLogs = (error: unknown): LogEntry[] =>
   error instanceof AgentBridgeCallError ? error.logs : []
 
 /**
- * Runs a flow: applies its scenarios, runs it, and when it declared any,
- * undoes everything with bridge.restore afterwards, even when it fails.
+ * Runs a flow: applies its scenarios (and `extra` ones, e.g. from
+ * `--scenario`), runs it, and when there were any, undoes everything with
+ * bridge.restore afterwards, even when it fails.
  */
 export async function runFlow(
   bridge: AgentBridge,
   flow: FlowModule,
   print: (line: string) => void = console.log,
+  extra: Array<{ name: string; options?: unknown }> = [],
 ): Promise<FlowResult> {
-  const needs = flowScenarios(flow)
+  const needs = mergeScenarios(flowScenarios(flow), extra)
   let n = 0
   let total = 0
   let errors = 0

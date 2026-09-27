@@ -82,6 +82,16 @@ for (const kind of ['web', 'rn'] as const) {
       expect((await fetch(`${API}/plants`)).status).toBe(501)
     })
 
+    test('offline: true fails like a network failure', async () => {
+      strictNetwork({ offline: true })
+      const error = await fetch(`${API}/me`).catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(TypeError)
+      expect((await sendXhr('GET', `${API}/me`)).failed).toBe(true)
+      expect(log()[0]).toMatchObject({ blocked: true, error: 'Network request failed (strict network)' })
+      expect(server.hits).toEqual([])
+      expect(consoleError).toHaveBeenCalledTimes(2)
+    })
+
     test('lets allowed URLs through', async () => {
       strictNetwork({ allow: ['cdn.example', /\/health$/] })
       expect((await fetch('https://cdn.example/a.png')).status).toBe(200)

@@ -49,6 +49,7 @@ export type StrictRule = {
   /** The allow list as given, for net.strict. */
   allowShown: string[]
   status: number
+  offline: boolean
 }
 
 // On globalThis, so a second copy of this module (or tools rebuilt on every
@@ -300,7 +301,9 @@ export function responseParts(response: MockResponse): {
 
 type AllowRule = string | RegExp | { regex: string; flags?: string }
 
-export function strictRule(options: StrictOptions | { allow?: AllowRule[]; status?: number } = {}): StrictRule {
+export function strictRule(
+  options: StrictOptions | { allow?: AllowRule[]; status?: number; offline?: boolean } = {},
+): StrictRule {
   const allow = (options.allow ?? []) as AllowRule[]
   if (!Array.isArray(allow))
     throw new Error('allow must be a list of URL substrings or regexes')
@@ -310,6 +313,7 @@ export function strictRule(options: StrictOptions | { allow?: AllowRule[]; statu
       typeof rule === 'string' ? rule : String(rule instanceof RegExp ? rule : new RegExp(rule.regex, rule.flags)),
     ),
     status: options.status ?? 501,
+    offline: options.offline === true,
   }
 }
 
@@ -340,6 +344,7 @@ export function blockedResponse(
   else state.blocked.set(key, { method, url, count: 1 })
   const error = `agent-bridge strict network: no mock for ${key}`
   console.error(`${error}. Mock it, or allow it in strict mode.`)
+  if (rules[0]!.offline) return { offline: true }
   return {
     status: rules[0]!.status,
     json: { error },
