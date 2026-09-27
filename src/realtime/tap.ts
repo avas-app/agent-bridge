@@ -53,12 +53,16 @@ export type RealtimeTap<M> = {
   /**
    * Wraps the app's listener for `channel`. Hand `listener` to the library
    * instead of the original, and call `unsubscribe` when the app unsubscribes.
+   * Arguments after the message reach the app's listener untouched.
    */
   wrap: (
     channel: string,
-    listener: (message: M) => void,
+    listener: (message: M, ...rest: never[]) => void,
     options?: WrapOptions<M>,
-  ) => { listener: (message: M) => void; unsubscribe: () => void }
+  ) => {
+    listener: (message: M, ...rest: unknown[]) => void
+    unsubscribe: () => void
+  }
   /** `realtime.*`, or `<namespace>.*`. */
   tools: Tools
 }
@@ -72,7 +76,7 @@ export type RealtimeLogEntry = MessageSummary & {
 }
 
 type Entry<M> = {
-  deliver: (message: M) => void
+  deliver: (message: M, ...rest: unknown[]) => void
   accepts?: (message: M) => boolean
 }
 
@@ -135,7 +139,12 @@ export function createRealtimeTap<M = unknown>(
     if (log.length > LOG_SIZE) log.splice(0, log.length - LOG_SIZE)
   }
 
-  function receive(channel: string, entry: Entry<M>, message: M) {
+  function receive(
+    channel: string,
+    entry: Entry<M>,
+    message: M,
+    rest: unknown[],
+  ) {
     const previous = last.get(channel)
     const dropped = muteFor(channel)
       ? 'muted'
@@ -152,16 +161,19 @@ export function createRealtimeTap<M = unknown>(
       last.set(channel, { message, seen: new Set([entry]) })
       record(channel, message, false, dropped)
     }
-    if (!dropped) entry.deliver(message)
+    if (!dropped) entry.deliver(message, ...rest)
   }
 
   const wrap: RealtimeTap<M>['wrap'] = (channel, listener, wrapOptions = {}) => {
-    const entry: Entry<M> = { deliver: listener, accepts: wrapOptions.accepts }
+    const entry: Entry<M> = {
+      deliver: listener as Entry<M>['deliver'],
+      accepts: wrapOptions.accepts,
+    }
     let entries = channels.get(channel)
     if (!entries) channels.set(channel, (entries = new Set()))
     entries.add(entry)
     return {
-      listener: (message) => receive(channel, entry, message),
+      listener: (message, ...rest) => receive(channel, entry, message, rest),
       unsubscribe: () => {
         const current = channels.get(channel)
         if (!current?.delete(entry) || current.size) return

@@ -189,6 +189,26 @@ npx agent-bridge call realtime.connection '"disconnected"'             # null go
 - `createRealtimeTap` takes `describe` (what to log), `toMessage` (what `emit` delivers), `channelInfo` (extras for `realtime.channels`), `connection` (to add `realtime.connection`) and `namespace` (for a second tap).
 - socket.io `onAny` listeners don't get injected events.
 
+### Writing an adapter
+
+To patch a client instead of wrapping each listener, name its add and remove methods and say which channel a call is for. `tapListeners` handles the bookkeeping and every remove form (all, by event, by listener). `realtimeAdapter` patches each client once. A Pusher-style `channel.bind(event, fn)` is this much:
+
+```ts
+import { createRealtimeTap, realtimeAdapter, tapListeners } from '@avasapp/agent-bridge/realtime'
+
+export const pusherTools = realtimeAdapter((channel: Channel, options: {}) => {
+  const tap = createRealtimeTap()
+  tapListeners(tap, channel, {
+    add: 'bind',
+    remove: 'unbind',
+    channel: ([event]) => `${channel.name}:${event}`,   // undefined leaves a call alone
+  })
+  return tap
+})
+```
+
+Pass `accepts` when a listener filters by event, and `message: 'args'` when the message is every argument (as in socket.io). `fakeableConnection(client, { property, events, states, announce })` adds `realtime.connection`: it fakes the state property and silences the client's own change events while a fake is on. [`src/adapters/`](src/adapters) has the Ably and socket.io adapters built this way.
+
 ## Transports
 
 | | Expo dev-tools socket | CDP |
