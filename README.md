@@ -6,8 +6,6 @@ Let coding agents drive a running React Native app directly. Seed data, flip fla
 
 ![The same checks with agent-device alone (22.4 s) and with agent-bridge (1.4 s): hide a tab, turn on dark mode, fill in a form, seed data, fake a live message and undo it all](example/media/demo.gif)
 
-<!-- TODO: upload example/media/demo-x.mp4 in GitHub's web editor and put the URL it gives here. GitHub only plays an mp4 uploaded that way. -->
-
 The same checks on [the example app](example) in Expo Go, both at real speed, all on one Mac:
 
 - **agent-device alone** ([`demo-agent-device.mjs`](example/flows/demo-agent-device.mjs)) taps and types through the UI, edits the fake backend and reloads to change the flag and the data, and asks the realtime server to push a message.
