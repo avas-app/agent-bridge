@@ -184,7 +184,7 @@ npx agent-bridge call realtime.connection '"disconnected"'             # null go
 
 - `realtime.emit` runs the app's own handlers. Ably gets an Ably message (`{ id, name, data, timestamp }` plus what you pass), socket.io gets the arguments after the event name (`["chat", "a", "b"]` calls `listener("a", "b")`), and `createRealtimeTap` gets the value as is, or what its `toMessage` option builds.
 - `realtime.mute` drops real messages; injected ones still get through unless you pass `{ "dropInjected": true }`. `"*"` mutes every channel.
-- `realtime.connection` fakes a state through the client's own events (Ably's `connection.on`, socket.io's `connect` / `disconnect` and `socket.connected`) and drops real messages until the state is `connected` again. Ably channel states don't follow.
+- `realtime.connection` fakes a state through the client's own events (Ably's `connection.on` and `connection.state`, socket.io's `connect` / `disconnect`) and drops real messages until the state is `connected` again. Ably channel states don't follow. `socket.connected` keeps its real value: socket.io reads it itself, and faking it would hold real traffic back until the next reconnect.
 - `realtime.log` keeps the last 50 messages, and logs a message once however many listeners get it.
 - `createRealtimeTap` takes `describe` (what to log), `toMessage` (what `emit` delivers), `channelInfo` (extras for `realtime.channels`), `connection` (to add `realtime.connection`) and `namespace` (for a second tap).
 - socket.io `onAny` listeners don't get injected events.
@@ -207,7 +207,7 @@ export const pusherTools = realtimeAdapter((channel: Channel, options: {}) => {
 })
 ```
 
-Pass `accepts` when a listener filters by event, and `message: 'args'` when the message is every argument (as in socket.io). `fakeableConnection(client, { property, events, states, announce })` adds `realtime.connection`: it fakes the state property and silences the client's own change events while a fake is on. [`src/adapters/`](src/adapters) has the Ably and socket.io adapters built this way.
+Pass `accepts` when a listener filters by event, and `message: 'args'` when the message is every argument (as in socket.io). `fakeableConnection(client, { property, events, states, announce })` adds `realtime.connection`: it fakes the state property and silences the client's own change events while a fake is on. Pass `fakeProperty: false` if the client reads that property itself to decide whether to deliver or send. [`src/adapters/`](src/adapters) has the Ably and socket.io adapters built this way.
 
 ## Transports
 

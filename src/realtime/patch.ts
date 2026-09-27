@@ -116,6 +116,12 @@ export type FakeableConnectionOptions = {
   read?: (value: unknown) => string
   /** State name to property value. Defaults to the name itself. */
   write?: (state: string) => unknown
+  /**
+   * false leaves the property showing the real state. Use it when the client
+   * reads the property itself to decide whether to deliver or send (socket.io
+   * does), or faking it would hold real traffic back. Defaults to true.
+   */
+  fakeProperty?: boolean
   /** Tells the app about a change, through the client's own (unsilenced) events method. */
   announce: (
     emit: (...args: unknown[]) => void,
@@ -125,8 +131,8 @@ export type FakeableConnectionOptions = {
 
 /**
  * Lets `realtime.connection` fake a client's connection state: the property
- * reads the fake, real changes still land underneath but aren't announced,
- * and going back announces the real state. Undefined when `target` lacks
+ * reads the fake (unless `fakeProperty: false`), real changes still land
+ * underneath but aren't announced, and going back announces the real state. Undefined when `target` lacks
  * the events method, so the tool is left out rather than broken.
  */
 export function fakeableConnection(
@@ -138,27 +144,31 @@ export function fakeableConnection(
   if (!methods || typeof events !== 'function') return undefined
   const read = options.read ?? String
   const write = options.write ?? ((state: string) => state)
-  let real = (methods as Record<string, unknown>)[options.property]
+  const values = methods as Record<string, unknown>
   let fake: string | null = null
-  Object.defineProperty(target, options.property, {
-    configurable: true,
-    enumerable: true,
-    get: () => (fake === null ? real : write(fake)),
-    set: (value: unknown) => {
-      real = value
-    },
-  })
+  let real = values[options.property]
+  const readReal = () =>
+    read(options.fakeProperty === false ? values[options.property] : real)
+  if (options.fakeProperty !== false)
+    Object.defineProperty(target, options.property, {
+      configurable: true,
+      enumerable: true,
+      get: () => (fake === null ? real : write(fake)),
+      set: (value: unknown) => {
+        real = value
+      },
+    })
   methods[options.events] = function (this: unknown, ...args: unknown[]) {
     return fake === null ? events.apply(this, args) : undefined
   }
   const emit = (...args: unknown[]) => void events.apply(target, args)
   return {
-    state: () => read(real),
+    state: readReal,
     states: options.states,
     live: options.live,
     fake: (state, previous) => {
       fake = state
-      const current = state ?? read(real)
+      const current = state ?? readReal()
       if (current !== previous)
         options.announce(emit, { current, previous, faked: state !== null })
     },

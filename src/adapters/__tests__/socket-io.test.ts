@@ -112,10 +112,15 @@ describe('socketIoTools', () => {
     socket.on('chat', a)
 
     run(tools, 'realtime.connection', 'disconnected')
-    expect(socket.connected).toBe(false)
     expect(onDisconnect).toHaveBeenCalledWith('transport close')
+    // socket.io buffers events while `connected` is false, so it stays real:
+    // a real event reaches the tap, is logged as dropped, and never replays.
+    expect(socket.connected).toBe(true)
     event('chat', 'real')
     expect(a).not.toHaveBeenCalled()
+    expect(run(tools, 'realtime.log', { limit: 1 })).toEqual([
+      expect.objectContaining({ data: 'real', dropped: 'connection' }),
+    ])
     run(tools, 'realtime.emit', 'chat', 'fake')
     expect(a).toHaveBeenCalledWith('fake')
 
@@ -125,10 +130,10 @@ describe('socketIoTools', () => {
     expect(run(tools, 'realtime.connection')).toEqual({ state: 'disconnected', real: 'disconnected', faked: true })
 
     run(tools, 'realtime.connection', 'connected')
-    expect(socket.connected).toBe(true)
     expect(onConnect).toHaveBeenCalledTimes(1)
     run(tools, 'realtime.restore')
     expect(socket.connected).toBe(false)
     expect(onDisconnect).toHaveBeenCalledTimes(2)
+    expect(a.mock.calls).toEqual([['fake']])
   })
 })

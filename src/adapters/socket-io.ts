@@ -47,7 +47,9 @@ export const socketIoTools = realtimeAdapter(
         events: 'emitReserved',
         states: ['connected', 'disconnected'],
         read: (connected) => (connected ? 'connected' : 'disconnected'),
-        write: (state) => state === 'connected',
+        // socket.io reads `connected` to decide whether to deliver incoming
+        // events and send outgoing ones; faking it would hold them back.
+        fakeProperty: false,
         announce: (emit, { current }) =>
           current === 'connected'
             ? emit('connect')
