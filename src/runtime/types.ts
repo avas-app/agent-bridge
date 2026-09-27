@@ -1,4 +1,5 @@
 import type { CallMessage, DeviceInfo, ResultMessage } from '../shared/protocol'
+import type { OptionsSchema } from './options-schema'
 
 // oxlint-disable-next-line no-explicit-any -- tools take whatever JSON the agent sends
 export type ToolFn = (...args: any[]) => unknown
@@ -38,8 +39,13 @@ export type ScenarioContext<O = unknown> = {
 /** A named setup the app defines and the agent applies, e.g. a signed-in user. */
 export type Scenario<O = unknown> = {
   description?: string
-  /** What `options` it takes, in words or as an example, for `scenario.list`. */
-  options?: string
+  /**
+   * JSON Schema (2020-12) for `options`. `scenario.apply` rejects options
+   * that don't fit before `apply` runs, and `scenario.list` shows it. Keys an
+   * object schema doesn't list are rejected unless it sets
+   * `additionalProperties`. No options are checked as `{}`.
+   */
+  options?: OptionsSchema
   /** Sets the app up. Its return value goes back to the agent. */
   apply: (context: ScenarioContext<O>) => unknown
 }

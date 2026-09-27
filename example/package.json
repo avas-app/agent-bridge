@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@avasapp/agent-bridge": "file:..",
+    "@cfworker/json-schema": "^4.1.1",
     "@expo/vector-icons": "^15.0.2",
     "@tanstack/react-query": "^5.90.0",
     "expo": "~57.0.24",

@@ -13,7 +13,7 @@ import {
   parseScenarioFlag,
   runFlow,
 } from '../flow'
-import { type AgentBridge, connect } from '../index'
+import { type AgentBridge, connect, runFlow as exported } from '../index'
 import { startFakeMetro } from './fake-metro'
 
 const cleanups: Array<() => unknown> = []
@@ -85,6 +85,10 @@ describe('--scenario', () => {
 })
 
 describe('runFlow', () => {
+  test('is exported from the client entry', () => {
+    expect(exported).toBe(runFlow)
+  })
+
   test('applies extra scenarios to a flow that declares none', async () => {
     const order: string[] = []
     const bridge = await app({
@@ -98,8 +102,7 @@ describe('runFlow', () => {
     await runFlow(
       bridge,
       { default: async () => void order.push('flow') },
-      quiet().print,
-      [parseScenarioFlag('signedIn={"user":"Ada"}')],
+      { ...quiet(), scenarios: [parseScenarioFlag('signedIn={"user":"Ada"}')] },
     )
     expect(order).toEqual(['apply {"user":"Ada"}', 'flow', 'undo'])
   })
@@ -130,7 +133,7 @@ describe('runFlow', () => {
           expect(await call('scenario.list')).toMatchObject([{ name: 'signedIn', active: true }])
         },
       },
-      out.print,
+      out,
     )
     expect(seen).toEqual({ signedIn: { user: 'Ada' } })
     expect(order).toEqual(['apply', 'flow', 'app.restore', 'undo'])
@@ -150,7 +153,7 @@ describe('runFlow', () => {
         throw new Error('flow broke')
       },
     }
-    await expect(runFlow(bridge, flow, quiet().print)).rejects.toThrow('flow broke')
+    await expect(runFlow(bridge, flow, quiet())).rejects.toThrow('flow broke')
     expect(order).toEqual(['undo'])
   })
 
@@ -164,7 +167,7 @@ describe('runFlow', () => {
       },
     })
     const out = quiet()
-    const result = await runFlow(bridge, { scenario: 's', default: async () => {} }, out.print)
+    const result = await runFlow(bridge, { scenario: 's', default: async () => {} }, out)
     expect(result.restoreErrors).toEqual(['scenario.restore: s: stuck'])
     expect(out.lines.some((l) => l.includes('restore failed: scenario.restore: s: stuck'))).toBe(true)
   })
@@ -172,7 +175,7 @@ describe('runFlow', () => {
   test('says so when the app defines no scenarios', async () => {
     const bridge = await app(null)
     await expect(
-      runFlow(bridge, { scenario: 'signedIn', default: async () => {} }, quiet().print),
+      runFlow(bridge, { scenario: 'signedIn', default: async () => {} }, quiet()),
     ).rejects.toThrow('the app defines none')
   })
 
@@ -186,7 +189,7 @@ describe('runFlow', () => {
         return { value: 1, ms: 1, appMs: 1, logs: [] }
       },
     } as unknown as AgentBridge
-    await runFlow(bridge, { default: async ({ step }) => void (await step('one', 'x.y')) }, quiet().print)
+    await runFlow(bridge, { default: async ({ step }) => void (await step('one', 'x.y')) }, quiet())
     expect(calls).toEqual(['x.y'])
   })
 })

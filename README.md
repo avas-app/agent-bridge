@@ -135,6 +135,18 @@ export default async ({ step }) => {
 }
 ```
 
+To run flows from your own script or CI job, import them and pass them to `runFlow`. It applies declared scenarios, restores afterwards, and throws what the flow threw:
+
+```ts
+import { connect, runFlow } from '@avasapp/agent-bridge/client'
+import * as mainTabs from './flows/main-tabs.flow.mjs'
+
+const app = await connect({ metro: 'localhost:8081' })
+const { errors, restoreErrors } = await runFlow(app, mainTabs, { scenarios: [{ name: 'signedIn' }] })
+app.close()
+if (errors || restoreErrors.length) process.exit(1)
+```
+
 No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
 
 ## Scenarios
@@ -148,7 +160,13 @@ import { mockApi, strictNetwork } from '@avasapp/agent-bridge/network'
 const scenarios: Scenarios = {
   signedIn: {
     description: 'Signed in locally; no request reaches a server.',
-    options: '{ user?: { name?, email? } }',
+    // JSON Schema: bad options fail before apply runs, and say why.
+    options: {
+      type: 'object',
+      properties: {
+        user: { type: 'object', properties: { name: { type: 'string' }, email: { type: 'string', format: 'email' } } },
+      },
+    },
     apply: async ({ options, call, onUndo }) => {
       const user = { ...defaultUser, ...options?.user }
       // Guards first, so nothing leaves the app with the fake token.
@@ -168,6 +186,7 @@ const scenarios: Scenarios = {
 useAgentBridge({ tools, scenarios })
 ```
 
+- `options` is a JSON Schema (2020-12, checked with [`@cfworker/json-schema`](https://github.com/cfworker/cfworker/tree/main/packages/json-schema), which needs no `eval` and runs on Hermes). `scenario.apply` checks the options before anything changes, and lists every problem at once, such as `options/user/email: String does not match format "email"`. An object schema that lists `properties` rejects other keys (`options: unknown option "usr". Known: user`) unless it sets `additionalProperties`. So a typo fails instead of being ignored. No options are checked as `{}`, so `required` ones are reported.
 - `apply` is ordinary app code. `call(tool, ...args)` runs a bridge tool, and that tool's own restorer undoes the change. `onUndo(fn)` covers everything else: app mocks, gates, native state such as a URL-rewrite rule.
 - `bridge.restore` runs every scenario's undo callbacks **last**, newest first, after the store, query and network restorers. The guards stay up until the app is back in its real state. If `apply` throws, the callbacks it had registered run straight away.
 - Tools: `scenario.list`, `scenario.apply [name, options?]` (applying an active one again undoes it first) and `scenario.restore`. `npx agent-bridge scenarios` lists them.
@@ -278,6 +297,12 @@ Every entry point is gated on `process.env.NODE_ENV`, like `react/index.js`: Met
 ```sh
 npx agent-bridge assert-absent path/to/main.jsbundle
 ```
+
+## What runs where
+
+- **On your machine:** `agent-bridge run` and `runFlow` run the flow module you point them at, with your permissions, the same as `node flow.mjs`. Only run flows you'd run as scripts. In CI, don't run flows from untrusted forks with secrets in the environment, as with any test.
+- **In the app:** the bridge only calls tools and scenarios the app registered. Arguments and scenario options arrive as JSON data. Over CDP the client evaluates one fixed call with the message as a JSON string; the Expo transport sends plain JSON. Nothing the agent sends is evaluated as code.
+- **Who can reach it:** anyone who can reach Metro's debugger can already run any code in a dev build. The bridge adds no new way in, and release builds carry none of it (`assert-absent` checks).
 
 ## Traps we hit
 

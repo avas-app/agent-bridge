@@ -159,12 +159,9 @@ async function main() {
       flowScenarios(flow)
       const extra = (values.scenario ?? []).map(parseScenarioFlag)
       return withBridge(async (bridge) => {
-        const { errors, restoreErrors } = await runFlow(
-          bridge,
-          flow,
-          console.log,
-          extra,
-        )
+        const { errors, restoreErrors } = await runFlow(bridge, flow, {
+          scenarios: extra,
+        })
         if ((values.strict && errors) || restoreErrors.length)
           process.exitCode = 1
       })
@@ -178,14 +175,15 @@ async function main() {
           return
         }
         const list = await bridge.call<
-          Array<{ name: string; description?: string; options?: string; active: boolean }>
+          Array<{ name: string; description?: string; options?: unknown; active: boolean }>
         >('scenario.list')
         console.log(`${bridge.device.name} via ${bridge.transport}`)
         for (const s of list) {
           console.log(
             `  ${s.name.padEnd(20)} ${s.active ? '(active) ' : ''}${s.description ?? ''}`,
           )
-          if (s.options) console.log(`  ${''.padEnd(20)} options: ${s.options}`)
+          if (s.options)
+            console.log(`  ${''.padEnd(20)} options: ${JSON.stringify(s.options)}`)
         }
       })
     case 'session':

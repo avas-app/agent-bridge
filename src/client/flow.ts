@@ -1,5 +1,4 @@
-import type { AgentBridge, LogEntry, Timed } from './index'
-import { AgentBridgeCallError } from './index'
+import { type AgentBridge, AgentBridgeCallError, type LogEntry, type Timed } from './index'
 import { logLine } from './log-lines'
 
 /** A scenario a flow needs: a name, or a name with options. */
@@ -79,18 +78,26 @@ export function mergeScenarios(
 const failedLogs = (error: unknown): LogEntry[] =>
   error instanceof AgentBridgeCallError ? error.logs : []
 
+export type RunFlowOptions = {
+  /** Where step lines go. Default: console.log. */
+  print?: (line: string) => void
+  /** More scenarios to apply, e.g. from `--scenario`; one of the same name replaces the flow's. */
+  scenarios?: Array<{ name: string; options?: unknown }>
+}
+
 /**
- * Runs a flow: applies its scenarios (and `extra` ones, e.g. from
- * `--scenario`), runs it, and when there were any, undoes everything with
- * bridge.restore afterwards, even when it fails.
+ * Runs a flow module you imported: applies its scenarios, runs it, and when
+ * there were any, undoes everything with bridge.restore afterwards, even
+ * when it fails. Throws what the flow threw; otherwise returns how it went.
+ * It runs only the code you hand it, in this process.
  */
 export async function runFlow(
   bridge: AgentBridge,
   flow: FlowModule,
-  print: (line: string) => void = console.log,
-  extra: Array<{ name: string; options?: unknown }> = [],
+  options: RunFlowOptions = {},
 ): Promise<FlowResult> {
-  const needs = mergeScenarios(flowScenarios(flow), extra)
+  const print = options.print ?? console.log
+  const needs = mergeScenarios(flowScenarios(flow), options.scenarios ?? [])
   let n = 0
   let total = 0
   let errors = 0

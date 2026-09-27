@@ -47,6 +47,9 @@ npx agent-bridge scenarios                                        # what this ap
 npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
 ```
 
+`scenarios` shows each one's options as a JSON Schema. Bad options fail
+before anything changes, and the error lists every problem
+(`options: unknown option "usr". Known: user`): fix them and apply again.
 `bridge.restore` (and `session stop`) undoes it after everything else. A local
 scenario usually turns on strict network mode: any request no mock answers
 fails with a 501, and the reply carries an error that names it

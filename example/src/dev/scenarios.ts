@@ -12,7 +12,19 @@ export const scenarios: Scenarios = {
   signedIn: {
     description:
       'Signed in locally with a fake token. No request reaches a server: /me comes from a fixture, the fake backend answers the rest, and anything else fails with a 501 (see net.strict). The realtime socket stays disconnected.',
-    options: '{ user?: { name?, email? } }',
+    // Checked before apply runs: a typo such as { usr } fails and says why.
+    options: {
+      type: 'object',
+      properties: {
+        user: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', minLength: 1 },
+            email: { type: 'string', format: 'email' },
+          },
+        },
+      },
+    },
     apply: async ({ options, call, onUndo }) => {
       const user = { ...ADA, ...(options as { user?: Partial<User> } | undefined)?.user }
       // Guards first, so nothing leaves the app with the fake token. Held

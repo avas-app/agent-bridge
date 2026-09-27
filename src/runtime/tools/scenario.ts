@@ -1,3 +1,4 @@
+import { checkOptions } from '../options-schema'
 import type { ScenarioContext, Scenarios, ToolFn, Tools } from '../types'
 
 type Active = { options: unknown; undos: Array<() => unknown> }
@@ -58,7 +59,7 @@ export function scenarioTools(
   return {
     'scenario.list': {
       description:
-        'Setups the app defines, e.g. a signed-in user: name, description, options, active.',
+        'Setups the app defines, e.g. a signed-in user: name, description, options (a JSON Schema), active.',
       run: () =>
         Object.entries(getScenarios())
           .map(([name, s]) => ({
@@ -71,9 +72,17 @@ export function scenarioTools(
     },
     'scenario.apply': {
       description:
-        'Apply a scenario: [name, options?]. Returns what it returns. Applying an active one undoes it first. bridge.restore undoes it.',
+        'Apply a scenario: [name, options?]. Options must fit its schema (scenario.list). Returns what it returns. Applying an active one undoes it first. bridge.restore undoes it.',
       run: async (name: string, options?: unknown) => {
         const scenario = find(name)
+        // Before anything changes: a bad call leaves an active scenario as it was.
+        if (scenario.options) {
+          const problems = checkOptions(scenario.options, options)
+          if (problems.length)
+            throw new Error(
+              `Scenario "${name}" got bad options, nothing was applied:\n- ${problems.join('\n- ')}\nscenario.list shows its options schema.`,
+            )
+        }
         const previous = await undo(name)
         if (previous.length)
           throw new Error(`Undoing the active "${name}" failed: ${previous.join('; ')}`)

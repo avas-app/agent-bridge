@@ -87,6 +87,7 @@ export { cdpTransport, RUNTIME_MARKER }
 // For app side effects a scenario must hold off, e.g. a realtime connection.
 export { createGate }
 export type { Gate } from './gate'
+export type { OptionsSchema } from './options-schema'
 // For custom tools that change what's on screen: await settle() before
 // returning so the agent's next check sees the render.
 export { settle }

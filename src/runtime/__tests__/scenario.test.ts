@@ -26,13 +26,13 @@ afterEach(resetScenarios)
 describe('scenarios', () => {
   test('lists scenarios with what they take and whether they are active', async () => {
     const tools = setup({
-      signedIn: { description: 'A user', options: '{ user? }', apply: () => {} },
+      signedIn: { description: 'A user', options: { type: 'object' }, apply: () => {} },
       empty: { apply: () => {} },
     })
     await run(tools, 'scenario.apply', 'signedIn')
     expect(run(tools, 'scenario.list')).toEqual([
       { name: 'empty', description: undefined, options: undefined, active: false },
-      { name: 'signedIn', description: 'A user', options: '{ user? }', active: true },
+      { name: 'signedIn', description: 'A user', options: { type: 'object' }, active: true },
     ])
   })
 
@@ -135,6 +135,102 @@ describe('scenarios', () => {
     const result = (await run(tools, 'bridge.restore')) as Record<string, unknown>
     expect(order).toEqual(['first'])
     expect(result['scenario.restore']).toEqual({ error: 's: native rule stuck' })
+  })
+})
+
+describe('scenario options', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      user: {
+        type: 'object',
+        properties: { name: { type: 'string' }, age: { type: 'integer', minimum: 0 } },
+      },
+      plan: { enum: ['free', 'pro'] },
+      tags: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' } } } },
+    },
+  } as const
+
+  const failure = async (tools: Tools, options: unknown) => {
+    const error = await (run(tools, 'scenario.apply', 's', options) as Promise<unknown>).then(
+      () => null,
+      (e: Error) => e.message,
+    )
+    if (error === null) throw new Error('expected apply to fail')
+    return error
+  }
+
+  test('good options reach apply as they are', async () => {
+    const tools = setup({ s: { options: schema, apply: ({ options }) => options } })
+    const options = { user: { name: 'Ada', age: 36 }, plan: 'pro', tags: [{ id: 'a' }] }
+    expect(await run(tools, 'scenario.apply', 's', options)).toEqual(options)
+    // No options: checked as {}, but apply still gets undefined.
+    expect(await run(tools, 'scenario.apply', 's')).toBeUndefined()
+  })
+
+  test('bad options name each problem, and nothing is applied', async () => {
+    let applied = 0
+    const tools = setup({ s: { options: schema, apply: () => void (applied += 1) } })
+    const message = await failure(tools, {
+      user: { name: 3, age: -1, nmae: 'x' },
+      plan: 'gold',
+      usr: {},
+      tags: [{ id: 'a', ID: 'b' }],
+    })
+    expect(applied).toBe(0)
+    expect(message).toStartWith('Scenario "s" got bad options, nothing was applied:')
+    for (const line of [
+      'options: unknown option "usr". Known: user, plan, tags',
+      'options/user: unknown option "nmae". Known: name, age',
+      'options/tags/0: unknown option "ID". Known: id',
+      'options/user/name: Instance type "number" is invalid. Expected "string".',
+      'options/user/age:',
+      'options/plan:',
+    ])
+      expect(message).toContain(`- ${line}`)
+    // Cascades ("does not match schema") stay out.
+    expect(message).not.toContain('does not match schema')
+  })
+
+  test('required options are checked when none are passed', async () => {
+    const tools = setup({
+      s: { options: { type: 'object', properties: { user: {} }, required: ['user'] }, apply: () => {} },
+    })
+    expect(await failure(tools, undefined)).toContain('options: Instance does not have required property "user".')
+  })
+
+  test('additionalProperties or patternProperties keeps an object open', async () => {
+    const tools = setup({
+      s: {
+        options: {
+          type: 'object',
+          properties: { a: { type: 'object', properties: {}, patternProperties: { '^x': {} } } },
+          additionalProperties: true,
+        },
+        apply: () => 'ok',
+      },
+    })
+    expect(await run(tools, 'scenario.apply', 's', { a: { x1: 1 }, other: 1 })).toBe('ok')
+  })
+
+  test("the app's own additionalProperties: false reads as an unknown option", async () => {
+    const tools = setup({
+      s: { options: { type: 'object', properties: { a: {} }, additionalProperties: false }, apply: () => {} },
+    })
+    const message = await failure(tools, { b: 1 })
+    expect(message).toContain('- options: unknown option "b". Known: a')
+    expect(message).not.toContain('False boolean schema')
+  })
+
+  test('a bad re-apply leaves the active scenario alone', async () => {
+    const order: string[] = []
+    const tools = setup({
+      s: { options: schema, apply: ({ onUndo }) => onUndo(() => order.push('undo')) },
+    })
+    await run(tools, 'scenario.apply', 's', { plan: 'pro' })
+    await failure(tools, { plan: 'gold' })
+    expect(order).toEqual([])
+    expect(run(tools, 'scenario.list')).toMatchObject([{ active: true }])
   })
 })
 
