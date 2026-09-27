@@ -1,6 +1,6 @@
 ---
 name: agent-bridge
-description: "Drive a running React Native or Expo dev build directly through @avasapp/agent-bridge: see what's on screen, fill in forms, press buttons, seed query data, flip feature flags, set store state, navigate, mock the network, fake realtime messages and undo it all, in milliseconds per call instead of tapping through the app. Pairs with agent-device, which opens the app and covers native UI, real taps and screenshots. Use whenever you need the app in a particular state to test a change, or need to verify what a screen shows."
+description: "Drive a running React Native or Expo dev build directly through @avasapp/agent-bridge: start from an app-defined scenario such as a locally signed-in user, see what's on screen, fill in forms, press buttons, seed query data, flip feature flags, set store state, navigate, mock the network, fake realtime messages and undo it all, in milliseconds per call instead of tapping through the app. Pairs with agent-device, which opens the app and covers native UI, real taps and screenshots. Use whenever you need the app in a particular state to test a change, or need to verify what a screen shows."
 ---
 
 # Driving an app with agent-bridge
@@ -36,6 +36,27 @@ minutes without calls and runs `bridge.restore` when it does.
 
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.
+
+## Start from a scenario
+
+Apps can define named setups, such as a locally signed-in user. Use one
+instead of signing in by hand or seeding auth state yourself:
+
+```sh
+npx agent-bridge scenarios                                        # what this app defines
+npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
+```
+
+`bridge.restore` (and `session stop`) undoes it after everything else. A local
+scenario usually turns on strict network mode: any request no mock answers
+fails with a 501, and the reply carries an error that names it
+(`! error during …: agent-bridge strict network: no mock for GET https://…`).
+Add a mock for it (`net.mock`), don't turn strict mode off.
+`npx agent-bridge call net.strict` lists what it blocked. Strict mode sees JS
+`fetch`/XHR only, not images, WebSockets or native SDKs.
+
+If the app has no scenario for the state you need, say so. Don't sign in to a
+real account instead.
 
 ## See and use the screen
 
@@ -95,6 +116,8 @@ last 200 errors and warnings.
 Write the steps into a flow file and run it:
 
 ```js
+export const scenario = 'signedIn'   // applied first, undone after, even on failure
+
 export default async ({ step }) => {
   await step('open form', 'screen.press', 'add-plant')
   await step('save empty', 'screen.press', 'save-plant')
@@ -114,8 +137,8 @@ npx agent-bridge session stop             # runs bridge.restore; --keep leaves t
 ```
 
 `bridge.restore` unpins queries, puts back store and MMKV values, removes
-network mocks, unmutes realtime channels and ends a faked connection state, so
-the next run starts from the real state.
+network mocks, unmutes realtime channels and ends a faked connection state,
+then undoes active scenarios, so the next run starts from the real state.
 
 ## Traps
 

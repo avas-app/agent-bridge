@@ -1,7 +1,7 @@
 import { bodyText, errorMessage, formatBody } from './body'
 import {
-  type Answer,
   answer,
+  blockedResponse,
   finishEntry,
   isOffline,
   isSkipped,
@@ -13,7 +13,7 @@ import {
   sleep,
   startEntry,
 } from './state'
-import type { LogEntry } from './types'
+import type { LogEntry, MockResponse } from './types'
 
 type Entry = LogEntry & { started: number }
 type Meta = {
@@ -73,9 +73,9 @@ function fire(xhr: XMLHttpRequest, type: string): void {
   xhr.dispatchEvent(new Ctor(type))
 }
 
-function respond(xhr: XMLHttpRequest, hit: Answer, url: string): void {
-  const offline = isOffline(hit.response)
-  const { status, text, headers } = responseParts(hit.response)
+function respond(xhr: XMLHttpRequest, mocked: MockResponse, url: string): void {
+  const offline = isOffline(mocked)
+  const { status, text, headers } = responseParts(mocked)
 
   if (isRN(xhr)) {
     const id = -++fakeRequestId
@@ -169,19 +169,29 @@ export function patchXhr(state: NetworkState): (() => void) | null {
       url,
       requestBody: formatBody(text),
     })
-    const candidates = matchingMocks(state, method, url)
-    if (!candidates.length) {
-      track(this, entry)
-      return send.call(this, body)
+    // No mock answered: the network, or strict mode's error response.
+    const passOn = () => {
+      const blocked = blockedResponse(state, method, url)
+      if (!blocked) {
+        track(this, entry)
+        return send.call(this, body)
+      }
+      const { status, text: out } = responseParts(blocked)
+      entry.blocked = true
+      finishEntry(entry, { status, responseBody: formatBody(out) })
+      // Answered after send returns, as a real response would be.
+      void Promise.resolve().then(() => {
+        if (!meta.aborted) respond(this, blocked, url)
+      })
     }
+
+    const candidates = matchingMocks(state, method, url)
+    if (!candidates.length) return passOn()
 
     const request = async () => mockRequest(method, url, meta.headers, text)
     answer(state, candidates, request).then(
       async (hit) => {
-        if (!hit) {
-          track(this, entry)
-          return send.call(this, body)
-        }
+        if (!hit) return passOn()
         entry.mocked = true
         await sleep(hit.mock.delayMs)
         if (meta.aborted) {
@@ -196,12 +206,12 @@ export function patchXhr(state: NetworkState): (() => void) | null {
             ? { error: `${OFFLINE_MESSAGE} (mocked offline)` }
             : { status, responseBody: formatBody(out) },
         )
-        respond(this, hit, url)
+        respond(this, hit.response, url)
       },
       (error: unknown) => {
         entry.mocked = true
         finishEntry(entry, { error: errorMessage(error) })
-        respond(this, { mock: candidates[0]!, response: { offline: true } }, url)
+        respond(this, { offline: true }, url)
       },
     )
   }

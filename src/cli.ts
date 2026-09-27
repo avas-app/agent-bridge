@@ -11,8 +11,8 @@ import {
   connect,
   type LogEntry,
   listDevices,
-  type Timed,
 } from './client/index'
+import { type FlowModule, flowScenarios, runFlow } from './client/flow'
 import { logLine } from './client/log-lines'
 import {
   DAEMON_COMMAND,
@@ -30,6 +30,9 @@ Usage
   agent-bridge tools                      Tools the app exposes
   agent-bridge call <tool> [args]         Call a tool. args: a JSON array, or one JSON value
   agent-bridge run <flow.mjs|.ts>         Run a flow: export default async ({ step, call }) => {}
+                                          export const scenario = 'signedIn' applies it first
+                                          and runs bridge.restore after, even on failure
+  agent-bridge scenarios                  Scenarios the app defines (scenario.apply applies one)
   agent-bridge assert-absent <files...>   Fail if a release bundle contains the bridge
 
 Sessions: one connection for all of an agent's calls
@@ -143,67 +146,34 @@ async function main() {
     case 'run': {
       const [file] = rest
       if (!file) throw new Error('Usage: agent-bridge run <flow file>')
-      const flow = (await import(pathToFileURL(resolve(file)).href)) as {
-        default: (api: {
-          bridge: AgentBridge
-          call: AgentBridge['call']
-          step: (
-            label: string,
-            tool: string,
-            ...args: unknown[]
-          ) => Promise<unknown>
-        }) => Promise<void>
-      }
+      const flow = (await import(pathToFileURL(resolve(file)).href)) as FlowModule
+      // Before connecting, so a bad declaration fails fast.
+      flowScenarios(flow)
       return withBridge(async (bridge) => {
-        let n = 0
-        let total = 0
-        let errors = 0
-        const t0 = performance.now()
-        const report = (logs: LogEntry[]) => {
-          errors += logs.length
-          for (const e of logs) console.log(`   ${logLine(e)}`)
-        }
-        // Every call the flow makes reports the errors its reply carried.
-        const timed = async <T>(
-          tool: string,
-          ...args: unknown[]
-        ): Promise<Timed<T>> => {
-          try {
-            const result = await bridge.timed<T>(tool, ...args)
-            report(result.logs)
-            return result
-          } catch (error) {
-            report(failedLogs(error))
-            throw error
-          }
-        }
-        const call = async <T>(tool: string, ...args: unknown[]) =>
-          (await timed<T>(tool, ...args)).value
-        const step = async (
-          label: string,
-          tool: string,
-          ...args: unknown[]
-        ) => {
-          const { value, ms, logs } = await bridge.timed(tool, ...args).catch(
-            (error: unknown) => {
-              report(failedLogs(error))
-              throw error
-            },
-          )
-          total += ms
-          console.log(
-            `${String(++n).padStart(2, '0')} ${label.padEnd(30)} ${ms.toFixed(1).padStart(7)} ms`,
-          )
-          report(logs)
-          return value
-        }
-        await flow.default({ bridge: { ...bridge, timed, call }, call, step })
-        console.log(
-          `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}`,
-        )
-        if (values.strict && errors) process.exitCode = 1
+        const { errors, restoreErrors } = await runFlow(bridge, flow)
+        if ((values.strict && errors) || restoreErrors.length)
+          process.exitCode = 1
       })
     }
+    case 'scenarios':
+      return withBridge(async (bridge) => {
+        if (!bridge.tools().some((t) => t.name === 'scenario.list')) {
+          console.log(
+            `${bridge.device.name} defines no scenarios (pass \`scenarios\` to useAgentBridge).`,
+          )
+          return
+        }
+        const list = await bridge.call<
+          Array<{ name: string; description?: string; options?: string; active: boolean }>
+        >('scenario.list')
+        console.log(`${bridge.device.name} via ${bridge.transport}`)
+        for (const s of list) {
+          console.log(
+            `  ${s.name.padEnd(20)} ${s.active ? '(active) ' : ''}${s.description ?? ''}`,
+          )
+          if (s.options) console.log(`  ${''.padEnd(20)} options: ${s.options}`)
+        }
+      })
     case 'session':
       return sessionCommand(rest[0], values)
     case DAEMON_COMMAND:

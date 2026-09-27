@@ -1,7 +1,8 @@
 import { bodyText, errorMessage, formatBody, isTextual } from './body'
+import type { MockResponse } from './types'
 import {
-  type Answer,
   answer,
+  blockedResponse,
   finishEntry,
   isOffline,
   isSkipped,
@@ -44,7 +45,7 @@ export function headersRecord(headers: unknown): Record<string, string> {
 // 204, 205 and 304 can't carry a body; Response throws if given one.
 const nullBody = (status: number) => [101, 204, 205, 304].includes(status)
 
-function mockedResponse(response: Answer['response']): Response {
+function mockedResponse(response: MockResponse): Response {
   const { status, text, headers } = responseParts(response)
   const body = nullBody(status) ? null : text
   if (typeof Response !== 'undefined')
@@ -132,8 +133,18 @@ export function patchFetch(state: NetworkState): (() => void) | null {
       )
     }
 
+    // No mock answered: the network, or strict mode's error response.
+    const passOn = () => {
+      const blocked = blockedResponse(state, method, url)
+      if (!blocked) return real()
+      const { status, text } = responseParts(blocked)
+      entry.blocked = true
+      finishEntry(entry, { status, responseBody: formatBody(text) })
+      return Promise.resolve(mockedResponse(blocked))
+    }
+
     const candidates = matchingMocks(state, method, url)
-    if (!candidates.length) return real()
+    if (!candidates.length) return passOn()
 
     const request = async () => {
       let body = requestBody
@@ -158,7 +169,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
       throw error
     })
     return answered.then(async (hit) => {
-      if (!hit) return real()
+      if (!hit) return passOn()
       entry.mocked = true
       await sleep(hit.mock.delayMs)
       if (init?.signal?.aborted) {

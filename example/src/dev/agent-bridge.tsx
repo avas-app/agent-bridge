@@ -7,10 +7,13 @@ import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { useQueryClient } from '@tanstack/react-query'
 import { router, useNavigationContainerRef } from 'expo-router'
 
+import { API_URL } from '@/api'
+import { useAuth } from '@/auth'
 import { realtimeDevTools } from '@/realtime'
 import { useSettings } from '@/settings'
 
 import { hudTools } from './hud'
+import { scenarios } from './scenarios'
 
 export function AgentBridge() {
   const queryClient = useQueryClient()
@@ -20,7 +23,7 @@ export function AgentBridge() {
     transports: [expoTransport(), cdpTransport()],
     tools: {
       ...query,
-      ...storeTools({ settings: useSettings }),
+      ...storeTools({ settings: useSettings, auth: useAuth }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...networkTools(),
       ...realtimeDevTools,
@@ -32,7 +35,13 @@ export function AgentBridge() {
           throw new Error('boom from a timer')
         }, 0)
       },
+      // For flows/checks/signed-in.mjs: a request the app makes, from any path.
+      'app.fetch': async (path: string) => {
+        const res = await fetch(`${API_URL}${path}`)
+        return { status: res.status, body: await res.text() }
+      },
     },
+    scenarios,
   })
   return null
 }

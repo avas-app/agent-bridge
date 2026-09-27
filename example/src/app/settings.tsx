@@ -1,6 +1,8 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native'
 
+import { useMe } from '@/api'
+import { useAuth } from '@/auth'
 import { Section, Screen } from '@/components/ui'
 import { type Theme, useSettings } from '@/settings'
 import { useColors } from '@/theme'
@@ -21,11 +23,31 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   )
 }
 
+function Account() {
+  const c = useColors()
+  const signedIn = useAuth((s) => s.token !== null)
+  const { data: me } = useMe()
+  if (!signedIn)
+    return (
+      <Row label="Not signed in">
+        <Ionicons name="person-circle-outline" size={22} color={c.muted} />
+      </Row>
+    )
+  return (
+    <Row label={me ? me.name : 'Loading…'}>
+      <Text style={{ color: c.muted }}>{me?.email ?? ''}</Text>
+    </Row>
+  )
+}
+
 export default function SettingsScreen() {
   const c = useColors()
   const { theme, setTheme, reminders, setReminders } = useSettings()
   return (
     <Screen title="Settings">
+      <Section title="Account">
+        <Account />
+      </Section>
       <Section title="Appearance">
         <View style={[styles.segments, { backgroundColor: c.subtle }]}>
           {themes.map((t) => {

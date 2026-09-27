@@ -61,4 +61,13 @@ export type LogEntry = {
   responseBody?: string
   error?: string
   mocked?: boolean
+  /** Failed by strict mode: no mock answered it. */
+  blocked?: boolean
+}
+
+export type StrictOptions = {
+  /** URLs strict mode lets through to the network: substrings or RegExps. */
+  allow?: Array<string | RegExp>
+  /** Status of the error response. Default 501. */
+  status?: number
 }

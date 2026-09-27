@@ -7,3 +7,9 @@ export const useAgentBridge = (): void => {}
 export const cdpTransport = inert
 export const settle = (): Promise<{ commits: number; ms: number }> =>
   Promise.resolve({ commits: 0, ms: 0 })
+export const createGate = (name: string) => ({
+  name,
+  closed: false,
+  close: () => () => {},
+  subscribe: () => () => {},
+})
