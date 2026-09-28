@@ -5,6 +5,7 @@ import type {
   MockOptions,
   MockRequest,
   MockResponse,
+  StrictOptions,
 } from './types'
 
 export const LOG_SIZE = 100
@@ -35,6 +36,20 @@ export type NetworkState = {
   devHost: string | null
   skip: Array<string | RegExp>
   uninstall: Array<() => void>
+  /** Strict mode from `strictNetwork()`; on while any is held. */
+  strictApp: StrictRule[]
+  /** From `net.strict`: a rule, false for off, null to follow the app. */
+  strictAgent: StrictRule | false | null
+  /** Requests strict mode failed, by "METHOD url". */
+  blocked: Map<string, { method: string; url: string; count: number }>
+}
+
+export type StrictRule = {
+  allow: Array<(url: string) => boolean>
+  /** The allow list as given, for net.strict. */
+  allowShown: string[]
+  status: number
+  offline: boolean
 }
 
 // On globalThis, so a second copy of this module (or tools rebuilt on every
@@ -53,6 +68,9 @@ export function networkState(): NetworkState {
     devHost: null,
     skip: [],
     uninstall: [],
+    strictApp: [],
+    strictAgent: null,
+    blocked: new Map(),
   }
   return g[KEY]
 }
@@ -277,6 +295,61 @@ export function responseParts(response: MockResponse): {
       headers: { 'content-type': 'application/json', ...r.headers },
     }
   return { status, text: r.body ?? '', headers: { ...r.headers } }
+}
+
+// ---- strict mode ----
+
+type AllowRule = string | RegExp | { regex: string; flags?: string }
+
+export function strictRule(
+  options: StrictOptions | { allow?: AllowRule[]; status?: number; offline?: boolean } = {},
+): StrictRule {
+  const allow = (options.allow ?? []) as AllowRule[]
+  if (!Array.isArray(allow))
+    throw new Error('allow must be a list of URL substrings or regexes')
+  return {
+    allow: allow.map((rule) => urlTest(rule)),
+    allowShown: allow.map((rule) =>
+      typeof rule === 'string' ? rule : String(rule instanceof RegExp ? rule : new RegExp(rule.regex, rule.flags)),
+    ),
+    status: options.status ?? 501,
+    offline: options.offline === true,
+  }
+}
+
+/** The strict rules in force: the agent's if it set one, else the app's. */
+export function strictRules(state: NetworkState): StrictRule[] {
+  if (state.strictAgent === false) return []
+  return state.strictAgent ? [state.strictAgent, ...state.strictApp] : state.strictApp
+}
+
+export const BLOCKED_HEADER = 'x-agent-bridge'
+
+/**
+ * In strict mode, the error response for a request no mock answered, unless
+ * an allow rule lets it through. Records it and logs it as an error, so the
+ * agent sees which request to mock.
+ */
+export function blockedResponse(
+  state: NetworkState,
+  method: string,
+  url: string,
+): MockResponse | null {
+  const rules = strictRules(state)
+  if (!rules.length || rules.some((r) => r.allow.some((test) => test(url))))
+    return null
+  const key = `${method} ${url}`
+  const seen = state.blocked.get(key)
+  if (seen) seen.count += 1
+  else state.blocked.set(key, { method, url, count: 1 })
+  const error = `agent-bridge strict network: no mock for ${key}`
+  console.error(`${error}. Mock it, or allow it in strict mode.`)
+  if (rules[0]!.offline) return { offline: true }
+  return {
+    status: rules[0]!.status,
+    json: { error },
+    headers: { [BLOCKED_HEADER]: 'blocked' },
+  }
 }
 
 export const isOffline = (response: MockResponse): response is { offline: true } =>

@@ -3,3 +3,5 @@ export const installNetwork = (): void => {}
 export const mock = () => ({ id: '', remove: () => false })
 export const mockRequests = () => () => {}
 export const networkTools = () => ({})
+export const mockApi = () => () => {}
+export const strictNetwork = () => () => {}

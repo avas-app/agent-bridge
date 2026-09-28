@@ -1,6 +1,7 @@
 // The app's API client. Every screen loads through a query over fetch.
 import { useQuery } from '@tanstack/react-query'
 
+import { useAuth } from './auth'
 import type { Tint } from './theme'
 
 export type Plant = {
@@ -26,11 +27,16 @@ export type Message = {
 
 export type Product = { id: string; name: string; emoji: string; price: string }
 
+export type User = { id: string; name: string; email: string }
+
 export const API_URL = 'https://api.sprout.example'
 
 // The host never resolves: in development src/dev/fake-backend.ts answers.
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`)
+  const { token } = useAuth.getState()
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  })
   if (!res.ok) throw new Error(`GET ${path} failed with ${res.status}`)
   return (await res.json()) as T
 }
@@ -66,3 +72,13 @@ export const useInbox = () =>
 
 export const useProducts = () =>
   useQuery({ queryKey: ['products'], queryFn: () => get<Product[]>('/products') })
+
+/** The signed-in user's profile. Only fetched while signed in. */
+export const useMe = () => {
+  const token = useAuth((s) => s.token)
+  return useQuery({
+    queryKey: ['me', token],
+    queryFn: () => get<User>('/me'),
+    enabled: token !== null,
+  })
+}

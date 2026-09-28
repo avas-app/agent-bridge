@@ -101,6 +101,8 @@ Errors come back on their own: each reply carries what the app logged with `cons
 ```sh
 npx agent-bridge session start            # hold one connection; call/tools/run reuse it
 npx agent-bridge tools
+npx agent-bridge scenarios                # setups the app defines, e.g. signedIn
+npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
 npx agent-bridge call query.pin '[["features"], {"beta": false}]'
 npx agent-bridge call screen.press '"add-plant"'
 npx agent-bridge call screen.fill '["plant-name", "Fiddle leaf fig"]'
@@ -123,6 +125,8 @@ await app.call('screen.press', 'save-plant')
 A flow is a module the CLI runs without a model in the loop:
 
 ```js
+export const scenario = 'signedIn'   // optional: see Scenarios
+
 export default async ({ step }) => {
   await step('flag: beta off', 'query.pin', ['features'], { beta: false })
   await step('save empty form', 'screen.press', 'save-plant')
@@ -131,7 +135,70 @@ export default async ({ step }) => {
 }
 ```
 
+To run flows from your own script or CI job, import them and pass them to `runFlow`. It applies declared scenarios, restores afterwards, and throws what the flow threw:
+
+```ts
+import { connect, runFlow } from '@avasapp/agent-bridge/client'
+import * as mainTabs from './flows/main-tabs.flow.mjs'
+
+const app = await connect({ metro: 'localhost:8081' })
+const { errors, restoreErrors } = await runFlow(app, mainTabs, { scenarios: [{ name: 'signedIn' }] })
+app.close()
+if (errors || restoreErrors.length) process.exit(1)
+```
+
 No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
+
+## Scenarios
+
+Most flows need the app in a known state first, above all a signed-in user. A scenario is a named setup the app defines once, for example a user who is signed in **locally**: a fake token, a fake user, and every request answered in the app, never by the real server.
+
+```ts
+import { type Scenarios, useAgentBridge } from '@avasapp/agent-bridge'
+import { mockApi, strictNetwork } from '@avasapp/agent-bridge/network'
+
+const scenarios: Scenarios = {
+  signedIn: {
+    description: 'Signed in locally; no request reaches a server.',
+    // JSON Schema: bad options fail before apply runs, and say why.
+    options: {
+      type: 'object',
+      properties: {
+        user: { type: 'object', properties: { name: { type: 'string' }, email: { type: 'string', format: 'email' } } },
+      },
+    },
+    apply: async ({ options, call, onUndo }) => {
+      const user = { ...defaultUser, ...options?.user }
+      // Guards first, so nothing leaves the app with the fake token.
+      onUndo(realtimeGate.close())
+      onUndo(strictNetwork({ allow: ['cdn.example.com'] }))
+      onUndo(mockApi(API_URL, {
+        'GET /me': { json: user },
+        'GET /orders/:id': ({ params }) => ({ json: orders[params.id] }),
+      }))
+      onUndo(await addNativeRewriteRule(tilesHost, localTiles))  // any app code
+      await call('store.set', 'auth', { token: 'local', user })  // store.restore undoes it
+      return { user }
+    },
+  },
+}
+
+useAgentBridge({ tools, scenarios })
+```
+
+- `options` is a JSON Schema (2020-12, checked with [`@cfworker/json-schema`](https://github.com/cfworker/cfworker/tree/main/packages/json-schema), which needs no `eval` and runs on Hermes). `scenario.apply` checks the options before anything changes, and lists every problem at once, such as `options/user/email: String does not match format "email"`. An object schema that lists `properties` rejects other keys (`options: unknown option "usr". Known: user`) unless it sets `additionalProperties`. So a typo fails instead of being ignored. No options are checked as `{}`, so `required` ones are reported.
+- `apply` is ordinary app code. `call(tool, ...args)` runs a bridge tool, and that tool's own restorer undoes the change. `onUndo(fn)` covers everything else: app mocks, gates, native state such as a URL-rewrite rule.
+- `bridge.restore` runs every scenario's undo callbacks **last**, newest first, after the store, query and network restorers. The guards stay up until the app is back in its real state. If `apply` throws, the callbacks it had registered run straight away.
+- Tools: `scenario.list`, `scenario.apply [name, options?]` (applying an active one again undoes it first) and `scenario.restore`. `npx agent-bridge scenarios` lists them.
+- A flow declares what it needs with `export const scenario = 'signedIn'`, or `export const scenarios = ['signedIn', { name: 'cart', options: { items: 2 } }]`. `agent-bridge run` applies them before the flow and runs `bridge.restore` afterwards, even when the flow fails. The flow gets what each `apply` returned as `scenarios.signedIn`. A failed restorer makes the run exit non-zero. `run --scenario signedIn` adds one to any flow, with JSON options after `=` (`--scenario 'signedIn={"user":{"name":"Ada"}}'`); it replaces a declared one of the same name.
+
+**Strict network.** `strictNetwork({ allow?, status?, offline? })` from `@avasapp/agent-bridge/network` (or `net.strict` from the agent) fails every `fetch` or `XMLHttpRequest` that no mock answers. The request gets a 501 with `{ error: "agent-bridge strict network: no mock for GET https://…" }` and a `console.error`, so the agent sees it with the reply. With `offline: true` it fails like a network failure instead. `net.strict` lists the requests it blocked. `allow` lets hosts through (substrings or RegExps); Metro always gets through. It covers JS requests only: images, native SDKs (a map's tile fetches, say), and WebSockets go around it, so a scenario handles those with app code and `onUndo`.
+
+**Fixtures.** `mockApi(baseUrl, routes, options?)` answers `'METHOD /path'` routes, or `'/path'` for any method. `:name` matches one path segment and `*` the rest; the query string is ignored. A route's value is a response (`{ json }`, `{ status, body }`…) or a handler that gets the request with `params` and `query`. It returns a function that removes the routes.
+
+**Gates.** Some side effects must wait while a scenario runs, such as a realtime client connecting with the fake token and signing the user out when auth fails. `createGate(name)` from `@avasapp/agent-bridge` is a counted switch: `gate.close()` returns the function that reopens it (hand that to `onUndo`), `gate.closed` is what app code checks, and `gate.subscribe(fn)` hears it change. In a release build it's always open. `realtime.connection` isn't enough on its own: it hides the state from the app, but the client still connects.
+
+The example app's [`src/dev/scenarios.ts`](example/src/dev/scenarios.ts) is a complete local `signedIn`, and [`flows/checks/signed-in.mjs`](example/flows/checks/signed-in.mjs) declares it.
 
 ## Adapters
 
@@ -141,12 +208,12 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 | `@avasapp/agent-bridge/zustand` | `store.list` `get` `set` `call` `restore` | your stores |
 | `@avasapp/agent-bridge/react-native-mmkv` | `mmkv.list` `keys` `get` `set` `delete` `restore` | your MMKV instances |
 | `@avasapp/agent-bridge/expo-router` | `router.navigate` `push` `replace` `back` `current` | `router` and `useNavigationContainerRef()` from expo-router |
-| `@avasapp/agent-bridge/network` | `net.log` `mock` `mocks` `unmock` `clear` `restore` | nothing: patches `fetch` and `XMLHttpRequest` in dev |
+| `@avasapp/agent-bridge/network` | `net.log` `mock` `mocks` `unmock` `strict` `clear` `restore` | nothing: patches `fetch` and `XMLHttpRequest` in dev |
 | `@avasapp/agent-bridge/ably` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your Ably `Realtime` client |
 | `@avasapp/agent-bridge/socket.io` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your socket.io `Socket` |
 | `@avasapp/agent-bridge/realtime` | `realtime.channels` `log` `emit` `mute` `unmute` `restore` | two lines in your own subscribe function |
 
-A pin keeps seeded data in place through refetches until you unpin it. `net.mock('/inbox', { status: 500 })` or `{ offline: true }` fails a route; apps can fake a whole backend with `mockRequests` from the same import.
+A pin keeps seeded data in place through refetches until you unpin it. `net.mock('/inbox', { status: 500 })` or `{ offline: true }` fails a route; apps can fake a whole backend with `mockRequests` or `mockApi` from the same import, and turn on strict mode with `strictNetwork`.
 
 ## Realtime
 
@@ -231,16 +298,11 @@ Every entry point is gated on `process.env.NODE_ENV`, like `react/index.js`: Met
 npx agent-bridge assert-absent path/to/main.jsbundle
 ```
 
-## Traps we hit
+## What runs where
 
-- **Run the agent on the machine with the simulator.** Every call pays the network otherwise.
-- **Hidden tabs stay mounted.** `screen.findText` skips anything under an inactive `RNSScreen`.
-- **Expo checks the debugger's Origin** against the host Metro advertises and drops mismatches silently. The client reads it from the manifest.
-- **Expo Go on Android has no CDP `Runtime.evaluate`.** Use the Expo socket there (the default); CDP works in dev builds and in Expo Go on iOS.
-- **Expo's socket broadcasts to every app.** Calls are addressed to one device; pick it with `--device` when several are connected.
-- **Screen checks through the accessibility tree are slow** (hundreds of ms each). Check in-app, and keep one real UI check per flow.
-- **`screen.fill` skips the keyboard.** It runs the input's handlers, so validation and state are real, but autocorrect, native `maxLength` and uncontrolled inputs' native text are not.
-- **Keep your `QueryClient` in state** (`useState(() => new QueryClient())`). Created at module level, a Fast Refresh can leave the bridge holding a different client than the screen.
+- **On your machine:** `agent-bridge run` and `runFlow` run the flow module you point them at, with your permissions, the same as `node flow.mjs`. Only run flows you'd run as scripts. In CI, don't run flows from untrusted forks with secrets in the environment, as with any test.
+- **In the app:** the bridge only calls tools and scenarios the app registered. Arguments and scenario options arrive as JSON data. Over CDP the client evaluates one fixed call with the message as a JSON string; the Expo transport sends plain JSON. Nothing the agent sends is evaluated as code.
+- **Who can reach it:** anyone who can reach Metro's debugger can already run any code in a dev build. The bridge adds no new way in, and release builds carry none of it (`assert-absent` checks).
 
 ## License
 

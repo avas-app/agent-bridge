@@ -107,6 +107,14 @@ export async function listDevices(
   ]
 }
 
+export {
+  type FlowApi,
+  type FlowModule,
+  type FlowResult,
+  type FlowScenario,
+  type RunFlowOptions,
+  runFlow,
+} from './flow'
 export { type SessionConnectOptions, connectSession } from './session/client'
 export { type SessionState, listSessions } from './session/state'
 export type { DeviceInfo, LogEntry, ToolInfo } from '../shared/protocol'

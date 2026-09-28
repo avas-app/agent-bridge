@@ -15,3 +15,5 @@ npx agent-bridge run flows/demo.mjs       # PACE=paced holds each step
 `src/dev/` holds the bridge setup and the step overlay (dev builds only). `media/` has the recordings.
 
 The inbox is live: `src/realtime.ts` connects a socket.io socket to `realtime-server.mjs` (port 8138, on the Metro machine) and patches it with `socketIoTools`, so agents get `realtime.*`. Push a real message with `curl 'localhost:8138/push?title=Hello'`. `flows/checks/realtime.mjs` checks the whole thing: real pushes, mute, emit, a faked disconnect and restore. Without the server the app still runs, and `realtime.emit` still works.
+
+The app has a local `signedIn` scenario (`src/dev/scenarios.ts`): a fake token in the `auth` store, `/me` from a fixture, strict network so any request nothing answers fails with a 501, and a gate that keeps the realtime socket disconnected. `npx agent-bridge scenarios` lists it; `flows/checks/signed-in.mjs` declares it, and `agent-bridge run` signs in before the flow and out after it. That flow blocks one request on purpose, so the run reports one app error.

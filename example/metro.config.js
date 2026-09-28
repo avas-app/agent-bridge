@@ -1,5 +1,7 @@
 // The library is symlinked from the repo root. Hide the root's node_modules so
 // it resolves react, react-native and expo from this app: one copy of each.
+// That hides the library's own dependencies too, so they are in this app's
+// package.json (an app that installs the library from npm gets them anyway).
 const path = require('node:path')
 const { getDefaultConfig } = require('expo/metro-config')
 
