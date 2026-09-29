@@ -6,6 +6,7 @@ import type { ToolDefinition, ToolFn, Tools } from './types'
 function unwrap(definition: ToolDefinition): {
   run: ToolFn
   description?: string
+  maxArgs?: number
 } {
   return typeof definition === 'function' ? { run: definition } : definition
 }
@@ -44,7 +45,13 @@ export function createRegistry(
           .join(', ')
         throw new Error(`Unknown tool "${call.tool}". Known: ${known}`)
       }
-      const value = await unwrap(definition).run(...(call.args ?? []))
+      const { run: tool, maxArgs } = unwrap(definition)
+      const args = call.args ?? []
+      if (maxArgs !== undefined && args.length > maxArgs)
+        throw new Error(
+          `${call.tool} takes at most ${maxArgs} argument${maxArgs === 1 ? '' : 's'}, got ${args.length}. A JSON array is spread into the arguments; wrap it once more to pass an array as one argument.`,
+        )
+      const value = await tool(...args)
       return { id: call.id, from, ok: true, value: toJson(value), ms: ms() }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { QueryClient, QueryObserver } from '@tanstack/query-core'
 
+import { createRegistry } from '../../runtime/registry'
 import type { ToolFn, Tools } from '../../runtime/types'
 import { queryTools } from '../tanstack-query'
 
@@ -95,5 +96,97 @@ describe('queryTools', () => {
     expect(client.getQueryData(['agentOnly'])).toBeUndefined()
     expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 0, refetched: 0 })
     for (const stop of stops) stop()
+  })
+
+  describe('key shapes', () => {
+    const setup = () => {
+      const client = new QueryClient()
+      client.setQueryData(['expressInfo', 'id'], { a: 1 })
+      client.setQueryData(['expressInfo', 'other'], 2)
+      client.getQueryCache().build(client, { queryKey: ['todos'] })
+      return { client, tools: queryTools(client) }
+    }
+
+    test('query.get takes a flat key or a wrapped one', () => {
+      const { tools } = setup()
+      expect(run(tools, 'query.get', 'expressInfo', 'id')).toEqual({ a: 1 })
+      expect(run(tools, 'query.get', ['expressInfo', 'id'])).toEqual({ a: 1 })
+    })
+
+    test('query.get errors on a missing query, with similar keys, but not on undefined data', () => {
+      const { tools } = setup()
+      expect(() => run(tools, 'query.get', 'expressInfo', 'nope')).toThrow(
+        'No cached query with key ["expressInfo","nope"]. Similar: ["expressInfo","id"]',
+      )
+      expect(() => run(tools, 'query.get')).toThrow('needs a query key')
+      expect(run(tools, 'query.get', ['todos'])).toBeUndefined()
+    })
+
+    test('query.refetch reports how many matched and errors on none', async () => {
+      const { client, tools } = setup()
+      let n = 0
+      const queryFn = async () => ++n
+      for (const q of client.getQueryCache().findAll({ queryKey: ['expressInfo'] })) q.setOptions({ queryFn })
+      expect(await run(tools, 'query.refetch', 'expressInfo', 'id')).toEqual({ matched: 1, refetched: 1, data: 1 })
+      expect(await run(tools, 'query.refetch', ['expressInfo'])).toMatchObject({ matched: 2, refetched: 2 })
+      await expect(run(tools, 'query.refetch', 'missing')).rejects.toThrow('No cached query matches key ["missing"]')
+    })
+
+    test('query.list shows staleness and timestamps, and filters by prefix in either shape', () => {
+      const { client, tools } = setup()
+      type Row = { key: unknown[]; isInvalidated: boolean; isStale: boolean; fetchStatus: string; dataUpdatedAt: number; errorUpdatedAt: number }
+      const only = (...args: unknown[]) => run(tools, 'query.list', ...args) as Row[]
+      expect(only()).toHaveLength(3)
+      expect(only('expressInfo').map((q) => q.key)).toEqual([['expressInfo', 'id'], ['expressInfo', 'other']])
+      expect(only(['expressInfo', 'id'])).toHaveLength(1)
+      const [entry] = only(['expressInfo', 'id'])
+      expect(entry).toMatchObject({ isInvalidated: false, fetchStatus: 'idle', errorUpdatedAt: 0 })
+      expect(entry!.dataUpdatedAt).toBeGreaterThan(0)
+      void client.invalidateQueries({ queryKey: ['expressInfo', 'id'], refetchType: 'none' })
+      expect(only(['expressInfo', 'id'])[0]).toMatchObject({ isInvalidated: true, isStale: true })
+    })
+
+    test('query.invalidate and query.unpin take a flat key', async () => {
+      const { client, tools } = setup()
+      await run(tools, 'query.pin', ['flat', 'pin'], 1)
+      expect(run(tools, 'query.unpin', 'flat', 'pin')).toBe(true)
+      expect(run(tools, 'query.unpin', 'flat', 'pin')).toBe(false)
+      await run(tools, 'query.invalidate', 'expressInfo')
+      expect(client.getQueryState(['expressInfo', 'id'])?.isInvalidated).toBe(true)
+    })
+
+    test('query.unpin of an uncached key does not create an entry', () => {
+      const { tools } = setup()
+      expect(run(tools, 'query.unpin', 'typo')).toBe(false)
+      expect(() => run(tools, 'query.get', 'typo')).toThrow('No cached query')
+    })
+
+    test('query.set and query.pin reject a key that is not an array, and extra args', async () => {
+      const { client, tools } = setup()
+      await expect(run(tools, 'query.set', 'todos', { a: 1 })).rejects.toThrow('takes the key as an array')
+      await expect(run(tools, 'query.pin', 'todos', { a: 1 })).rejects.toThrow('Wrap it: [["todos"], <data>]')
+      expect(client.getQueryData('todos' as never)).toBeUndefined()
+      const registry = createRegistry(() => tools)
+      const call = (tool: string, ...args: unknown[]) => registry.dispatch({ id: '1', tool, args }, 'dev')
+      expect(await call('query.set', ['x'], 1, 2)).toMatchObject({ ok: false, error: expect.stringContaining('at most 2') })
+      expect(await call('query.unpinAll', 1)).toMatchObject({ ok: false })
+    })
+
+    test('query.unpinAll unpins every pin, including flat-looking keys', async () => {
+      const { tools } = setup()
+      await run(tools, 'query.pin', ['p'], 1)
+      await run(tools, 'query.pin', ['q', 1], 2)
+      expect(run(tools, 'query.unpinAll')).toBe(2)
+      expect((run(tools, 'query.list', 'p') as Array<{ pinned: boolean }>)[0]!.pinned).toBe(false)
+      expect(run(tools, 'query.unpinAll')).toBe(0)
+    })
+
+    test('query.refetch does not count queries it cannot fetch', async () => {
+      const { client, tools } = setup()
+      // ['todos'] was built with no data and no queryFn.
+      await expect(run(tools, 'query.refetch', 'todos')).rejects.toThrow('none can be refetched')
+      client.getQueryCache().find({ queryKey: ['expressInfo', 'id'] })!.setOptions({ queryFn: async () => 5 })
+      expect(await run(tools, 'query.refetch', 'expressInfo')).toMatchObject({ matched: 2, refetched: 1 })
+    })
   })
 })

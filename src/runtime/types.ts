@@ -4,7 +4,17 @@ import type { OptionsSchema } from './options-schema'
 // oxlint-disable-next-line no-explicit-any -- tools take whatever JSON the agent sends
 export type ToolFn = (...args: any[]) => unknown
 
-export type ToolDefinition = ToolFn | { description?: string; run: ToolFn }
+export type ToolDefinition =
+  | ToolFn
+  | {
+      description?: string
+      /**
+       * The most arguments `run` takes. A call with more fails instead of
+       * dropping the extras, so a mis-shaped call is not read as a success.
+       */
+      maxArgs?: number
+      run: ToolFn
+    }
 
 /** Tools by name. Namespace them with a dot, e.g. `query.pin`. */
 export type Tools = Record<string, ToolDefinition>

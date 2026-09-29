@@ -59,4 +59,49 @@ describe('storeTools', () => {
     expect(run(storeTools({ store, other }), 'store.restore')).toEqual([])
     expect(store.getState().colorScheme).toBe('light')
   })
+
+  describe('store.get paths', () => {
+    const app = createStore(() => ({
+      auth: { isLoggedIn: true, token: 'secret' },
+      settings: { fontScale: 1.2 },
+      items: [{ id: 'a' }],
+      n: 0,
+    }))
+    const t = storeTools({ app })
+
+    test('a path is a dotted string, an array, or the remaining args', () => {
+      expect(run(t, 'store.get', 'app', 'auth.isLoggedIn')).toBe(true)
+      expect(run(t, 'store.get', 'app', 'auth', 'isLoggedIn')).toBe(true)
+      expect(run(t, 'store.get', 'app', ['auth', 'isLoggedIn'])).toBe(true)
+      expect(run(t, 'store.get', 'app', 'items', 0, 'id')).toBe('a')
+      expect(run(t, 'store.get', 'app', 'auth')).toEqual({ isLoggedIn: true, token: 'secret' })
+    })
+
+    test('pick returns just the fields, relative to the path', () => {
+      expect(run(t, 'store.get', 'app', { pick: ['auth.isLoggedIn', 'settings.fontScale'] })).toEqual({
+        'auth.isLoggedIn': true,
+        'settings.fontScale': 1.2,
+      })
+      expect(run(t, 'store.get', 'app', 'auth', { pick: ['isLoggedIn'] })).toEqual({ isLoggedIn: true })
+    })
+
+    test('a null or undefined path means the whole state', () => {
+      expect(run(t, 'store.get', 'app', null)).toEqual(app.getState())
+      expect(run(t, 'store.get', 'app', undefined, { pick: ['n'] })).toEqual({ n: 0 })
+    })
+
+    test('keys lists top-level keys and types without values', () => {
+      expect(run(t, 'store.get', 'app', { keys: true })).toEqual({
+        auth: 'object',
+        settings: 'object',
+        items: 'array',
+        n: 'number',
+      })
+    })
+
+    test('rejects a bad path part or option', () => {
+      expect(() => run(t, 'store.get', 'app', true)).toThrow('dotted string')
+      expect(() => run(t, 'store.get', 'app', { picks: [] })).toThrow('Unknown store.get option "picks"')
+    })
+  })
 })

@@ -1,4 +1,4 @@
-import type { QueryClient, QueryKey } from '@tanstack/query-core'
+import { hashKey, type QueryClient, type QueryKey } from '@tanstack/query-core'
 
 import type { Tools } from '../runtime/types'
 
@@ -35,6 +35,13 @@ function pinStateFor(queryClient: QueryClient): PinState {
 const rendered = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 /**
+ * A query key from a tool's arguments: `("todos", 1)` or `(["todos", 1])`,
+ * since the CLI spreads a JSON array into arguments.
+ */
+const keyOf = (args: unknown[]): QueryKey =>
+  args.length === 1 && Array.isArray(args[0]) ? args[0] : args
+
+/**
  * Read and seed the TanStack Query cache. `query.pin` keeps a seed in place:
  * when a refetch lands with real data, the seed is put back until unpinned.
  */
@@ -45,6 +52,20 @@ export function queryTools(queryClient: QueryClient): Tools {
 
   const hashOf = (key: QueryKey) =>
     cache.build(queryClient, { queryKey: key }).queryHash
+
+  // Looks a hash up without adding an empty query for a key that isn't cached.
+  const existingHash = (key: QueryKey) =>
+    cache.find({ queryKey: key, exact: true })?.queryHash ?? hashKey(key)
+
+  // query.set and query.pin take (key, data), so a flat key can't be told
+  // from the data: ["todos", {...}] would seed the string key "todos".
+  const arrayKey = (tool: string, key: unknown): QueryKey => {
+    if (!Array.isArray(key))
+      throw new Error(
+        `${tool} takes the key as an array, got ${JSON.stringify(key)}. Wrap it: [[${JSON.stringify(key)}], <data>]`,
+      )
+    return key
+  }
 
   const apply = (key: QueryKey, data: unknown) => {
     state.applying = true
@@ -67,8 +88,8 @@ export function queryTools(queryClient: QueryClient): Tools {
     })
   }
 
-  const unpin = (key: QueryKey) => {
-    const removed = pins.delete(hashOf(key))
+  const unpinKey = (key: QueryKey, hash = existingHash(key)) => {
+    const removed = pins.delete(hash)
     if (!pins.size) {
       state.unsubscribe?.()
       state.unsubscribe = null
@@ -77,6 +98,7 @@ export function queryTools(queryClient: QueryClient): Tools {
       void queryClient.invalidateQueries({ queryKey: key, exact: true })
     return removed
   }
+  const unpin = (...args: unknown[]) => unpinKey(keyOf(args))
 
   // Put a query the agent touched back to real data: refetch it (active or
   // not), or drop it when it has nothing to fetch with, since only the agent
@@ -100,23 +122,45 @@ export function queryTools(queryClient: QueryClient): Tools {
 
   return {
     'query.list': {
-      description: 'Cached queries: key, status, observer count, pinned.',
-      run: () =>
-        cache.getAll().map((q) => ({
+      description:
+        'Cached queries: key, status, fetchStatus, observer count, pinned, isStale, isInvalidated, dataUpdatedAt, errorUpdatedAt. Optional key prefix filter, e.g. ("todos") or (["todos", 1]).',
+      run: (...args: unknown[]) =>
+        cache.findAll(args.length ? { queryKey: keyOf(args) } : {}).map((q) => ({
           key: q.queryKey,
           status: q.state.status,
+          fetchStatus: q.state.fetchStatus,
           observers: q.getObserversCount(),
           pinned: pins.has(q.queryHash),
+          isStale: q.isStale(),
+          isInvalidated: q.state.isInvalidated,
+          dataUpdatedAt: q.state.dataUpdatedAt,
+          errorUpdatedAt: q.state.errorUpdatedAt,
         })),
     },
     'query.get': {
-      description: 'Cached data for a query key.',
-      run: (key: QueryKey) => queryClient.getQueryData(key),
+      description:
+        'Cached data for a query key, e.g. ("todos", 1) or (["todos", 1]). Errors when no such query is cached, listing keys that start the same.',
+      run: (...args: unknown[]) => {
+        const key = keyOf(args)
+        if (!key.length) throw new Error('query.get needs a query key')
+        if (!cache.find({ queryKey: key, exact: true })) {
+          const near = cache
+            .findAll({ queryKey: key.slice(0, 1) })
+            .slice(0, 5)
+            .map((q) => JSON.stringify(q.queryKey))
+          throw new Error(
+            `No cached query with key ${JSON.stringify(key)}.${near.length ? ` Similar: ${near.join(', ')}` : ' See query.list.'}`,
+          )
+        }
+        return queryClient.getQueryData(key)
+      },
     },
     'query.set': {
+      maxArgs: 2,
       description:
         'Replace cached data once. A refetch will overwrite it; use query.pin to keep it.',
-      run: async (key: QueryKey, data: unknown) => {
+      run: async (given: unknown, data: unknown) => {
+        const key = arrayKey('query.set', given)
         const hash = hashOf(key)
         if (!state.changed.has(hash)) state.changed.set(hash, key)
         queryClient.setQueryData(key, data)
@@ -125,9 +169,11 @@ export function queryTools(queryClient: QueryClient): Tools {
       },
     },
     'query.pin': {
+      maxArgs: 2,
       description:
         'Seed data for a query key and keep it through refetches until unpinned.',
-      run: async (key: QueryKey, data: unknown) => {
+      run: async (given: unknown, data: unknown) => {
+        const key = arrayKey('query.pin', given)
         pins.set(hashOf(key), { key, data })
         watch()
         apply(key, data)
@@ -140,19 +186,40 @@ export function queryTools(queryClient: QueryClient): Tools {
       run: unpin,
     },
     'query.unpinAll': {
+      maxArgs: 0,
       description: 'Stop every pin and refetch real data.',
       run: () =>
-        [...pins.values()].map((p) => p.key).filter((key) => unpin(key)).length,
+        [...pins].filter(([hash, { key }]) => unpinKey(key, hash)).length,
     },
     'query.refetch': {
-      description: 'Refetch a query and return its data.',
-      run: async (key: QueryKey) => {
+      description:
+        'Refetch the queries matching a key prefix, e.g. ("todos", 1) or (["todos", 1]). Returns { matched, refetched, data } (data of the exact key); errors when none match or none can be refetched (disabled, or no queryFn).',
+      run: async (...args: unknown[]) => {
+        const key = keyOf(args)
+        const found = cache.findAll({ queryKey: key })
+        if (!found.length)
+          throw new Error(
+            `No cached query matches key ${JSON.stringify(key)}. See query.list.`,
+          )
+        const defaultFn = queryClient.getDefaultOptions().queries?.queryFn
+        const refetched = found.filter(
+          (q) => !q.isDisabled() && (q.options.queryFn ?? defaultFn),
+        ).length
+        if (!refetched)
+          throw new Error(
+            `${found.length} cached ${found.length === 1 ? 'query matches' : 'queries match'} key ${JSON.stringify(key)}, but none can be refetched (disabled, or no queryFn).`,
+          )
         await queryClient.refetchQueries({ queryKey: key })
         await rendered()
-        return queryClient.getQueryData(key)
+        return {
+          matched: found.length,
+          refetched,
+          data: queryClient.getQueryData(key),
+        }
       },
     },
     'query.restore': {
+      maxArgs: 0,
       description:
         'Undo the agent: unpin everything and refetch real data for keys changed with query.set.',
       run: async () => {
@@ -171,8 +238,9 @@ export function queryTools(queryClient: QueryClient): Tools {
       },
     },
     'query.invalidate': {
-      description: 'Invalidate queries matching a key prefix.',
-      run: (key: QueryKey) => queryClient.invalidateQueries({ queryKey: key }),
+      description: 'Invalidate queries matching a key prefix, e.g. ("todos") or (["todos"]).',
+      run: (...args: unknown[]) =>
+        queryClient.invalidateQueries({ queryKey: keyOf(args) }),
     },
   }
 }

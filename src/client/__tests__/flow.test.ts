@@ -192,4 +192,22 @@ describe('runFlow', () => {
     await runFlow(bridge, { default: async ({ step }) => void (await step('one', 'x.y')) }, quiet())
     expect(calls).toEqual(['x.y'])
   })
+
+  test('step takes its arguments spread, or one array as the whole list, like the CLI', async () => {
+    const seen: unknown[][] = []
+    const bridge = await app(null, { 'x.echo': (...args: unknown[]) => (seen.push(args), args) })
+    const out = quiet()
+    await runFlow(
+      bridge,
+      {
+        default: async ({ step }) => {
+          await step('spread', 'x.echo', 'Confirm', 1)
+          await step('array', 'x.echo', ['Confirm', 1])
+          await step('nested', 'x.echo', [['Confirm']])
+        },
+      },
+      out,
+    )
+    expect(seen).toEqual([['Confirm', 1], ['Confirm', 1], [['Confirm']]])
+  })
 })

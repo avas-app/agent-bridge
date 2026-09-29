@@ -48,4 +48,13 @@ describe('toJson', () => {
     expect(toJson(a)).toEqual({ n: 1, big: '10', set: [1], self: '[Circular]' })
     expect(toJson(undefined)).toBeNull()
   })
+
+  test('rejects more arguments than maxArgs instead of dropping them', async () => {
+    const r = createRegistry(() => ({ 'demo.one': { maxArgs: 1, run: (a: unknown) => a } }))
+    expect(await r.dispatch({ id: '1', tool: 'demo.one', args: ['a'] }, 'dev')).toMatchObject({ ok: true, value: 'a' })
+    expect(await r.dispatch({ id: '2', tool: 'demo.one', args: ['a', 'b'] }, 'dev')).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('demo.one takes at most 1 argument, got 2'),
+    })
+  })
 })
