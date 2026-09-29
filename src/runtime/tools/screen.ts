@@ -26,7 +26,7 @@ export function screenTools(): Tools {
     },
     'screen.snapshot': {
       description:
-        'Buttons, inputs, text, and testID or labelled views on screen, with rects and checked/selected/expanded state (a Switch\'s value is checked). Only the focused screen: unfocused tabs and stack screens, content under an open modal, display:none and accessibility-hidden subtrees are left out, and `hidden` counts the elements skipped. {all:true} lists everything, marking off-screen (onScreen:false) and hidden (hidden:true) ones.',
+        'Buttons, inputs, text, and testID or labelled views on screen, with rects and checked/selected/expanded state (a Switch\'s value is checked). Only the focused screen: unfocused tabs and stack screens, content under an open modal, display:none and accessibility-hidden subtrees are left out, and `hidden` counts the elements skipped. {all:true} lists everything, marking off-screen (onScreen:false) and hidden (hidden:true) ones. A WebView registered with the react-native-webview adapter shows as one `webview` element with its name: use webview.* inside it.',
       run: (options?: { all?: boolean }) => screen.snapshot(options),
     },
     'screen.fill': {

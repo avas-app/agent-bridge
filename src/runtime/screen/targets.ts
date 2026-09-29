@@ -108,6 +108,7 @@ const clip = (s: string) => (s.length > 40 ? `${s.slice(0, 39)}…` : s)
 export function describe(e: ScreenElement): string {
   const stated = e.checked !== undefined || e.selected !== undefined || e.expanded !== undefined
   const bits: string[] = [stated && e.role ? e.role : e.kind]
+  if (e.webview !== undefined) bits.push(JSON.stringify(e.webview))
   if (e.testID) bits.push(`#${e.testID}`)
   if (e.text) bits.push(JSON.stringify(clip(e.text)))
   if (e.label && e.label !== e.text) bits.push(`label=${JSON.stringify(clip(e.label))}`)
