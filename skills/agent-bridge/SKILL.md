@@ -207,9 +207,11 @@ printf '%s\n' 'router.navigate /inbox' 'screen.waitFor "Inbox"' 'screen.snapshot
 ```
 
 Each line is `tool args` in the same syntax as `call`; blank lines and `#` lines are
-skipped. `ms` is the round trip, `appMs` the time inside the app. It exits 1 if
+skipped, and arguments that start like JSON (`[`, `{`, `"`) but don't parse come back
+as an error line. Lines starting with `.` (`.tools`, `.time <call> xN`, `.pending`,
+`.restore`, `.exit`) run locally. `ms` is the round trip, `appMs` the time inside the app. It exits 1 if
 any call failed; `--stop-on-error` stops at the first. Results over 32 KB are
-summarised as in `call`; `--full` prints them, and `--out <dir>` writes each
+summarised as in `call`; `--full` prints them, and `--out <dir>` (new or empty) writes each
 call's result to `<dir>/<n>-<tool>.json` and puts the file summary in `value`.
 Later calls can't use an earlier result, so decide on the next steps after
 reading the output.

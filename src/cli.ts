@@ -21,7 +21,7 @@ import {
 import { parseCallArgs, runBatch } from './client/batch'
 import { logLine } from './client/log-lines'
 import { renderResult } from './client/output'
-import { runRepl } from './client/repl'
+import { DEFAULT_HISTORY_FILE, runRepl } from './client/repl'
 import {
   DAEMON_COMMAND,
   daemonMain,
@@ -51,7 +51,7 @@ Sessions: one connection for all of an agent's calls
   agent-bridge session stop [--name n] [--keep]        bridge.restore (unless --keep), then end
   agent-bridge session stop --dry-run                  List what bridge.restore would undo; keep running
   agent-bridge session list | status [--name n]
-  call, tools and run use this project's running session (the only one, or the one
+  call, tools, repl and run use this project's running session (the only one, or the one
   matching --metro/--device), and print its name. With several, pass --session <name>.
 
 Options
@@ -75,6 +75,12 @@ const failedLogs = (error: unknown): LogEntry[] =>
   error instanceof AgentBridgeCallError ? error.logs : []
 
 async function main() {
+  // `call --batch | head -1`: the reader left, so stop quietly. Not a stdout
+  // 'error' listener: under bun that truncates large output.
+  process.on('uncaughtException', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0)
+    throw error
+  })
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -176,12 +182,18 @@ async function main() {
       })
     }
     case 'repl':
+      if (values.out)
+        throw new Error(
+          'repl has no --out; use `call --batch --out <dir>` to write results to files',
+        )
       return withBridge(async (bridge) => {
         if (!process.stdin.isTTY) return batch(bridge)
+        // Prompt and colours only when someone is looking at the output.
         await runRepl(bridge, {
           input: process.stdin,
           output: process.stdout,
-          tty: true,
+          tty: !!process.stdout.isTTY,
+          historyFile: DEFAULT_HISTORY_FILE,
           full: values.full,
         })
       })

@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PassThrough, Readable } from 'node:stream'
+import { mkdirSync } from 'node:fs'
 
 import WebSocket from 'ws'
 
@@ -96,7 +97,7 @@ async function setup() {
 const lines = (...text: string[]) => Readable.from([`${text.join('\n')}\n`])
 
 async function batch(
-  bridge: Pick<AgentBridge, 'timed'>,
+  bridge: Pick<AgentBridge, 'timed' | 'tools'>,
   input: string[],
   options: Parameters<typeof runBatch>[2] = {},
 ) {
@@ -234,6 +235,7 @@ describe('repl', () => {
       ],
       timed: async (tool: string, ...args: unknown[]) => {
         called.push([tool, ...args.map((a) => JSON.stringify(a))].join(' '))
+        if (tool === 'demo.slow') await new Promise((r) => setTimeout(r, 3))
         if (tool === 'demo.fail') throw new Error('demo.fail: boom')
         return {
           value: args as never,
@@ -364,7 +366,174 @@ describe('the CLI', () => {
     )
     const out = res.stdout.trim().split('\n').map((l) => JSON.parse(l))
     expect(out[0]).toMatchObject({ tool: 'demo.echo', ok: true, value: ['hi'] })
-    // A dot command is not a tool in batch mode.
+    // Dot commands are handled here, not sent to the app.
     expect(out[1]).toMatchObject({ tool: '.help', ok: false })
+    expect(out[1]?.error).toContain('Unknown command')
+  })
+})
+
+describe('review fixes', () => {
+  const stubBridge = (hang = false) => {
+    const called: string[] = []
+    return {
+      called,
+      tools: () => [{ name: 'demo.echo', description: 'Echo' }],
+      timed: (async (tool: string, ...args: unknown[]) => {
+        called.push(tool)
+        if (hang && tool === 'demo.hang') await new Promise(() => {})
+        if (tool === 'demo.slow') await new Promise((r) => setTimeout(r, 3))
+        if (tool === 'demo.fail') throw new Error('boom')
+        return { value: args, ms: 1, appMs: 0, logs: [] }
+      }) as AgentBridge['timed'],
+    }
+  }
+  const collect = async (bridge: ReturnType<typeof stubBridge>, input: string[], options = {}) => {
+    const out: Array<Record<string, any>> = []
+    await runBatch(bridge, lines(...input), {
+      ...options,
+      write: (l) => out.push(JSON.parse(l)),
+    })
+    return out
+  }
+  const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms))
+
+  test('args that look like JSON but do not parse are errors, not strings', async () => {
+    const bridge = stubBridge()
+    const out = await collect(bridge, [
+      'demo.echo [1,2',
+      'demo.echo {bad json',
+      'demo.echo "a" "b"',
+      'demo.echo plain words',
+      'demo.echo "quoted"',
+    ])
+    expect(out.map((o) => o.ok)).toEqual([false, false, false, true, true])
+    expect(out[0]?.error).toContain("don't parse")
+    expect(bridge.called).toEqual(['demo.echo', 'demo.echo'])
+  })
+
+  test('dot lines in batch run locally: .tools, .time, .exit', async () => {
+    const bridge = stubBridge()
+    const out = await collect(bridge, [
+      '.tools demo',
+      '.time demo.echo 1 x3',
+      '.nope',
+      '.exit',
+      'demo.echo never',
+    ])
+    expect(out[0]?.value).toEqual([{ name: 'demo.echo', description: 'Echo' }])
+    expect(out[1]?.value).toMatchObject({ call: 'demo.echo', runs: 3 })
+    expect(out[2]?.ok).toBe(false)
+    expect(out).toHaveLength(3)
+    expect(bridge.called).toEqual(['demo.echo', 'demo.echo', 'demo.echo'])
+  })
+
+  test('--stop-on-error returns while stdin stays open', async () => {
+    const input = new PassThrough()
+    input.write('demo.fail\n')
+    const result = await Promise.race([
+      runBatch(stubBridge(), input, { stopOnError: true, write: () => {} }),
+      tick(2000).then(() => 'hung'),
+    ])
+    expect(result).toEqual({ calls: 1, failed: 1 })
+    expect(input.destroyed).toBe(true)
+  })
+
+  test('--out refuses a file or a non-empty directory; the hint names a directory', async () => {
+    const file = join(dir, 'a-file')
+    writeFileSync(file, 'x')
+    await expect(runBatch(stubBridge(), lines('demo.echo'), { outDir: file })).rejects.toThrow('is a file')
+    const full = join(dir, 'full')
+    mkdirSync(full)
+    writeFileSync(join(full, 'old.json'), '{}')
+    await expect(runBatch(stubBridge(), lines('demo.echo'), { outDir: full })).rejects.toThrow('is not empty')
+    const bridge = stubBridge()
+    bridge.timed = (async () => ({ value: 'x'.repeat(40_000), ms: 1, appMs: 0, logs: [] })) as AgentBridge['timed']
+    const [big] = await collect(bridge, ['demo.big'])
+    expect(big?.value.hint).toContain('--out <dir>')
+  })
+
+  test('repl: Ctrl-C clears the line when idle and gives up on a running call', async () => {
+    const bridge = stubBridge(true)
+    const input = new PassThrough()
+    const output = new PassThrough()
+    let text = ''
+    output.on('data', (d) => {
+      text += String(d)
+    })
+    let rl!: import('node:readline').Interface
+    const done = runRepl(bridge, { input, output, onReady: (r) => (rl = r) })
+    rl.emit('SIGINT')
+    await tick()
+    expect(text).toContain('^C')
+    input.write('demo.hang\n')
+    await tick()
+    rl.emit('SIGINT')
+    await tick()
+    expect(text).toContain('Interrupted. The call may still finish in the app.')
+    input.write('demo.echo 1\n')
+    await tick()
+    expect(text).toContain('1.0 ms round trip')
+    input.end()
+    await done
+  })
+
+  test('repl: Ctrl-C stops .time between runs; N is capped', async () => {
+    const bridge = stubBridge()
+    let rl!: import('node:readline').Interface
+    const input = new PassThrough()
+    const output = new PassThrough()
+    let text = ''
+    output.on('data', (d) => {
+      text += String(d)
+    })
+    const done = runRepl(bridge, { input, output, onReady: (r) => (rl = r) })
+    input.write('.time demo.slow x5000\n')
+    await tick(40)
+    rl.emit('SIGINT')
+    await tick()
+    expect(text).toContain('capped at 1000')
+    expect(text).toContain('Interrupted')
+    const seen = bridge.called.length
+    expect(seen).toBeLessThan(1000)
+    await tick()
+    expect(bridge.called.length).toBe(seen)
+    input.end()
+    await done
+  })
+
+  test('repl: history is appended as lines are entered', async () => {
+    const file = join(dir, 'h', 'repl_history')
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const done = runRepl(stubBridge(), { input, output, historyFile: file })
+    input.write('demo.echo 1\n')
+    await tick()
+    expect(loadHistory(file)).toEqual(['demo.echo 1']) // saved before the REPL ends
+    input.end()
+    await done
+  })
+
+  const cli = (args: string[]) =>
+    spawn(process.execPath, [resolve(import.meta.dir, '../../cli.ts'), ...args], {
+      env: { ...process.env, AGENT_BRIDGE_STATE_DIR: dir },
+    })
+
+  test('CLI: --stop-on-error exits with stdin still open; EPIPE on stdout is quiet', async () => {
+    const { metro } = await setup()
+    const a = cli(['call', '--batch', '--stop-on-error', '--metro', metro, '--no-session'])
+    a.stdin.write('demo.fail\n')
+    const t0 = performance.now()
+    await new Promise((r) => a.on('close', r))
+    expect(performance.now() - t0).toBeLessThan(4000)
+
+    const b = cli(['call', '--batch', '--metro', metro, '--no-session'])
+    let stderr = ''
+    b.stderr.on('data', (d) => (stderr += d))
+    b.stdout.destroy()
+    b.stdin.write('demo.echo 1\n'.repeat(20))
+    b.stdin.end()
+    const code = await new Promise((r) => b.on('close', r))
+    expect(stderr).not.toContain('EPIPE')
+    expect(code).toBe(0)
   })
 })

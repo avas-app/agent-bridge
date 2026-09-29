@@ -1,10 +1,18 @@
 // `agent-bridge repl`: the batch loop with a prompt.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { createInterface } from 'node:readline'
+import { type Interface, createInterface } from 'node:readline'
 
-import { type CallOutcome, parseBatchLine, runCall } from './batch'
+import {
+  type CallOutcome,
+  MAX_TIME_RUNS,
+  type Spread,
+  parseTime,
+  runCall,
+  runLine,
+  spread,
+} from './batch'
 import type { AgentBridge } from './index'
 import { logLine } from './log-lines'
 import { renderResult } from './output'
@@ -30,11 +38,12 @@ const HELP = `Type a call the way \`agent-bridge call\` takes it: tool [args]
   store.set ["user", {"a":1}]   a JSON array is the argument list
 Dot commands
   .tools [prefix]     List tools, optionally starting with prefix
-  .time <call> [xN]   Run a call N times (default 10); min/median/max
+  .time <call> [xN]   Run a call N times (default 10, at most ${MAX_TIME_RUNS}); min/median/max
   .pending            bridge.pending: what bridge.restore would undo
   .restore            bridge.restore
   .help               This text
   .exit               Leave (also Ctrl-D)
+Ctrl-C clears the line, or gives up waiting for a running call (the app may still finish it).
 Tab completes tool names and dot commands.`
 
 /** Tab completion for the line so far: dot commands at the start, tool names after a dot command or as the first word. */
@@ -56,12 +65,17 @@ export function complete(
   return [[], line]
 }
 
+/** The newest HISTORY_LIMIT lines; rewrites the file when it has grown past that. */
 export function loadHistory(file: string): string[] {
+  let lines: string[]
   try {
-    return readFileSync(file, 'utf8').split('\n').filter(Boolean)
+    lines = readFileSync(file, 'utf8').split('\n').filter(Boolean)
   } catch {
     return []
   }
+  if (lines.length <= HISTORY_LIMIT) return lines
+  saveHistory(file, lines)
+  return lines.slice(-HISTORY_LIMIT)
 }
 
 /** Keeps the newest `limit` lines. Failure to save is not worth interrupting the session for. */
@@ -74,27 +88,30 @@ export function saveHistory(file: string, lines: string[]): void {
   } catch {}
 }
 
-const median = (sorted: number[]) => {
-  const mid = sorted.length >> 1
-  return sorted.length % 2
-    ? (sorted[mid] as number)
-    : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
+/** One line at a time, so a killed REPL keeps its history and two REPLs don't overwrite each other. */
+export function appendHistory(file: string, line: string): void {
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    appendFileSync(file, `${line}\n`, { mode: 0o600 })
+  } catch {}
 }
 
-const stats = (values: number[]) => {
-  const sorted = [...values].sort((a, b) => a - b)
-  const f = (n: number) => n.toFixed(1)
-  return `min ${f(sorted[0] as number)} / median ${f(median(sorted))} / max ${f(sorted.at(-1) as number)} ms`
-}
+const fixed = (s: Spread) =>
+  `min ${s.min.toFixed(1)} / median ${s.median.toFixed(1)} / max ${s.max.toFixed(1)} ms`
 
 export type ReplOptions = {
   input: NodeJS.ReadableStream
-  output: NodeJS.WritableStream & { isTTY?: boolean }
-  /** Whether input is a terminal: line editing, the prompt and colours. */
+  output: NodeJS.WritableStream
+  /** Whether input and output are a terminal: line editing, the prompt and colours. */
   tty?: boolean
+  /** Where history is kept. Without it nothing is saved. */
   historyFile?: string
   full?: boolean
+  /** Called with the readline interface, e.g. to send it a SIGINT in tests. */
+  onReady?: (rl: Interface) => void
 }
+
+const INTERRUPTED = 'Interrupted. The call may still finish in the app.'
 
 export async function runRepl(
   bridge: Pick<AgentBridge, 'timed' | 'tools'>,
@@ -102,14 +119,15 @@ export async function runRepl(
 ): Promise<void> {
   const { output } = options
   const tty = !!options.tty
-  const historyFile = options.historyFile ?? DEFAULT_HISTORY_FILE
-  const persist = tty || options.historyFile !== undefined
+  const { historyFile } = options
   const paint = (code: number, text: string) =>
     tty && !process.env.NO_COLOR ? `\x1b[${code}m${text}\x1b[0m` : text
-  const print = (text = '') => output.write(`${text}\n`)
+  const print = (text = ''): void => {
+    output.write(`${text}\n`)
+  }
   const toolNames = () => bridge.tools().map((t) => t.name)
 
-  const history = loadHistory(historyFile)
+  const history = historyFile ? loadHistory(historyFile) : []
   const rl = createInterface({
     input: options.input,
     output,
@@ -119,13 +137,41 @@ export async function runRepl(
     historySize: HISTORY_LIMIT,
     completer: (line: string) => complete(line, toolNames()),
   })
-  const entered: string[] = [...history]
   let closed = false
   rl.once('close', () => {
     closed = true
   })
   const prompt = () => {
     if (!closed) rl.prompt()
+  }
+
+  // Raw mode means Ctrl-C reaches us as readline's SIGINT, not as a signal.
+  // Idle: clear the line. Busy: stop waiting and go back to the prompt.
+  let giveUp: (() => void) | null = null
+  rl.on('SIGINT', () => {
+    if (giveUp) return giveUp()
+    print('^C')
+    if (tty) rl.write(null, { ctrl: true, name: 'u' })
+    prompt()
+  })
+
+  /** Runs `work` until it ends or Ctrl-C. `live()` turns false after Ctrl-C: check it before printing. */
+  const interruptible = async (work: (live: () => boolean) => Promise<void>) => {
+    let live = true
+    let release!: () => void
+    const aborted = new Promise<void>((r) => {
+      release = r
+    })
+    giveUp = () => {
+      live = false
+      release()
+    }
+    try {
+      await Promise.race([work(() => live), aborted])
+    } finally {
+      giveUp = null
+    }
+    if (!live) print(paint(33, INTERRUPTED))
   }
 
   const show = async (outcome: CallOutcome) => {
@@ -144,24 +190,41 @@ export async function runRepl(
     )
   }
 
-  const time = async (rest: string) => {
-    const m = /^(.*?)(?:\s+x(\d+))?$/.exec(rest.trim())
-    const parsed = parseBatchLine(m?.[1] ?? '')
-    if (!parsed) return print('Usage: .time <tool> [args] [xN]')
-    const runs = Math.max(1, Number(m?.[2] ?? 10))
+  const time = async (rest: string, live: () => boolean) => {
+    let request: ReturnType<typeof parseTime>
+    try {
+      request = parseTime(rest)
+    } catch (error) {
+      return print(paint(31, error instanceof Error ? error.message : String(error)))
+    }
+    if (!request) return print('Usage: .time <tool> [args] [xN]')
+    const { call, runs } = request
+    if (request.capped)
+      print(paint(33, `Running ${runs} times: .time is capped at ${MAX_TIME_RUNS}.`))
     const trips: number[] = []
     const inApp: number[] = []
     for (let i = 0; i < runs; i++) {
-      const outcome = await runCall(bridge, parsed)
-      if (!outcome.ok) return show(outcome)
+      if (!live()) return
+      const outcome = await runCall(bridge, call)
+      if (!live()) return
+      if (!outcome.ok) {
+        await show(outcome)
+        return
+      }
       trips.push(outcome.ms)
       inApp.push(outcome.appMs ?? 0)
     }
-    print(`${parsed.tool} x${runs}`)
-    print(`  round trip  ${stats(trips)}`)
-    print(`  in the app  ${stats(inApp)}`)
+    print(`${call.tool} x${runs}`)
+    print(`  round trip  ${fixed(spread(trips))}`)
+    print(`  in the app  ${fixed(spread(inApp))}`)
   }
 
+  const tool = (name: string) => (live: () => boolean) =>
+    runCall(bridge, { tool: name, args: [] }).then(
+      (outcome) => (live() ? show(outcome) : undefined),
+    )
+
+  /** False to leave. */
   const dot = async (line: string): Promise<boolean> => {
     const [name = '', ...more] = line.split(/\s+/)
     const rest = line.slice(name.length).trim()
@@ -181,13 +244,13 @@ export async function runRepl(
         break
       }
       case '.time':
-        await time(rest)
+        await interruptible((live) => time(rest, live))
         break
       case '.pending':
-        await show(await runCall(bridge, { tool: 'bridge.pending', args: [] }))
+        await interruptible(tool('bridge.pending'))
         break
       case '.restore':
-        await show(await runCall(bridge, { tool: 'bridge.restore', args: [] }))
+        await interruptible(tool('bridge.restore'))
         break
       default:
         print(paint(31, `Unknown command ${name}. Try .help`))
@@ -195,24 +258,29 @@ export async function runRepl(
     return true
   }
 
+  options.onReady?.(rl)
   if (tty) print('agent-bridge repl. .help for commands, .exit or Ctrl-D to leave.')
   prompt()
+  let eof = false
   try {
     for await (const raw of rl) {
       const line = raw.trim()
       if (line && !line.startsWith('#')) {
-        entered.push(line)
+        if (historyFile) appendHistory(historyFile, line)
         if (line.startsWith('.')) {
           if (!(await dot(line))) break
         } else {
-          const parsed = parseBatchLine(line)
-          if (parsed) await show(await runCall(bridge, parsed))
+          await interruptible(async (live) => {
+            const outcome = await runLine(bridge, line)
+            if (outcome && live()) await show(outcome)
+          })
         }
       }
       prompt()
     }
+    eof = closed
   } finally {
     rl.close()
-    if (persist) saveHistory(historyFile, entered)
+    if (tty && eof) output.write('\n')
   }
 }
