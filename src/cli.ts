@@ -18,8 +18,10 @@ import {
   parseScenarioFlag,
   runFlow,
 } from './client/flow'
+import { parseCallArgs, runBatch } from './client/batch'
 import { logLine } from './client/log-lines'
 import { renderResult } from './client/output'
+import { runRepl } from './client/repl'
 import {
   DAEMON_COMMAND,
   daemonMain,
@@ -35,6 +37,9 @@ Usage
   agent-bridge devices                    Apps connected to Metro
   agent-bridge tools                      Tools the app exposes
   agent-bridge call <tool> [args]         Call a tool. args: a JSON array, or one JSON value
+  agent-bridge call --batch               Read \`tool args\` lines from stdin; one JSON line per call, one connection
+  agent-bridge repl                       Interactive prompt (history, tab completion, .help). With
+                                          stdin not a terminal it behaves like call --batch
   agent-bridge run <flow.mjs|.ts>         Run a flow: export default async ({ step, call }) => {}
                                           export const scenario = 'signedIn' applies it first
                                           and runs bridge.restore after, even on failure
@@ -55,6 +60,8 @@ Options
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
   --out <file>           call: write the result to a file; print its size and shape
+                         (--batch: a directory, one <n>-<tool>.json per call)
+  --stop-on-error        call --batch: stop after the first failed call
   --full                 call: print results over 32 KB instead of a summary
   --strict               run: exit non-zero if the app logged an error
   --scenario <name>      run: also apply this scenario (repeatable). Options as
@@ -67,17 +74,6 @@ Options
 const failedLogs = (error: unknown): LogEntry[] =>
   error instanceof AgentBridgeCallError ? error.logs : []
 
-function parseCallArgs(raw: string | undefined): unknown[] {
-  if (raw === undefined) return []
-  let value: unknown
-  try {
-    value = JSON.parse(raw)
-  } catch {
-    return [raw]
-  }
-  return Array.isArray(value) ? value : [value]
-}
-
 async function main() {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
@@ -89,6 +85,8 @@ async function main() {
       strict: { type: 'boolean' },
       out: { type: 'string' },
       full: { type: 'boolean' },
+      batch: { type: 'boolean' },
+      'stop-on-error': { type: 'boolean' },
       scenario: { type: 'string', multiple: true },
       name: { type: 'string' },
       idle: { type: 'string' },
@@ -126,6 +124,15 @@ async function main() {
     }
   }
 
+  const batch = async (bridge: AgentBridge) => {
+    const { failed } = await runBatch(bridge, process.stdin, {
+      stopOnError: values['stop-on-error'],
+      full: values.full,
+      outDir: values.out,
+    })
+    if (failed) process.exitCode = 1
+  }
+
   switch (command) {
     case 'devices': {
       const devices = await listDevices(options)
@@ -144,6 +151,11 @@ async function main() {
           console.log(`  ${t.name.padEnd(22)} ${t.description ?? ''}`)
       })
     case 'call': {
+      if (values.batch) {
+        if (rest.length)
+          throw new Error('call --batch reads calls from stdin; pass no tool')
+        return withBridge((bridge) => batch(bridge))
+      }
       const [tool, raw] = rest
       if (!tool) throw new Error('Usage: agent-bridge call <tool> [args]')
       return withBridge(async (bridge) => {
@@ -163,6 +175,16 @@ async function main() {
         )
       })
     }
+    case 'repl':
+      return withBridge(async (bridge) => {
+        if (!process.stdin.isTTY) return batch(bridge)
+        await runRepl(bridge, {
+          input: process.stdin,
+          output: process.stdout,
+          tty: true,
+          full: values.full,
+        })
+      })
     case 'run': {
       const [file] = rest
       if (!file) throw new Error('Usage: agent-bridge run <flow file>')

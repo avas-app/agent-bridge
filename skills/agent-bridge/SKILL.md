@@ -195,11 +195,30 @@ last 200 errors and warnings.
 
 ## Repeat without the model
 
-Write the steps into a flow file and run it. Do this for timing checks and
-for more than a handful of calls: each CLI call is a new process (roughly 90-100 ms
-with the bin, 280-320 ms with `npx`; machine-dependent), while `run` pays that once and prints how long
-each step took, so read step times from its output, not from wall time around
-separate calls.
+For a sequence of ad-hoc calls, pipe them into `call --batch` (or `repl`, which
+behaves the same when stdin isn't a terminal): one process and one connection,
+one JSON line back per call.
+
+```sh
+printf '%s\n' 'router.navigate /inbox' 'screen.waitFor "Inbox"' 'screen.snapshot' \
+  | npx agent-bridge call --batch --stop-on-error
+# {"tool":"router.navigate","ok":true,"ms":1.8,"appMs":1,"value":...}
+# {"tool":"screen.waitFor","ok":false,"ms":2003.1,"error":"..."}   (plus "logs"/"notice" when present)
+```
+
+Each line is `tool args` in the same syntax as `call`; blank lines and `#` lines are
+skipped. `ms` is the round trip, `appMs` the time inside the app. It exits 1 if
+any call failed; `--stop-on-error` stops at the first. Results over 32 KB are
+summarised as in `call`; `--full` prints them, and `--out <dir>` writes each
+call's result to `<dir>/<n>-<tool>.json` and puts the file summary in `value`.
+Later calls can't use an earlier result, so decide on the next steps after
+reading the output.
+
+Write the steps into a flow file and run it when a step depends on an earlier
+result, and for timing checks: each separate CLI call is a new process (roughly 90-100 ms
+with the bin, 280-320 ms with `npx`; machine-dependent), while `run` and
+`--batch` pay that once. `run` prints how long each step took, so read step times
+from its output or from `ms`, not from wall time around separate calls.
 
 ```js
 export const scenario = 'signedIn'   // applied first, undone after, even on failure
