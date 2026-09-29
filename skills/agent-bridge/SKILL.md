@@ -24,6 +24,14 @@ agent-bridge, then finish with one real tap or a screenshot from agent-device.
 Don't tap through setup screens or edit backend data to reach a state that one
 bridge call can set.
 
+## Run the CLI directly
+
+The examples below say `npx agent-bridge` for brevity. Prefer the installed bin,
+`./node_modules/.bin/agent-bridge` (or `bunx agent-bridge`): `npx` loads npm's
+config on every call, so a project `.npmrc` with keys npm doesn't know prints
+`npm warn Unknown project config` into your output each time, and it adds
+roughly 200 ms more startup per call (machine-dependent).
+
 ## Start a session
 
 ```sh
@@ -150,7 +158,11 @@ last 200 errors and warnings.
 
 ## Repeat without the model
 
-Write the steps into a flow file and run it:
+Write the steps into a flow file and run it. Do this for timing checks and
+for more than a handful of calls: each CLI call is a new process (roughly 90-100 ms
+with the bin, 280-320 ms with `npx`; machine-dependent), while `run` pays that once and prints how long
+each step took, so read step times from its output, not from wall time around
+separate calls.
 
 ```js
 export const scenario = 'signedIn'   // applied first, undone after, even on failure
