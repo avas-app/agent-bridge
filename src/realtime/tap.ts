@@ -279,6 +279,7 @@ export function createRealtimeTap<M = unknown>(
       run: (channel: string) => setMute(channel, null),
     },
     [`${ns}.restore`]: {
+      pending: () => mutes.size > 0 || faked !== null,
       description:
         'Undo the agent: unmute every channel and go back to the real connection state.',
       run: () => {

@@ -84,6 +84,7 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
       },
     },
     'mmkv.restore': {
+      pending: () => Object.values(instances).some((m) => originals.has(m)),
       description:
         'Undo the agent: put back keys changed with mmkv.set or mmkv.delete, deleting ones that did not exist. Returns how many.',
       run: () => {

@@ -113,13 +113,36 @@ export async function connectSession(
       args,
       timeoutMs: options.timeoutMs,
     })
-    if (res.error || !res.result) throw new Error(res.error ?? 'No result')
+    if (res.error || !res.result) {
+      const why = res.error ?? 'No result'
+      // Keep the notice: the reload is often why the call failed.
+      throw res.notice
+        ? new AgentBridgeCallError(tool, why, [], res.notice)
+        : new Error(why)
+    }
     const result = res.result
     const logs = result.logs ?? []
-    if (!result.ok) throw new AgentBridgeCallError(tool, result.error, logs)
+    if (!result.ok)
+      throw new AgentBridgeCallError(tool, result.error, logs, res.notice)
     // Other extra fields on the result pass through as they are.
-    const { id: _id, from: _from, ok: _ok, ms: appMs, value, ...extra } = result
-    return { ...extra, value: value as T, ms: res.ms ?? 0, appMs, logs }
+    const {
+      id: _id,
+      from: _from,
+      ok: _ok,
+      ms: appMs,
+      value,
+      loadId: _loadId,
+      pending: _pending,
+      ...extra
+    } = result
+    return {
+      ...extra,
+      value: value as T,
+      ms: res.ms ?? 0,
+      appMs,
+      logs,
+      ...(res.notice && { notice: res.notice }),
+    }
   }
 
   return {

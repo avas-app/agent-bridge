@@ -9,6 +9,7 @@ import {
 import { builtinTools } from './builtin-tools'
 import { cdpTransport } from './cdp-transport'
 import { createGate } from './gate'
+import { loadId } from './load-id'
 import { startLogCapture } from './logs'
 import { createRegistry } from './registry'
 import { settle } from './screen/settle'
@@ -32,12 +33,13 @@ export function startAgentBridge(options: AgentBridgeOptions = {}): () => void {
     ...builtinTools(() => registry.list(), allTools, logs.capture, getScenarios),
     ...userTools(),
   })
-  const registry = createRegistry(allTools, logs.capture)
+  const registry = createRegistry(allTools, logs.capture, loadId)
   const info = (): DeviceInfo => ({
     deviceId,
     name: options.name ?? Platform.OS,
     platform: Platform.OS,
     protocol: PROTOCOL_VERSION,
+    loadId,
     tools: registry.list(),
   })
   const context: TransportContext = {

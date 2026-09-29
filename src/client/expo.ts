@@ -25,6 +25,7 @@ async function openBroadcast(metro: string, discoveryMs: number) {
   const ws = await openSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
   const devices = new Map<string, DeviceInfo>()
   const pending = createPending()
+  const announced: Array<(info: DeviceInfo) => void> = []
   ws.on('message', (data, isBinary) => {
     if (isBinary) return
     let frame: Frame
@@ -36,7 +37,9 @@ async function openBroadcast(metro: string, discoveryMs: number) {
     if (frame.messageKey?.pluginName !== PLUGIN_NAME) return
     if (frame.messageKey.method === 'hello:reply') {
       const info = frame.payload as DeviceInfo
+      const fresh = !devices.has(info.deviceId)
       devices.set(info.deviceId, info)
+      if (fresh) for (const listener of announced) listener(info)
     } else if (frame.messageKey.method === 'result') {
       pending.settle(frame.payload as ResultMessage)
     }
@@ -53,7 +56,7 @@ async function openBroadcast(metro: string, discoveryMs: number) {
 
   send('hello', {})
   await new Promise((r) => setTimeout(r, discoveryMs))
-  return { ws, devices, pending, send }
+  return { ws, devices, pending, send, announced }
 }
 
 export async function listExpoDevices(
@@ -70,7 +73,10 @@ export async function connectExpo(
   device?: string,
   discoveryMs = 600,
 ): Promise<Connection> {
-  const { ws, devices, pending, send } = await openBroadcast(metro, discoveryMs)
+  const { ws, devices, pending, send, announced } = await openBroadcast(
+    metro,
+    discoveryMs,
+  )
   let info: DeviceInfo
   try {
     info = pickOne([...devices.values()], device, deviceLabel)
@@ -78,10 +84,31 @@ export async function connectExpo(
     ws.close()
     throw error
   }
+  // A reloaded app announces itself under a new id and ignores calls to the
+  // old one, so fail them now instead of letting each wait out its timeout.
+  let superseded: string | null = null
+  announced.push((next) => {
+    if (
+      superseded ||
+      next.name !== info.name ||
+      next.platform !== info.platform
+    )
+      return
+    superseded = `${info.name} announced a new bridge (${next.deviceId}); the app reloaded`
+    pending.failAll(superseded)
+  })
   return {
     transport: 'expo',
     device: info,
     call(tool, args, timeoutMs) {
+      if (superseded)
+        return Promise.resolve<ResultMessage>({
+          id: '',
+          from: '',
+          ok: false,
+          error: superseded,
+          ms: 0,
+        })
       const call: CallMessage = {
         id: newCallId(),
         tool,

@@ -220,6 +220,7 @@ export function queryTools(queryClient: QueryClient): Tools {
     },
     'query.restore': {
       maxArgs: 0,
+      pending: () => pins.size > 0 || state.changed.size > 0,
       description:
         'Undo the agent: unpin everything and refetch real data for keys changed with query.set.',
       run: async () => {

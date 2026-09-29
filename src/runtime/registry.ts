@@ -15,6 +15,7 @@ function unwrap(definition: ToolDefinition): {
 export function createRegistry(
   getTools: () => Tools,
   logs?: Pick<LogCapture, 'begin' | 'takeErrors'>,
+  loadId?: string,
 ) {
   const list = (): ToolInfo[] =>
     Object.entries(getTools())
@@ -31,7 +32,23 @@ export function createRegistry(
     const end = logs?.begin(call.tool)
     const result = await run(call, from).finally(end)
     const errors = logs?.takeErrors()
-    return errors?.length ? { ...result, logs: errors } : result
+    const stamped = loadId ? { ...result, loadId, ...pending() } : result
+    return errors?.length ? { ...stamped, logs: errors } : stamped
+  }
+
+  // After the tool ran, so a reply shows the state it left behind.
+  function pending(): { pending?: string[] } {
+    const areas = Object.entries(getTools())
+      .filter(([name, d]) => {
+        if (!name.endsWith('.restore') || name === 'bridge.restore') return false
+        try {
+          return typeof d !== 'function' && Boolean(d.pending?.())
+        } catch {
+          return false
+        }
+      })
+      .map(([name]) => name.slice(0, -'.restore'.length))
+    return areas.length ? { pending: areas } : {}
   }
 
   async function run(call: CallMessage, from: string): Promise<ResultMessage> {

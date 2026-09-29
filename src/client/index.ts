@@ -21,8 +21,10 @@ export class AgentBridgeCallError extends Error {
     message: string,
     /** Errors the app attached to the failed reply. */
     readonly logs: LogEntry[] = [],
+    /** Through a session: the app reloaded, so its pending restores are lost. */
+    readonly notice?: string,
   ) {
-    super(`${tool}: ${message}`)
+    super(`${tool}: ${message}${notice ? `\nWarning: ${notice}` : ''}`)
     this.name = 'AgentBridgeCallError'
   }
 }
@@ -33,6 +35,8 @@ export type Timed<T> = {
   ms: number
   appMs: number
   logs: LogEntry[]
+  /** Through a session: the app reloaded since the previous call, so its restores are lost. */
+  notice?: string
 }
 
 export type AgentBridge = {

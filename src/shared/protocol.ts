@@ -34,11 +34,17 @@ export type LogEntry = {
   after?: string
 }
 
-/** `logs`: errors the app recorded since its previous reply. Old clients ignore it. */
+/** `logs`: errors the app recorded since its previous reply. Old clients ignore the extra fields. */
 export type ResultMessage = (
   | { id: string; from: string; ok: true; value: unknown; ms: number }
   | { id: string; from: string; ok: false; error: string; ms: number }
-) & { logs?: LogEntry[] }
+) & {
+  logs?: LogEntry[]
+  /** Id of this JS bundle load; a reload changes it, Fast Refresh does not. */
+  loadId?: string
+  /** Areas (`store`, `query`, ...) whose `*.restore` has something to undo. */
+  pending?: string[]
+}
 
 export type ToolInfo = { name: string; description?: string }
 
@@ -47,6 +53,8 @@ export type DeviceInfo = {
   name: string
   platform: string
   protocol: number
+  /** Same as ResultMessage.loadId. Absent from older runtimes. */
+  loadId?: string
   tools: ToolInfo[]
 }
 

@@ -25,6 +25,8 @@ export type SessionResponse = {
   ms?: number
   /** call: the daemon reconnected to the app before answering. */
   reconnected?: boolean
+  /** call, stop: the app reloaded, so restores this session held are lost. call has it once; stop has every one. */
+  notice?: string
   /** tools, info. */
   device?: DeviceInfo
   transport?: TransportName

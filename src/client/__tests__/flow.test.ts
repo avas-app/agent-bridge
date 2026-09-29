@@ -13,7 +13,12 @@ import {
   parseScenarioFlag,
   runFlow,
 } from '../flow'
-import { type AgentBridge, connect, runFlow as exported } from '../index'
+import {
+  type AgentBridge,
+  AgentBridgeCallError,
+  connect,
+  runFlow as exported,
+} from '../index'
 import { startFakeMetro } from './fake-metro'
 
 const cleanups: Array<() => unknown> = []
@@ -87,6 +92,34 @@ describe('--scenario', () => {
 describe('runFlow', () => {
   test('is exported from the client entry', () => {
     expect(exported).toBe(runFlow)
+  })
+
+  test('surfaces the reload notice a session attaches, on success and on failure', async () => {
+    const real = await app(null, { 'demo.echo': (n: number) => n })
+    const notice = 'app reloaded; 1 pending restore lost: store'
+    let failNext = false
+    const bridge: AgentBridge = {
+      ...real,
+      timed: (async (tool: string, ...args: unknown[]) => {
+        if (failNext) throw new AgentBridgeCallError(tool, 'gone', [], notice)
+        return { ...(await real.timed(tool, ...args)), notice }
+      }) as AgentBridge['timed'],
+    }
+    const out = quiet()
+    const result = await runFlow(
+      bridge,
+      {
+        default: async ({ step, call }) => {
+          await step('echo', 'demo.echo', 1)
+          failNext = true
+          await call('demo.echo', 2).catch(() => {})
+        },
+      },
+      out,
+    )
+    expect(result.notices).toEqual([notice, notice])
+    expect(out.lines.filter((l) => l === `   ! ${notice}`)).toHaveLength(2)
+    expect(out.lines.at(-1)).toContain('the app reloaded')
   })
 
   test('applies extra scenarios to a flow that declares none', async () => {
