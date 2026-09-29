@@ -1,4 +1,5 @@
 import type { Found, ScreenElement } from './elements'
+import { nearMisses } from './find-text'
 import { onCommit } from './settle'
 import {
   indexOf,
@@ -12,6 +13,12 @@ export type WaitForOptions = { gone?: boolean; timeoutMs?: number }
 export type WaitForResult = { ms: number; element?: ScreenElement }
 
 const POLL_MS = 50
+
+function nearMissNote(found: Found[], target: Target): string {
+  const text = typeof target === 'string' ? target : target.text
+  const near = text ? nearMisses(found, text) : []
+  return near.length ? `. Near misses: ${near.join('; ')}` : ''
+}
 
 /**
  * Resolves when the target is on screen (or, with `gone`, when it isn't).
@@ -52,7 +59,7 @@ export function waitForTarget(
           const what = options.gone ? 'to disappear' : 'to appear'
           reject(
             new Error(
-              `Timed out after ${timeoutMs} ms waiting for ${showTarget(target)} ${what}. On screen: ${onScreenSummary(found)}`,
+              `Timed out after ${timeoutMs} ms waiting for ${showTarget(target)} ${what}. On screen: ${onScreenSummary(found)}${nearMissNote(found, target)}`,
             ),
           )
         }

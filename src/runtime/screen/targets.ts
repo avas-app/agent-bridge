@@ -75,14 +75,24 @@ function tiers(target: Target): Test[] {
   ]
 }
 
-/** Matches from the first tier that has any. */
+// A view that is only an accessibility label: visible in the snapshot, but it
+// must not shadow a button or text that shows the same words.
+const labelOnly = ({ element: e, press, input }: Found) =>
+  e.kind === 'view' && !e.testID && !e.text && !e.placeholder && !press && !input
+
+/**
+ * Matches from the first tier that has any. Label-only views match only when
+ * nothing else does.
+ */
 export function matchTarget(found: Found[], target: Target): Found[] {
   checkTarget(target)
-  for (const test of tiers(target)) {
-    const matches = found.filter((f) => test(f.element))
-    // Innermost first, so a point on an icon means the icon, not its screen.
-    if (matches.length)
-      return isAt(target) ? matches.sort((a, b) => area(a) - area(b)) : matches
+  for (const pool of [found.filter((f) => !labelOnly(f)), found.filter(labelOnly)]) {
+    for (const test of tiers(target)) {
+      const matches = pool.filter((f) => test(f.element))
+      // Innermost first, so a point on an icon means the icon, not its screen.
+      if (matches.length)
+        return isAt(target) ? matches.sort((a, b) => area(a) - area(b)) : matches
+    }
   }
   return []
 }
@@ -96,12 +106,16 @@ const clip = (s: string) => (s.length > 40 ? `${s.slice(0, 39)}…` : s)
 
 /** One line an agent can read, e.g. `button #save-plant "Save plant"`. */
 export function describe(e: ScreenElement): string {
-  const bits: string[] = [e.kind]
+  const stated = e.checked !== undefined || e.selected !== undefined || e.expanded !== undefined
+  const bits: string[] = [stated && e.role ? e.role : e.kind]
   if (e.testID) bits.push(`#${e.testID}`)
   if (e.text) bits.push(JSON.stringify(clip(e.text)))
   if (e.label && e.label !== e.text) bits.push(`label=${JSON.stringify(clip(e.label))}`)
   if (e.placeholder) bits.push(`placeholder=${JSON.stringify(clip(e.placeholder))}`)
   if (e.value !== undefined) bits.push(`value=${JSON.stringify(clip(e.value))}`)
+  if (e.checked !== undefined) bits.push(e.checked === true ? 'checked' : e.checked === false ? 'unchecked' : 'mixed')
+  if (e.selected !== undefined) bits.push(e.selected ? 'selected' : 'unselected')
+  if (e.expanded !== undefined) bits.push(e.expanded ? 'expanded' : 'collapsed')
   if (e.disabled) bits.push('disabled')
   return bits.join(' ')
 }

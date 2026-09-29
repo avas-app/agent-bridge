@@ -20,6 +20,10 @@ export type ScreenElement = {
   editable?: boolean
   role?: string
   disabled?: boolean
+  /** `accessibilityState` / `aria-*`, and a Switch's `value`. */
+  checked?: boolean | 'mixed'
+  selected?: boolean
+  expanded?: boolean
   rect: Rect | null
   /** Only in `screen.snapshot({ all: true })`. */
   onScreen?: boolean
@@ -54,15 +58,25 @@ const propsOf = (fiber: Fiber): Props | null =>
     ? (fiber.memoizedProps as Props)
     : null
 
+const SWITCH_HOSTS = new Set(['RCTSwitch', 'AndroidSwitch'])
+
 const isFn = (v: unknown) => typeof v === 'function'
 
 export const isInputProps = (p: Props) =>
   isFn(p.onChangeText) ||
   (isFn(p.onChange) &&
+    typeof p.value !== 'boolean' &&
     ('value' in p || 'defaultValue' in p || 'placeholder' in p))
 
+// A view named only by an accessibility label is still something on screen.
+const labelOf = (p: Props) => p.accessibilityLabel ?? p['aria-label']
+
 const interesting = (p: Props) =>
-  isFn(p.onPress) || isInputProps(p) || typeof p.testID === 'string'
+  isFn(p.onPress) ||
+  isFn(p.onValueChange) ||
+  isInputProps(p) ||
+  typeof p.testID === 'string' ||
+  typeof labelOf(p) === 'string'
 
 // Icon fonts (Ionicons and friends) render glyphs from the private use area.
 const ICON_GLYPHS = /[\uE000-\uF8FF]/g
@@ -87,17 +101,39 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
     if (e[key] === undefined && typeof v === 'string') e[key] = v
   }
   fill('testID', p.testID)
-  fill('label', p.accessibilityLabel ?? p['aria-label'])
+  fill('label', labelOf(p))
   fill('role', p.accessibilityRole ?? p.role)
   fill('placeholder', p.placeholder)
-  if (e.value === undefined && ('value' in p || 'defaultValue' in p)) {
+  // A Switch's boolean value is its checked state, not a value to read.
+  const isSwitch =
+    SWITCH_HOSTS.has(fiber.type as string) ||
+    (p.accessibilityRole ?? p.role ?? e.role) === 'switch'
+  if (isSwitch && typeof p.value === 'boolean') {
+    if (e.checked === undefined) e.checked = p.value
+    if (e.role === undefined) e.role = 'switch'
+  } else if (
+    e.value === undefined &&
+    !(typeof p.value === 'boolean' && isFn(p.onValueChange)) &&
+    ('value' in p || 'defaultValue' in p)
+  ) {
     const v = p.value ?? p.defaultValue
     if (v != null) e.value = String(v)
   }
   if (rec.maxLength === undefined && typeof p.maxLength === 'number')
     rec.maxLength = p.maxLength
   if (p.editable === false || p.readOnly === true) e.editable = false
-  const state = p.accessibilityState as { disabled?: boolean } | undefined
+  const state = p.accessibilityState as
+    | { disabled?: boolean; checked?: boolean | 'mixed'; selected?: boolean; expanded?: boolean }
+    | undefined
+  const checked = state?.checked ?? p['aria-checked']
+  if (e.checked === undefined && (typeof checked === 'boolean' || checked === 'mixed'))
+    e.checked = checked
+  const flag = (key: 'selected' | 'expanded') => {
+    const v = state?.[key] ?? p[`aria-${key}`]
+    if (e[key] === undefined && typeof v === 'boolean') e[key] = v
+  }
+  flag('selected')
+  flag('expanded')
   if (p.disabled === true || state?.disabled === true || p['aria-disabled'] === true)
     e.disabled = true
 }
@@ -182,6 +218,19 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
     return null
   }
 
+  // Nested Text is one string: `<Text>Finding<Text>...</Text></Text>` reads
+  // "Finding..." and belongs to the outermost text host.
+  const textHost = (host: Fiber): Fiber => {
+    let h = host
+    for (;;) {
+      let up = h.return
+      while (up && up.tag !== HOST_COMPONENT) up = up.return
+      if (!up) return h
+      if (h.type !== 'RCTVirtualText') return h
+      h = up
+    }
+  }
+
   type Item = { fiber: Fiber; rec: Rec | null }
   const stack: Item[] = roots.map((fiber) => ({ fiber, rec: null }))
   while (stack.length) {
@@ -207,10 +256,11 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
     }
     const found = textOf(fiber)
     if (found?.host) {
-      const owner = buttonOf(rec) ?? recFor(found.host, found.host, rec)
+      const host = textHost(found.host)
+      const owner = buttonOf(rec) ?? recFor(host, host, rec)
       const last = owner.parts[owner.parts.length - 1]
-      if (last?.host === found.host) last.text += found.text
-      else owner.parts.push({ host: found.host, text: found.text })
+      if (last?.host === host) last.text += found.text
+      else owner.parts.push({ host, text: found.text })
     }
     if (fiber.child) stack.push({ fiber: fiber.child, rec })
   }
