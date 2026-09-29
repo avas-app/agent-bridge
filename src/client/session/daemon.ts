@@ -9,6 +9,7 @@ import { openConnection } from '../open'
 import type { SessionRequest, SessionResponse } from './protocol'
 import {
   type SessionState,
+  projectRoot,
   checkName,
   listSessions,
   readSession,
@@ -21,6 +22,8 @@ import {
 export type DaemonOptions = {
   name: string
   metro?: string
+  /** Project the session belongs to. Default: the one at the current directory. */
+  project?: string
   device?: string
   transport?: 'auto' | TransportName
   /** Tear down after this long without a call. 0 keeps the session forever. */
@@ -104,6 +107,7 @@ export async function runSessionDaemon(
     pid: process.pid,
     socket: files.socket,
     metro,
+    project: options.project ?? projectRoot(),
     device: deviceOf(conn),
     deviceFilter: options.device,
     transport: conn.transport,
