@@ -1,6 +1,7 @@
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/query-core'
 
 import type { Tools } from '../runtime/types'
+import { onMockSignal } from '../shared/mock-signal'
 
 type PinState = {
   pins: Map<string, { key: QueryKey; data: unknown }>
@@ -9,6 +10,13 @@ type PinState = {
   seeded: WeakSet<object>
   applying: boolean
   unsubscribe: (() => void) | null
+  /** Queries that fetched while an agent mock answered, by hash, with the mock ids. */
+  mocked: Map<string, Set<string>>
+  /** Fetches under way, by hash, with the agent mock ids that answered meanwhile. */
+  inflight: Map<string, Set<string>>
+  /** Mocked queries cleared since query.restore last reported. */
+  clearedSince: number
+  tracking: boolean
 }
 
 // Per client, so tools rebuilt on every render still see the same pins.
@@ -23,6 +31,10 @@ function pinStateFor(queryClient: QueryClient): PinState {
       seeded: new WeakSet(),
       applying: false,
       unsubscribe: null,
+      mocked: new Map(),
+      inflight: new Map(),
+      clearedSince: 0,
+      tracking: false,
     }
     pinStates.set(queryClient, state)
   }
@@ -119,6 +131,53 @@ export function queryTools(queryClient: QueryClient): Tools {
     })
     return true
   }
+
+  // Queries whose fetch succeeded while an agent mock answered a request are
+  // marked, because a failing real refetch would keep their fake data. The
+  // network module only tells us (mock-signal) that a mock answered; which
+  // request it was isn't known, so any answer during a fetch marks it.
+  const track = () => {
+    if (state.tracking) return
+    state.tracking = true
+    cache.subscribe((event) => {
+      if (event.type !== 'updated') return
+      const hash = event.query.queryHash
+      const { type } = event.action
+      if (type === 'fetch') {
+        if (!state.inflight.has(hash)) state.inflight.set(hash, new Set())
+      } else if (type === 'success') {
+        const ids = state.inflight.get(hash)
+        state.inflight.delete(hash)
+        if (ids?.size) state.mocked.set(hash, ids)
+        else if (ids) state.mocked.delete(hash)
+      } else if (event.query.state.fetchStatus !== 'fetching') {
+        state.inflight.delete(hash)
+      }
+    })
+    onMockSignal({
+      answered: (id) => {
+        for (const ids of state.inflight.values()) ids.add(id)
+      },
+      removed: (ids) => clearMocked(ids),
+    })
+  }
+
+  // Reset, not invalidate: the real fetch may fail, and React Query would keep
+  // the previous (fake) data. Queries with observers refetch after the reset.
+  const clearMocked = (ids?: string[]) => {
+    let cleared = 0
+    for (const [hash, from] of [...state.mocked]) {
+      if (ids && !ids.some((id) => from.has(id))) continue
+      state.mocked.delete(hash)
+      const query = cache.get(hash)
+      if (!query) continue
+      cleared += 1
+      queryClient.resetQueries({ queryKey: query.queryKey, exact: true }).catch(() => {})
+    }
+    state.clearedSince += cleared
+    return cleared
+  }
+  track()
 
   return {
     'query.list': {
@@ -220,9 +279,9 @@ export function queryTools(queryClient: QueryClient): Tools {
     },
     'query.restore': {
       maxArgs: 0,
-      pending: () => pins.size > 0 || state.changed.size > 0,
+      pending: () => pins.size > 0 || state.changed.size > 0 || state.mocked.size > 0,
       description:
-        'Undo the agent: unpin everything and refetch real data for keys changed with query.set.',
+        'Undo the agent: unpin everything, refetch real data for keys changed with query.set, and reset queries that fetched while a net.mock answered (net.unmock and net.restore do this too). Returns { unpinned, refetched, mockedCleared }.',
       run: async () => {
         const unpinned = [...pins.values()].map((p) => p.key)
         const changed = [...state.changed]
@@ -234,8 +293,11 @@ export function queryTools(queryClient: QueryClient): Tools {
         state.unsubscribe = null
         for (const key of unpinned) refetchReal(key)
         const refetched = changed.filter((key) => refetchReal(key)).length
+        clearMocked()
+        const mockedCleared = state.clearedSince
+        state.clearedSince = 0
         await rendered()
-        return { unpinned: unpinned.length, refetched }
+        return { unpinned: unpinned.length, refetched, mockedCleared }
       },
     },
     'query.invalidate': {

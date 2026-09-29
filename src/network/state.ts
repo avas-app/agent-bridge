@@ -1,3 +1,4 @@
+import { signalMockAnswered } from '../shared/mock-signal'
 import { compactBody, FULL_BUDGET, MAX_FULL_BODY, truncateBody } from './body'
 import type {
   LogEntry,
@@ -384,6 +385,7 @@ export async function answer(
     mock.hits += 1
     if (mock.times !== undefined && mock.hits >= mock.times)
       removeMocks(state, (m) => m === mock)
+    if (mock.source === 'agent') signalMockAnswered(mock.id)
     return { mock, response }
   }
   return null

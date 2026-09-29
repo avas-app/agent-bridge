@@ -89,12 +89,12 @@ describe('queryTools', () => {
     await run(queryTools(client), 'query.set', ['user'], { name: 'y' })
     await run(queryTools(client), 'query.set', ['agentOnly'], 1)
 
-    expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 1, refetched: 1 })
+    expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 1, refetched: 1, mockedCleared: 0 })
     await new Promise((r) => setTimeout(r, 10)) // the refetches restore started
     expect(client.getQueryData<string>(['plants'])).toStartWith('real-plants')
     expect(client.getQueryData<string>(['user'])).toStartWith('real-user')
     expect(client.getQueryData(['agentOnly'])).toBeUndefined()
-    expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 0, refetched: 0 })
+    expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 0, refetched: 0, mockedCleared: 0 })
     for (const stop of stops) stop()
   })
 
