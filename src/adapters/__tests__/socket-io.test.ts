@@ -31,6 +31,18 @@ afterEach(() => {
 })
 
 describe('socketIoTools', () => {
+  test('an injected event reaches listeners with the arguments a real one has', () => {
+    const { socket, tools, connect, event } = setup()
+    connect()
+    const listener = mock()
+    socket.on('chat', listener)
+
+    event('chat', { text: 'hi' }, 2)
+    run(tools, 'realtime.emit', 'chat', { text: 'hi' }, 2)
+    // The event name is the channel, so it is not passed as an argument.
+    expect(listener.mock.calls[1]).toEqual(listener.mock.calls[0]!)
+  })
+
   test('logs real events once and injects arguments into every listener', () => {
     const { socket, tools, connect, event } = setup()
     connect()

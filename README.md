@@ -284,7 +284,7 @@ npx agent-bridge call realtime.log '{"channel": "order-42"}'
 npx agent-bridge call realtime.connection '"disconnected"'             # null goes back
 ```
 
-- `realtime.emit` runs the app's own handlers. Ably gets an Ably message (`{ id, name, data, timestamp }` plus what you pass), socket.io gets the arguments after the event name (`["chat", "a", "b"]` calls `listener("a", "b")`), and `createRealtimeTap` gets the value as is, or what its `toMessage` option builds.
+- `realtime.emit` runs the app's own handlers. Ably gets an Ably message shaped like one ably-js decodes (`{ id, name, data, timestamp, action, version, annotations }` plus what you pass, e.g. `clientId`, `connectionId`, `extras`; `name` is the event name, there is no `event` field), socket.io gets the arguments after the event name (`["chat", "a", "b"]` calls `listener("a", "b")`), and `createRealtimeTap` gets the value as is, or what its `toMessage` option builds.
 - `realtime.mute` drops real messages; injected ones still get through unless you pass `{ "dropInjected": true }`. `"*"` mutes every channel.
 - `realtime.connection` fakes a state through the client's own events (Ably's `connection.on` and `connection.state`, socket.io's `connect` / `disconnect`) and drops real messages until the state is `connected` again. Ably channel states don't follow. `socket.connected` keeps its real value: socket.io reads it itself, and faking it would hold real traffic back until the next reconnect.
 - `realtime.log` keeps the last 50 messages, and logs a message once however many listeners get it.

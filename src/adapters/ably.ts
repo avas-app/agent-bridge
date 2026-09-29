@@ -7,6 +7,13 @@ export type AblyMessageLike = {
   name?: string
   data?: unknown
   clientId?: string
+  connectionId?: string
+  extras?: unknown
+  timestamp?: number
+  action?: string
+  serial?: string
+  version?: unknown
+  annotations?: unknown
 }
 
 /** The Ably realtime channel surface this adapter uses. */
@@ -54,11 +61,26 @@ function accepts(filter: unknown, message: AblyMessageLike): boolean {
   return true
 }
 
+const USAGE =
+  'Pass the message as { name, data }, e.g. ["chat", { "name": "typing", "data": { "user": "sam" } }]'
+
+// The fields ably-js puts on a message it decoded off the wire. Anything the
+// agent passes overrides these; `name` is the event name and stays unset unless given.
 function toMessage(values: unknown[], { id }: { id: string }): AblyMessageLike {
   const [input] = values
-  if (!input || typeof input !== 'object' || Array.isArray(input))
-    throw new Error('Pass the message as { name, data }, e.g. ["chat", { "name": "typing", "data": { "user": "sam" } }]')
-  return { id, timestamp: Date.now(), ...input } as AblyMessageLike
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(USAGE)
+  const given = input as AblyMessageLike & { event?: unknown }
+  if (given.name === undefined && given.event !== undefined)
+    throw new Error(`Ably messages have "name", not "event". ${USAGE}`)
+  const timestamp = Date.now()
+  return {
+    id,
+    timestamp,
+    action: 'message.create',
+    version: { timestamp },
+    annotations: { summary: {} },
+    ...given,
+  }
 }
 
 /**
@@ -73,6 +95,8 @@ export const ablyTools = realtimeAdapter(
       namespace: options.namespace,
       describe: (m) => ({ event: m.name, data: m.data, id: m.id }),
       toMessage,
+      emitUsage:
+        'Ably: [channel, { name, data, clientId?, extras? }]. "name" is the event name (subscribe filters and message.name see it) and "data" the payload; there is no "event" field. Filled in like a real message: id, timestamp, action, version, annotations.',
       channelInfo: (name) => ({ state: channels.get(name)?.state }),
       // ably-js's connection is an event emitter; `emit` isn't in its public types.
       connection: fakeableConnection(client.connection, {

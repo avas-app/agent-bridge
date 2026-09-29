@@ -41,6 +41,8 @@ export const socketIoTools = realtimeAdapter(
         return { data: values.length === 1 ? values[0] : values }
       },
       toMessage: (values) => values,
+      emitUsage:
+        'socket.io: the channel is the event name and the rest are the listener\'s arguments, so ["chat", "a", "b"] calls listener("a", "b"). Do not repeat the event name in the arguments.',
       // socket.io-client announces lifecycle events with emitReserved.
       connection: fakeableConnection(socket, {
         property: 'connected',
