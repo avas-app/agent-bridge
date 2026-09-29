@@ -212,6 +212,16 @@ function hostAbove(host: Fiber): Fiber {
   return up ?? host
 }
 
+/** Android wraps a ScrollView with a RefreshControl in AndroidSwipeRefreshLayout. */
+export const REFRESH_HOST = /refresh/i
+
+/**
+ * The ScrollView under an Android refresh layout gets the list's props (testID
+ * included) as well: it is the same element as the layout around it.
+ */
+const refreshTwin = (rec: Rec | null, host: Fiber): Rec | null =>
+  rec && REFRESH_HOST.test(String(rec.host.type)) && hostAbove(host) === rec.host ? rec : null
+
 const inside = (modal: ModalRef | null, top: ModalRef) => {
   for (let m = modal; m; m = m.up) if (m === top) return true
   return false
@@ -275,8 +285,9 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
     !(typeof p.value === 'boolean' && isFn(p.onValueChange)) &&
     ('value' in p || 'defaultValue' in p)
   ) {
+    // Objects are a wrapper's context value (VirtualizedList's), not something shown.
     const v = p.value ?? p.defaultValue
-    if (v != null) e.value = String(v)
+    if (v != null && typeof v !== 'object' && !isFn(v)) e.value = String(v)
   }
   if (rec.maxLength === undefined && typeof p.maxLength === 'number')
     rec.maxLength = p.maxLength
@@ -529,8 +540,12 @@ export function collectScreen(
     let rec = parentRec
     if (p && interesting(p)) {
       const host = firstHost(fiber)
-      const same = host && !byHost.has(host) ? sameControl(parentRec, p) : null
-      if (host && same) {
+      const twin = host && !byHost.has(host) ? refreshTwin(parentRec, host) : null
+      const same = host && !twin && !byHost.has(host) ? sameControl(parentRec, p) : null
+      if (host && twin) {
+        byHost.set(host, twin)
+        rec = twin
+      } else if (host && same) {
         byHost.set(host, same)
         same.host = host
         absorbChain(same, fiber, host)

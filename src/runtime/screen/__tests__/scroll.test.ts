@@ -203,6 +203,8 @@ function scroller(
   })
   const content = tree(at(() => rectOf(0, size, view())), ...kids)
   const scrollHost = tree(at(view, opts.android ? 'RCTScrollView' : undefined), content)
+  // ScrollView hands its props (testID included) to the native scroll view.
+  if (opts.android) scrollHost.memoizedProps = { testID: opts.props?.testID }
   const top = opts.android ? tree(at(view, 'AndroidSwipeRefreshLayout'), scrollHost) : scrollHost
   const instance = {
     scrollTo: (o: { x: number; y: number }) => {
@@ -239,6 +241,24 @@ describe('scroll hosts and timing', () => {
     list.state.offset = 0
     await screen.press('Deep', { scroll: true }).catch((e) => expect(String(e)).toMatch(/no onPress/))
     expect(list.state.offset).toBe(1220)
+  })
+
+  test('Android: a list with a RefreshControl is one element, and within finds it', async () => {
+    const list = scroller(VIEW, 2000, [{ at: 1500, make: field('Deep') }], {
+      android: true,
+      props: { testID: 'list', refreshControl: { props: { onRefresh: () => {} } } },
+    })
+    // FlatList -> VirtualizedList's context provider (an object value) -> ScrollView.
+    const flatList = tree(
+      composite({ testID: 'list' }),
+      tree(composite({ value: { cellKey: 'root' } }), list.fiber),
+    )
+    const screen = roots(flatList)
+    const lists = screen.snapshot().elements.filter((e) => e.testID === 'list')
+    expect(lists).toHaveLength(1)
+    expect(lists[0]?.value).toBeUndefined()
+    expect(await screen.scroll({ by: 100 }, { within: 'list' })).toMatchObject({ offset: 100 })
+    expect(await screen.scroll('Deep', { within: 'list' })).toMatchObject({ onScreen: true })
   })
 
   test('the offset arrives after the call returns: press and scroll wait for it', async () => {
