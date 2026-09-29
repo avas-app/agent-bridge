@@ -1,9 +1,16 @@
 export const DEFAULT_METRO = 'localhost:8081'
 
+const stripScheme = (metro: string) =>
+  metro.replace(/^https?:\/\//, '').replace(/\/+$/, '')
+
+/** The Metro given by flag or env, or undefined: session matching only uses what was asked for. */
+export function explicitMetro(metro?: string): string | undefined {
+  const given = metro ?? process.env.AGENT_BRIDGE_METRO
+  return given ? stripScheme(given) : undefined
+}
+
 export function metroHost(metro?: string): string {
-  return (metro ?? process.env.AGENT_BRIDGE_METRO ?? DEFAULT_METRO)
-    .replace(/^https?:\/\//, '')
-    .replace(/\/+$/, '')
+  return stripScheme(metro ?? process.env.AGENT_BRIDGE_METRO ?? DEFAULT_METRO)
 }
 
 /**

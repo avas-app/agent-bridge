@@ -2,7 +2,7 @@ import { createConnection } from 'node:net'
 import { createInterface } from 'node:readline'
 
 import type { TransportName } from '../connection'
-import { metroHost } from '../discover'
+import { explicitMetro } from '../discover'
 import { type AgentBridge, AgentBridgeCallError, type Timed } from '../index'
 import type { SessionRequest, SessionResponse } from './protocol'
 import { type SessionState, pickSession } from './state'
@@ -69,7 +69,7 @@ export async function sessionRequest(
 }
 
 export type SessionConnectOptions = {
-  /** Session name. Defaults to $AGENT_BRIDGE_SESSION, else the only session on this Metro. */
+  /** Session name. Defaults to $AGENT_BRIDGE_SESSION, else the only session (matching --metro/--device when given). */
   name?: string
   metro?: string
   device?: string
@@ -87,7 +87,7 @@ export async function connectSession(
 ): Promise<AgentBridge & { session: SessionState }> {
   const state = pickSession({
     name: options.name ?? process.env.AGENT_BRIDGE_SESSION,
-    metro: metroHost(options.metro),
+    metro: explicitMetro(options.metro),
     device: options.device,
     transport: options.transport,
   })

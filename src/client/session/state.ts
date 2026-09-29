@@ -149,13 +149,13 @@ export function readSession(name: string, dir = stateDir()) {
 }
 
 /**
- * The session a command should use: the one named, or the only live one on
- * this Metro that matches the device filter (and transport, if forced).
- * Returns null when none or several match.
+ * The session a command should use: the one named, else the only live one that
+ * matches whatever was given explicitly (metro, device filter, forced
+ * transport). Returns null when none match; throws when several do.
  */
 export function pickSession(filter: {
   name?: string
-  metro: string
+  metro?: string
   device?: string
   transport?: string
 }): SessionState | null {
@@ -167,7 +167,7 @@ export function pickSession(filter: {
   const device = filter.device?.toLowerCase()
   const matching = listSessions().filter(
     (s) =>
-      s.metro === filter.metro &&
+      (!filter.metro || s.metro === filter.metro) &&
       (!device ||
         s.device.name.toLowerCase().includes(device) ||
         s.device.deviceId.toLowerCase().includes(device)) &&
@@ -175,5 +175,11 @@ export function pickSession(filter: {
         filter.transport === 'auto' ||
         filter.transport === s.transport),
   )
-  return matching.length === 1 ? (matching[0] as SessionState) : null
+  if (matching.length > 1)
+    throw new Error(
+      `Several sessions match (${matching
+        .map((s) => `${s.name}: ${s.device.name} on ${s.metro}`)
+        .join('; ')}); pick one with --session <name>, or narrow with --metro/--device`,
+    )
+  return (matching[0] as SessionState | undefined) ?? null
 }

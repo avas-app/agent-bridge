@@ -185,6 +185,65 @@ describe('session daemon', () => {
     expect(readFileSync(files.log, 'utf8')).toContain('stopped (stop)')
   })
 
+  test('one session on a non-default Metro port needs no --metro', async () => {
+    const { metro } = await setup()
+    expect(metro).not.toBe('localhost:8081')
+    const daemon = await runSessionDaemon({
+      name: 'custom',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession()
+    cleanups.push(bridge.close)
+    expect(bridge.session.name).toBe('custom')
+    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+  })
+
+  test('with several sessions, errors listing them; --session, --metro and --device pick one', async () => {
+    const a = await setup()
+    const b = await setup()
+    for (const [name, metro] of [
+      ['first', a.metro],
+      ['second', b.metro],
+    ] as const) {
+      const daemon = await runSessionDaemon({
+        name,
+        metro,
+        idleMs: 0,
+        healthMs: 0,
+      })
+      cleanups.push(() => daemon.stop(true))
+    }
+    await expect(connectSession()).rejects.toThrow(
+      /Several sessions match \(first: Fake App on .*; second: Fake App on .*\)/,
+    )
+    for (const [options, name] of [
+      [{ name: 'second' }, 'second'],
+      [{ metro: a.metro }, 'first'],
+      [{ metro: `http://${b.metro}/` }, 'second'],
+    ] as const) {
+      const bridge = await connectSession(options)
+      cleanups.push(bridge.close)
+      expect(bridge.session.name).toBe(name)
+    }
+    const saved = process.env.AGENT_BRIDGE_METRO
+    process.env.AGENT_BRIDGE_METRO = b.metro
+    try {
+      const bridge = await connectSession()
+      cleanups.push(bridge.close)
+      expect(bridge.session.name).toBe('second')
+    } finally {
+      if (saved === undefined) delete process.env.AGENT_BRIDGE_METRO
+      else process.env.AGENT_BRIDGE_METRO = saved
+    }
+    // An explicit filter that matches nothing is still an error, not a guess.
+    await expect(connectSession({ device: 'nope' })).rejects.toThrow(
+      'No single session matches',
+    )
+  })
+
   test('tears down after the idle period, restoring first', async () => {
     const { metro, app } = await setup()
     const daemon = await runSessionDaemon({
