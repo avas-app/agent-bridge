@@ -72,7 +72,12 @@ export function AgentBridge() {
     transports: [expoTransport(), cdpTransport()],
     tools: {
       ...queryTools(queryClient),
-      ...storeTools({ settings: useSettingsStore, auth: useAuthStore }),
+      ...storeTools(
+        { settings: useSettingsStore, auth: useAuthStore },
+        // Masks these paths in every store.* output; `store.set` and
+        // `store.call` never echo the whole store.
+        { redact: { auth: ['accessToken', 'refreshToken', 'user.phone'] } },
+      ),
       ...mmkvTools({ storage }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...networkTools(),
