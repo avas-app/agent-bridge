@@ -36,6 +36,7 @@ export default defineConfig([
     platform: 'neutral',
     external: [
       'react',
+      'react-native-view-shot',
       'react-native',
       'expo/devtools',
       '@tanstack/query-core',
