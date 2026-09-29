@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 
 import type { TransportName } from '../connection'
 
@@ -20,6 +21,8 @@ export type SessionState = {
   socket: string
   metro: string
   device: { name: string; deviceId: string; platform: string }
+  /** The project the session was started in (see `projectRoot`). */
+  project?: string
   /** The --device filter the session was started with, reused to reconnect. */
   deviceFilter?: string
   transport: TransportName
@@ -27,6 +30,14 @@ export type SessionState = {
   lastCallAt: number
   /** 0 means no idle timeout. */
   idleMs: number
+}
+
+/** The directory of the nearest package.json at or above `from`, else `from`. */
+export function projectRoot(from = process.cwd()): string {
+  for (let dir = resolve(from); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, 'package.json'))) return dir
+    if (dirname(dir) === dir) return resolve(from)
+  }
 }
 
 const uid = () => process.getuid?.() ?? userInfo().username
@@ -149,13 +160,15 @@ export function readSession(name: string, dir = stateDir()) {
 }
 
 /**
- * The session a command should use: the one named, or the only live one on
- * this Metro that matches the device filter (and transport, if forced).
- * Returns null when none or several match.
+ * The session a command should use: the one named, else the only live one that
+ * matches whatever was given explicitly (metro, device filter, forced
+ * transport). With nothing given, only this project's sessions count, so an
+ * agent never drives another project's app. Returns null when none match;
+ * throws when several do.
  */
 export function pickSession(filter: {
   name?: string
-  metro: string
+  metro?: string
   device?: string
   transport?: string
 }): SessionState | null {
@@ -165,9 +178,16 @@ export function pickSession(filter: {
     return named
   }
   const device = filter.device?.toLowerCase()
+  const explicit = !!(
+    filter.metro ||
+    device ||
+    (filter.transport && filter.transport !== 'auto')
+  )
+  const project = projectRoot()
   const matching = listSessions().filter(
     (s) =>
-      s.metro === filter.metro &&
+      (explicit || s.project === project) &&
+      (!filter.metro || s.metro === filter.metro) &&
       (!device ||
         s.device.name.toLowerCase().includes(device) ||
         s.device.deviceId.toLowerCase().includes(device)) &&
@@ -175,5 +195,11 @@ export function pickSession(filter: {
         filter.transport === 'auto' ||
         filter.transport === s.transport),
   )
-  return matching.length === 1 ? (matching[0] as SessionState) : null
+  if (matching.length > 1)
+    throw new Error(
+      `Several sessions match (${matching
+        .map((s) => `${s.name}: ${s.device.name} on ${s.metro}`)
+        .join('; ')}); pick one by name (--session, or --name for session stop/status), or narrow with --metro/--device`,
+    )
+  return (matching[0] as SessionState | undefined) ?? null
 }

@@ -16,12 +16,14 @@ import {
 } from '../../../shared/protocol'
 import { startFakeMetro } from '../../__tests__/fake-metro'
 import { AgentBridgeCallError } from '../../index'
+import { sessionFor } from '../cli'
 import { connectSession, sessionRequest } from '../client'
 import { runSessionDaemon } from '../daemon'
 import {
   isAlive,
   listSessions,
   parseDuration,
+  projectRoot,
   sessionFiles,
   writePrivate,
 } from '../state'
@@ -183,6 +185,65 @@ describe('session daemon', () => {
     expect(await daemon.done).toBe('stop')
     expect(listSessions()).toEqual([])
     expect(readFileSync(files.log, 'utf8')).toContain('stopped (stop)')
+  })
+
+  test('one session on a non-default Metro port needs no --metro', async () => {
+    const { metro } = await setup()
+    expect(metro).not.toBe('localhost:8081')
+    const daemon = await runSessionDaemon({
+      name: 'custom',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession()
+    cleanups.push(bridge.close)
+    expect(bridge.session.name).toBe('custom')
+    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+  })
+
+  test('with several sessions, errors listing them; --session, --metro and --device pick one', async () => {
+    const a = await setup()
+    const b = await setup()
+    for (const [name, metro] of [
+      ['first', a.metro],
+      ['second', b.metro],
+    ] as const) {
+      const daemon = await runSessionDaemon({
+        name,
+        metro,
+        idleMs: 0,
+        healthMs: 0,
+      })
+      cleanups.push(() => daemon.stop(true))
+    }
+    await expect(connectSession()).rejects.toThrow(
+      /Several sessions match \(first: Fake App on .*; second: Fake App on .*\)/,
+    )
+    for (const [options, name] of [
+      [{ name: 'second' }, 'second'],
+      [{ metro: a.metro }, 'first'],
+      [{ metro: `http://${b.metro}/` }, 'second'],
+    ] as const) {
+      const bridge = await connectSession(options)
+      cleanups.push(bridge.close)
+      expect(bridge.session.name).toBe(name)
+    }
+    const saved = process.env.AGENT_BRIDGE_METRO
+    process.env.AGENT_BRIDGE_METRO = b.metro
+    try {
+      const bridge = await connectSession()
+      cleanups.push(bridge.close)
+      expect(bridge.session.name).toBe('second')
+    } finally {
+      if (saved === undefined) delete process.env.AGENT_BRIDGE_METRO
+      else process.env.AGENT_BRIDGE_METRO = saved
+    }
+    // An explicit filter that matches nothing is still an error, not a guess.
+    await expect(connectSession({ device: 'nope' })).rejects.toThrow(
+      'No single session matches',
+    )
   })
 
   test('tears down after the idle period, restoring first', async () => {
@@ -537,6 +598,11 @@ describe('session CLI', () => {
       metro,
     )
     expect(viaSession.stdout).toContain('"y"')
+    expect(viaSession.stderr).toContain('Using session "cli"')
+    // No --metro at all: this project's one session is used, and named.
+    const plain = await runAsync('call', 'demo.echo', '"z"')
+    expect(plain.stdout).toContain('"z"')
+    expect(plain.stderr).toContain('Using session "cli"')
     expect(listSessions()[0]?.lastCallAt).toBeGreaterThan(before)
 
     expect(run('session', 'list').stdout).toMatch(/cli .*Fake App.*left/)
@@ -550,6 +616,38 @@ describe('session CLI', () => {
       await new Promise((r) => setTimeout(r, 20))
     expect(isAlive(pid)).toBe(false)
     expect(run('session', 'list').stdout).toContain('No sessions.')
+  })
+
+  test('sessions from another project are ignored unless selected', () => {
+    const fake = (name: string, project: string, metro: string) =>
+      writePrivate(
+        sessionFiles(name, dir).state,
+        JSON.stringify({
+          name,
+          pid: process.pid,
+          socket: '',
+          metro,
+          project,
+          device: { name: 'Fake App', deviceId: name, platform: 'ios' },
+          transport: 'expo',
+          startedAt: Date.now(),
+          lastCallAt: Date.now(),
+          idleMs: 0,
+        }),
+      )
+    fake('theirs', '/elsewhere/project-x', 'localhost:8082')
+    expect(sessionFor({})).toBeNull()
+    expect(sessionFor({ metro: 'localhost:8082' })?.name).toBe('theirs')
+    expect(sessionFor({ session: 'theirs' })?.name).toBe('theirs')
+    expect(sessionFor({ 'no-session': true })).toBeNull()
+
+    fake('mine', projectRoot(), 'localhost:8083')
+    expect(sessionFor({})?.name).toBe('mine')
+    fake('mine2', projectRoot(), 'localhost:8084')
+    expect(() => sessionFor({})).toThrow(
+      /Several sessions match \(.*mine.*mine2|mine2.*mine/,
+    )
+    expect(sessionFor({ metro: 'localhost:8084' })?.name).toBe('mine2')
   })
 
   test('start reports the connect error', async () => {

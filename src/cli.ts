@@ -44,7 +44,8 @@ Sessions: one connection for all of an agent's calls
   agent-bridge session start [--name n] [--idle 15m]   Connect once in the background
   agent-bridge session stop [--name n] [--keep]        bridge.restore (unless --keep), then end
   agent-bridge session list | status [--name n]
-  While a session matches --metro/--device, call, tools and run use it.
+  call, tools and run use this project's running session (the only one, or the one
+  matching --metro/--device), and print its name. With several, pass --session <name>.
 
 Options
   --metro <host:port>    Metro dev server (env AGENT_BRIDGE_METRO, default localhost:8081)
@@ -104,6 +105,7 @@ async function main() {
   }
   const withBridge = async (fn: (bridge: AgentBridge) => Promise<void>) => {
     const session = sessionFor(values)
+    if (session) console.error(`Using session "${session.name}"`)
     const bridge = session
       ? await connectSession({
           name: session.name,

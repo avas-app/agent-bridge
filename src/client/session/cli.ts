@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs'
 
 import type { ResultMessage } from '../../shared/protocol'
 import type { TransportName } from '../connection'
-import { metroHost } from '../discover'
+import { explicitMetro, metroHost } from '../discover'
 import { sessionRequest } from './client'
 import { runSessionDaemon } from './daemon'
 import {
@@ -39,7 +39,7 @@ export function sessionFor(flags: SessionFlags): SessionState | null {
   if (flags['no-session']) return null
   return pickSession({
     name: flags.session ?? process.env.AGENT_BRIDGE_SESSION,
-    metro: metroHost(flags.metro),
+    metro: explicitMetro(flags.metro),
     device: flags.device,
     transport: flags.transport,
   })
