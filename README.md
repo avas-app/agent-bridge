@@ -87,7 +87,7 @@ export function AgentBridge() {
 Every app also gets:
 
 - `screen.snapshot`: buttons, inputs, text and `testID` views on screen, with positions.
-- `screen.fill`, `screen.press`: call an input's or button's own handlers, found by `testID`, label, placeholder or text, and return once React has rendered the result.
+- `screen.fill`, `screen.press`: call an input's or button's own handlers, found by `testID`, label, placeholder or text, and return once React has rendered the result. A target is a string or `{testID, label, placeholder, text, at:[x,y], index}`; unknown keys are errors. `{at:[x,y]}` hits the smallest element covering that point (icon-only buttons), and `index` picks among several matches, in the target or as a trailing `{index}` argument. `screen.press(target, {force:true})` presses a disabled element on purpose.
 - `screen.waitFor`, `screen.findText`: wait for, or check, text or a target on screen.
 - `bridge.restore`: undo what the agent changed, by running every `*.restore` tool.
 - `bridge.logs`, `bridge.ping`, `bridge.tools`.

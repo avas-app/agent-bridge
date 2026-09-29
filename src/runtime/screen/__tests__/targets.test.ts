@@ -43,3 +43,23 @@ describe('resolveTarget', () => {
     expect(() => pick('Far below')).toThrow(/which is not on screen/)
   })
 })
+
+describe('target shape', () => {
+  test('unknown keys are rejected with the valid ones', () => {
+    expect(() => pick({ near: 'Save' } as never)).toThrow(/Unknown target key "near". Valid keys: testID, label, placeholder, text, at, index/)
+    expect(() => pick({ text: 'Save plant', typo: 1 } as never)).toThrow(/Unknown target key "typo"/)
+    expect(() => pick({ at: [1] } as never)).toThrow(/"at" must be \[x, y\]/)
+  })
+
+  test('the ambiguity error shows an example built from the call', () => {
+    expect(() => pick('Water every')).toThrow(/\["Water every",\{"index":1\}\]/)
+    expect(() => pick({ text: 'Water every' })).toThrow(/\{"text":"Water every","index":1\}/)
+  })
+
+  test('a trailing index option picks a match, string targets included', () => {
+    const at = (t: Parameters<typeof resolveTarget>[1], index: number) =>
+      resolveTarget(found, t, undefined, { index }).element.text
+    expect(at('Water every', 1)).toBe('Water every 3 days')
+    expect(at({ text: 'Water every' }, 0)).toBe('Water every 7 days')
+  })
+})

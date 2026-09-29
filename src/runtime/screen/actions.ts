@@ -57,11 +57,16 @@ const center = (rect: Rect | null) =>
     : { x: 0, y: 0 }
 
 /** Presses the element, or the nearest ancestor that handles presses. */
-export function pressElement(found: Found): void {
+export function pressElement(found: Found, options: { force?: boolean } = {}): void {
   const fiber = pressFiberOf(found)
   if (!fiber) throw new Error(`${describe(found.element)} has no onPress`)
-  if (found.element.disabled || propsOf(fiber)?.disabled === true)
-    throw new Error(`${describe(found.element)} is disabled`)
+  if (
+    !options.force &&
+    (found.element.disabled || propsOf(fiber)?.disabled === true)
+  )
+    throw new Error(
+      `${describe(found.element)} is disabled; pass {"force":true} as the last argument to press anyway`,
+    )
   const { x, y } = center(found.element.rect)
   const e = () =>
     event({

@@ -9,6 +9,9 @@ const devToolsHook = () =>
     | Parameters<typeof fiberRoots>[0]
     | undefined
 
+const TARGET_HELP =
+  'target is a string (testID, label, placeholder or text) or an object that must match every key it sets: {testID, label, placeholder, text, at:[x,y], index}. Unknown keys are errors. {at:[x,y]} hits the smallest element covering that point, for icon-only buttons with no label. Several matches: add an index, either in the target or as a trailing {index:n} argument.'
+
 export function screenTools(): Tools {
   const screen = createScreen({
     roots: () => fiberRoots(devToolsHook()),
@@ -33,14 +36,19 @@ export function screenTools(): Tools {
     },
     'screen.fill': {
       description:
-        'Type into an input by testID, label, placeholder or text, then wait for the render. {submit:true} also submits.',
-      run: (target: Target, text: string, options?: { submit?: boolean }) =>
+        `Type into an input, then wait for the render. ${TARGET_HELP} {submit:true} also submits.`,
+      run: (
+        target: Target,
+        text: string,
+        options?: { submit?: boolean; index?: number },
+      ) =>
         screen.fill(target, text, options),
     },
     'screen.press': {
       description:
-        'Press a button by testID, label or text, then wait for the render.',
-      run: (target: Target) => screen.press(target),
+        `Press a button, then wait for the render. ${TARGET_HELP} Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap.`,
+      run: (target: Target, options?: { force?: boolean; index?: number }) =>
+        screen.press(target, options),
     },
     'screen.waitFor': {
       description:

@@ -43,17 +43,20 @@ export function createScreen(env: {
     async fill(
       target: Target,
       text: string,
-      options: { submit?: boolean } = {},
+      options: { submit?: boolean; index?: number } = {},
     ): Promise<{ filled: string; element: ScreenElement }> {
-      const found = resolveTarget(collect(), target, (f) => !!f.input)
+      const found = resolveTarget(collect(), target, (f) => !!f.input, options)
       const filled = fillInput(found, String(text), options)
       await settle()
       return { filled, element: refresh(found) }
     },
 
-    async press(target: Target): Promise<ScreenElement> {
-      const found = resolveTarget(collect(), target, (f) => !!f.press)
-      pressElement(found)
+    async press(
+      target: Target,
+      options: { force?: boolean; index?: number } = {},
+    ): Promise<ScreenElement> {
+      const found = resolveTarget(collect(), target, (f) => !!f.press, options)
+      pressElement(found, options)
       await settle()
       return found.element
     },
