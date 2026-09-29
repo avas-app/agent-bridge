@@ -10,6 +10,10 @@ export type RouterLike = {
   replace(href: never): void
   back(): void
   canGoBack(): boolean
+  /** Missing before expo-router 3; `router.dismiss` and `router.dismissAll` then throw. */
+  dismiss?(count?: number): void
+  dismissAll?(): void
+  canDismiss?(): boolean
 }
 
 /** The root navigation container, from `useNavigationContainerRef()` in expo-router. */
@@ -154,6 +158,14 @@ function settle(navigation: NavigationLike, go: () => void): Promise<void> {
   })
 }
 
+function needDismiss<F>(fn: F | undefined): F {
+  if (!fn)
+    throw new Error(
+      "this router has no dismiss; update expo-router or close the modal with the app's own tool",
+    )
+  return fn
+}
+
 /**
  * Navigate without taps. Pass `router` from `expo-router`, and
  * `{ navigation: useNavigationContainerRef() }` to read the current route.
@@ -177,10 +189,27 @@ export function routerTools(router: RouterLike, options: RouterToolsOptions = {}
       run: (href: string) => go(() => router.replace(href as never), href),
     },
     'router.back': {
-      description: 'Go back if possible. Returns whether it could.',
+      description:
+        'Pop the navigator once if it can. Returns whether it could. Ignores modals and sheets the app renders itself, so it can pop the screen under one: close those with the app\'s own tool, e.g. modal.close.',
       run: () => {
         const could = router.canGoBack()
         return could ? go(() => router.back(), true) : false
+      },
+    },
+    'router.dismiss': {
+      description:
+        'Close the top route-based modal (or `count` screens of the nearest stack). Returns whether it could. Does not close app-rendered modals or sheets.',
+      run: (count?: number) => {
+        const dismiss = needDismiss(router.dismiss?.bind(router))
+        return router.canDismiss?.() === false ? false : go(() => dismiss(count), true)
+      },
+    },
+    'router.dismissAll': {
+      description:
+        'Pop the nearest stack back to its first screen. Returns false if no stack has more than one screen. Does not close app-rendered modals or sheets.',
+      run: () => {
+        const dismissAll = needDismiss(router.dismissAll?.bind(router))
+        return router.canDismiss?.() === false ? false : go(() => dismissAll(), true)
       },
     },
     'router.current': {
