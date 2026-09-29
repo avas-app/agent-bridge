@@ -161,8 +161,11 @@ export function resolveTarget(
       throw new Error(
         `${showTarget(target)} matches ${describe(hidden.element)}, which is not on screen. Pass {scroll:true} to scroll it into view, or use screen.scroll`,
       )
+    const unrendered = options?.offscreen
+      ? '. A list renders only the rows near its window: for a row it has not rendered yet, screen.scroll {toEnd:true} or {by: points} first'
+      : ''
     throw new Error(
-      `Nothing on screen matches ${showTarget(target)}. On screen: ${onScreenSummary(found)}`,
+      `Nothing on screen matches ${showTarget(target)}. On screen: ${onScreenSummary(found)}${unrendered}`,
     )
   }
   const preferred = prefer ? matches.filter(prefer) : []

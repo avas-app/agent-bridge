@@ -53,12 +53,19 @@ export type Found = {
   scroller: Scrollable | null
 }
 
+/** An open Modal, and the Modal it sits in. */
+type ModalRef = { host: Fiber; up: ModalRef | null }
+
 /** A ScrollView, FlatList, FlashList (or a scrolling DOM element) and its host. */
 export type Scrollable = {
   host: Fiber
   /** Every fiber over this host with scroll methods, outermost first. */
   fibers: Fiber[]
   hidden: boolean
+  /** The scrollable this one sits in, for when it can't move a target into view. */
+  parent: Scrollable | null
+  modal: ModalRef | null
+  overlay: boolean
 }
 
 export type Window = { width: number; height: number }
@@ -66,6 +73,8 @@ export type Window = { width: number; height: number }
 type Props = Record<string, unknown>
 
 type Rec = Found & {
+  modal: ModalRef | null
+  overlay: boolean
   parent: Rec | null
   parts: { host: Fiber; text: string }[]
 }
@@ -97,27 +106,35 @@ function scrolls(fiber: Fiber): boolean {
   return true
 }
 
-const flatStyle = (style: unknown): Props => {
-  const out: Props = {}
-  const walk = (s: unknown) => {
-    if (Array.isArray(s)) s.forEach(walk)
-    else if (s && typeof s === 'object') Object.assign(out, s)
+// The last style that sets `display` wins, as in a flattened style.
+const displayNone = (style: unknown) => displayOf(style) === 'none'
+
+function displayOf(style: unknown): unknown {
+  if (Array.isArray(style)) {
+    for (let i = style.length - 1; i >= 0; i--) {
+      const d = displayOf(style[i])
+      if (d !== undefined) return d
+    }
+    return undefined
   }
-  walk(style)
-  return out
+  return style && typeof style === 'object'
+    ? (style as Props).display
+    : undefined
 }
 
 // What React Native and react-native-screens say about a subtree the user can't
 // reach: inactive screens (`activityState` 0), `display: none` (react-navigation
-// hides unfocused tabs that way), and accessibility hiding.
+// hides unfocused tabs that way), and accessibility hiding. Host props only.
 const hiddenBy = (p: Props) =>
   p.activityState === 0 ||
-  flatStyle(p.style).display === 'none' ||
+  displayNone(p.style) ||
   p['aria-hidden'] === true ||
   p.accessibilityElementsHidden === true ||
   p.importantForAccessibility === 'no-hide-descendants'
 
 const MODAL_HOSTS = new Set(['RCTModalHostView', 'ModalHostView'])
+// Renders above modals (toasts, alerts), so it stays reachable under one.
+const OVERLAY_HOST = 'RNSFullWindowOverlay'
 const SCREEN_STACK = 'RNSScreenStack'
 const STACK_SCREENS = new Set(['RNSScreen', 'RNSModalScreen'])
 
@@ -135,8 +152,8 @@ function coveredScreens(stack: Fiber): Fiber[] {
   return screens.slice(0, -1)
 }
 
-const within = (fiber: Fiber, ancestor: Fiber) => {
-  for (let f: Fiber | null = fiber; f; f = f.return) if (f === ancestor) return true
+const inside = (modal: ModalRef | null, top: ModalRef) => {
+  for (let m = modal; m; m = m.up) if (m === top) return true
   return false
 }
 
@@ -280,7 +297,7 @@ export function collectScreen(
   const order: Rec[] = []
   const scrollByHost = new Map<Fiber, Scrollable>()
   const covered = new Set<Fiber>()
-  let topModal: Fiber | null = null
+  let topModal: ModalRef | null = null
 
   const recFor = (
     fiber: Fiber,
@@ -288,6 +305,8 @@ export function collectScreen(
     parent: Rec | null,
     hidden: boolean,
     scroller: Scrollable | null,
+    modal: ModalRef | null,
+    overlay: boolean,
   ): Rec => {
     let rec = byHost.get(host)
     if (rec) return rec
@@ -300,6 +319,8 @@ export function collectScreen(
       input: null,
       hidden,
       scroller,
+      modal,
+      overlay,
       parent,
       parts: [],
     }
@@ -333,32 +354,40 @@ export function collectScreen(
     rec: Rec | null
     hidden: boolean
     scroller: Scrollable | null
+    modal: ModalRef | null
+    overlay: boolean
   }
   const stack: Item[] = roots.map((fiber) => ({
     fiber,
     rec: null,
     hidden: false,
     scroller: null,
+    modal: null,
+    overlay: false,
   }))
   while (stack.length) {
     const item = stack.pop() as Item
     const { fiber, rec: parentRec } = item
     if (fiber.sibling) stack.push({ ...item, fiber: fiber.sibling })
     const p = propsOf(fiber)
-    let { hidden, scroller } = item
-    if (p && hiddenBy(p)) hidden = true
-    if (covered.has(fiber)) hidden = true
+    let { hidden, scroller, modal, overlay } = item
     if (fiber.tag === HOST_COMPONENT) {
+      if (p && hiddenBy(p)) hidden = true
+      if (covered.has(fiber)) hidden = true
       if (fiber.type === SCREEN_STACK)
         for (const screen of coveredScreens(fiber)) covered.add(screen)
-      if (!hidden && MODAL_HOSTS.has(fiber.type as string)) topModal = fiber
+      if (fiber.type === OVERLAY_HOST) overlay = true
+      if (!hidden && MODAL_HOSTS.has(fiber.type as string)) {
+        modal = { host: fiber, up: modal }
+        topModal = modal
+      }
     }
     if (scrolls(fiber)) {
       const host = firstHost(fiber)
       if (host) {
         let found = scrollByHost.get(host)
         if (!found) {
-          found = { host, fibers: [], hidden }
+          found = { host, fibers: [], hidden, parent: scroller, modal, overlay }
           scrollByHost.set(host, found)
         }
         found.fibers.push(fiber)
@@ -376,30 +405,31 @@ export function collectScreen(
         absorbChain(same, fiber, host)
         rec = same
       } else if (host) {
-        rec = recFor(fiber, host, parentRec, hidden, scroller)
+        rec = recFor(fiber, host, parentRec, hidden, scroller, modal, overlay)
         absorb(rec, fiber, p)
       }
     }
     const found = textOf(fiber)
     if (found?.host) {
       const host = textHost(found.host)
-      const owner = buttonOf(rec) ?? recFor(host, host, rec, hidden, scroller)
+      const owner = buttonOf(rec) ?? recFor(host, host, rec, hidden, scroller, modal, overlay)
       const last = owner.parts[owner.parts.length - 1]
       if (last?.host === host) last.text += found.text
       else owner.parts.push({ host, text: found.text })
     }
-    if (fiber.child) stack.push({ fiber: fiber.child, rec, hidden, scroller })
+    if (fiber.child) stack.push({ fiber: fiber.child, rec, hidden, scroller, modal, overlay })
   }
 
   // Under an open modal, only the top-most modal's content can be touched.
-  const modal = topModal as Fiber | null
-  const covers = (host: Fiber) => !!modal && !within(host, modal)
+  const top = topModal as ModalRef | null
+  const covers = (x: { modal: ModalRef | null; overlay: boolean }) =>
+    !!top && !x.overlay && !inside(x.modal, top)
   for (const scrollable of scrollByHost.values())
-    scrollable.hidden ||= covers(scrollable.host)
+    scrollable.hidden ||= covers(scrollable)
 
   for (const rec of order) {
     const e = rec.element
-    rec.hidden ||= covers(rec.host)
+    rec.hidden ||= covers(rec)
     const text = rec.parts
       .map((part) => part.text.replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim())
       .filter(Boolean)

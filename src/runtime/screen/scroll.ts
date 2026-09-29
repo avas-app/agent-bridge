@@ -56,18 +56,57 @@ const method = (fiber: Fiber, name: string): Fn | null => {
 export const isHorizontal = (s: Scrollable) =>
   s.fibers.some((f) => propsOf(f)?.horizontal === true)
 
-// The scroll content view: the first host under the scroll host that isn't a
-// refresh control. Its offset from the viewport is how far we have scrolled.
-function contentHost(s: Scrollable): Fiber | null {
+const REFRESH_HOST = /refresh/i
+
+// Android wraps the ScrollView in AndroidSwipeRefreshLayout when it has a
+// RefreshControl, so the host the scroll methods belong to is one level down.
+function scrollNode(s: Scrollable): Fiber {
+  if (!REFRESH_HOST.test(String(s.host.type))) return s.host
   const todo = s.host.child ? [s.host.child] : []
   while (todo.length) {
     const f = todo.pop() as Fiber
     if (f.sibling) todo.push(f.sibling)
+    if (f.tag === 5) return f
+    if (f.child) todo.push(f.child)
+  }
+  return s.host
+}
+
+// The scroll content view: the first host under the scroll host that isn't a
+// refresh control. Its offset from the viewport is how far we have scrolled.
+function contentHost(node: Fiber): Fiber | null {
+  const todo = node.child ? [node.child] : []
+  while (todo.length) {
+    const f = todo.pop() as Fiber
+    if (f.sibling) todo.push(f.sibling)
     if (f.tag === 5) {
-      if (!/refresh/i.test(String(f.type))) return f
+      if (!REFRESH_HOST.test(String(f.type))) return f
     } else if (f.child) todo.push(f.child)
   }
   return null
+}
+
+// `inverted` lists, and lists flipped with a scale(-1) transform, draw their
+// content mirrored: window positions run against the scroll offset.
+function isInverted(s: Scrollable, horizontal: boolean): boolean {
+  const axis = horizontal ? 'scaleX' : 'scaleY'
+  return s.fibers.some((f) => {
+    const p = propsOf(f)
+    if (p?.inverted === true) return true
+    const style = ([] as unknown[]).concat(p?.style ?? []).flat(Infinity)
+    return style.some((st) => {
+      const t = (st as { transform?: unknown } | null)?.transform
+      return (
+        Array.isArray(t) &&
+        t.some(
+          (x) =>
+            x &&
+            typeof x === 'object' &&
+            ((x as Node)[axis] === -1 || (x as Node).scale === -1),
+        )
+      )
+    })
+  })
 }
 
 export type Metrics = {
@@ -76,26 +115,35 @@ export type Metrics = {
   /** The furthest offset, when the content size is known. */
   max: number | null
   view: Rect | null
+  /** Window positions run against the offset. */
+  inverted: boolean
 }
 
 /** Where the scrollable is scrolled to, along its own axis. */
 export function metricsOf(s: Scrollable): Metrics | null {
   const horizontal = isHorizontal(s)
-  const node = nodeOf(s.host)
-  const view = measureHost(s.host)
+  const host = scrollNode(s)
+  const node = nodeOf(host)
+  const view = measureHost(host)
   if (node && typeof node.scrollTop === 'number' && typeof node.scrollHeight === 'number') {
     const size = horizontal
       ? [node.scrollLeft, node.scrollWidth, node.clientWidth]
       : [node.scrollTop, node.scrollHeight, node.clientHeight]
     const [offset, total, shown] = size as number[]
-    return { offset: offset as number, max: Math.max(0, (total as number) - (shown as number)), view }
+    return {
+      offset: offset as number,
+      max: Math.max(0, (total as number) - (shown as number)),
+      view,
+      inverted: false,
+    }
   }
-  const content = contentHost(s)
+  const content = contentHost(host)
   const box = content && measureHost(content)
   if (!view || !box) return null
-  return horizontal
-    ? { offset: view.x - box.x, max: Math.max(0, box.width - view.width), view }
-    : { offset: view.y - box.y, max: Math.max(0, box.height - view.height), view }
+  const max = Math.max(0, horizontal ? box.width - view.width : box.height - view.height)
+  const shown = horizontal ? view.x - box.x : view.y - box.y
+  const inverted = isInverted(s, horizontal)
+  return { offset: inverted ? max - shown : shown, max, view, inverted }
 }
 
 const round = (n: number) => Math.round(n * 100) / 100
@@ -129,22 +177,65 @@ export function scrollToEnd(s: Scrollable): void {
   scrollToOffset(s, max)
 }
 
-/** Scrolls so the element sits in the middle of the viewport (or starts at its top, if taller). */
-export function scrollIntoView(s: Scrollable, found: Found): void {
+/** A scrollable a user can drag: not `scrollEnabled={false}`. */
+export const scrollEnabled = (s: Scrollable) =>
+  !s.fibers.some((f) => propsOf(f)?.scrollEnabled === false)
+
+/**
+ * The offset that puts the element in the middle of the viewport (or starts it
+ * at the top, if taller); null when it is already fully in view.
+ */
+export function offsetFor(s: Scrollable, found: Found): number | null {
   const rect = found.element.rect
   const m = metricsOf(s)
-  if (!rect || !m?.view) throw new Error(`${describe(found.element)} has no position to scroll to`)
-  const horizontal = isHorizontal(s)
-  const [start, size, viewStart, viewSize] = horizontal
+  if (!rect || !m?.view) return null
+  const [start, size, viewStart, viewSize] = isHorizontal(s)
     ? [rect.x, rect.width, m.view.x, m.view.width]
     : [rect.y, rect.height, m.view.y, m.view.height]
-  if (start >= viewStart && start + size <= viewStart + viewSize) return
+  if (start >= viewStart && start + size <= viewStart + viewSize) return null
   const delta =
-    size >= viewSize
-      ? start - viewStart
-      : start + size / 2 - (viewStart + viewSize / 2)
-  const next = Math.max(0, Math.min(m.max ?? Infinity, m.offset + delta))
-  scrollToOffset(s, round(next))
+    size >= viewSize ? start - viewStart : start + size / 2 - (viewStart + viewSize / 2)
+  const next = Math.max(0, Math.min(m.max ?? Infinity, m.offset + (m.inverted ? -delta : delta)))
+  return Math.abs(next - m.offset) < 1 ? null : round(next)
+}
+
+/** The scrollable, from the innermost out, that can move the element into view. */
+export function scrollerFor(found: Found): { scrollable: Scrollable; offset: number } | null {
+  for (let s = found.scroller; s; s = s.parent) {
+    if (s.hidden || !scrollEnabled(s)) continue
+    const offset = offsetFor(s, found)
+    if (offset !== null) return { scrollable: s, offset }
+  }
+  return null
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/**
+ * scrollTo runs on the UI thread and the new position comes back later, with no
+ * React commit to wait for. Polls until the offset reaches `want` (when known)
+ * or stops moving, for at most ~300 ms.
+ */
+export async function awaitScroll(
+  s: Scrollable,
+  before: number | undefined,
+  want?: number,
+): Promise<Metrics | null> {
+  const near = (x: Metrics | null, to: number | undefined) =>
+    !!x && to !== undefined && Math.abs(x.offset - to) < 1
+  let m = metricsOf(s)
+  if (!m || near(m, want)) return m
+  let idle = 0
+  for (let waited = 0; waited < 300; waited += 16) {
+    await wait(16)
+    const next = metricsOf(s)
+    if (!next || near(next, want)) return next
+    idle = Math.abs(next.offset - m.offset) < 1 ? idle + 1 : 0
+    m = next
+    // Moved away from where it was, then held still: it has landed.
+    if (idle >= 2 && !near(m, before)) break
+  }
+  return m
 }
 
 /** The scrollable whose `onRefresh` a pull would call. */
@@ -170,7 +261,7 @@ export function mainScrollable(
   need: 'scroll' | 'refresh',
 ): Scrollable {
   const candidates = scrollables
-    .filter((s) => !s.hidden && (need === 'scroll' || refreshHandler(s)))
+    .filter((s) => !s.hidden && (need === 'refresh' ? refreshHandler(s) : scrollEnabled(s)))
     .map((s) => ({ s, rect: measureHost(s.host) }))
     .filter(({ rect }) => onWindow(rect, window))
     .sort((a, b) => area(b.rect) - area(a.rect))

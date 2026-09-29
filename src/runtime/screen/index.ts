@@ -12,11 +12,14 @@ import {
 } from './elements'
 import { findText, type FindTextOptions } from './find-text'
 import {
+  awaitScroll,
   mainScrollable,
+  type Metrics,
   metricsOf,
+  offsetFor,
   parseScroll,
   refreshHandler,
-  scrollIntoView,
+  scrollerFor,
   scrollToEnd,
   scrollToOffset,
 } from './scroll'
@@ -43,6 +46,45 @@ export function createScreen(env: {
     return again ?? found
   }
 
+  const scrollableOf = (found: Found, what: string): Scrollable => {
+    if (!found.scroller)
+      throw new Error(`${describe(found.element)} ${what}`)
+    return found.scroller
+  }
+
+  // Runs a scroll, then waits for the render and for the native offset to land:
+  // scrollTo works on the UI thread and reports back without a React commit.
+  const scrolled = async (
+    scrollable: Scrollable,
+    act: () => number | undefined,
+  ): Promise<Metrics | null> => {
+    const before = metricsOf(scrollable)
+    const want = act()
+    await settle()
+    return awaitScroll(scrollable, before?.offset, want ?? before?.max ?? undefined)
+  }
+
+  // Scrolls until the element is in view of every scrollable that can move it,
+  // innermost first: a list that doesn't scroll (or scrolls the other way)
+  // leaves it to the one around it.
+  const bringIntoView = async (
+    found: Found,
+  ): Promise<{ found: Found; metrics: Metrics | null }> => {
+    let current = found
+    let metrics: Metrics | null = null
+    for (let i = 0; i < 4; i++) {
+      const plan = scrollerFor(current)
+      if (!plan) break
+      metrics = await scrolled(plan.scrollable, () => {
+        scrollToOffset(plan.scrollable, plan.offset)
+        return plan.offset
+      })
+      current = reread(current)
+    }
+    if (!metrics && current.scroller) metrics = metricsOf(current.scroller)
+    return { found: current, metrics }
+  }
+
   // The element a target means, scrolled into view first when it is off
   // screen and `scroll` is set.
   const resolve = async (
@@ -55,27 +97,13 @@ export function createScreen(env: {
       offscreen: options.scroll,
     })
     if (found.onScreen) return found
-    scrollFoundIntoView(found)
-    await settle()
-    found = reread(found)
+    found = (await bringIntoView(found)).found
     if (!found.onScreen)
       throw new Error(
-        `${describe(found.element)} is still not on screen after scrolling`,
+        `${describe(found.element)} is not on screen and no scrollable around it can bring it into view`,
       )
     return found
   }
-
-  const scrollableOf = (found: Found, what: string): Scrollable => {
-    if (!found.scroller)
-      throw new Error(`${describe(found.element)} ${what}`)
-    return found.scroller
-  }
-
-  const scrollFoundIntoView = (found: Found) =>
-    scrollIntoView(
-      scrollableOf(found, 'is not inside a scrollable, so it can not be scrolled into view'),
-      found,
-    )
 
   return {
     snapshot(options: { all?: boolean } = {}): { elements: ScreenElement[]; hidden?: number } {
@@ -132,42 +160,65 @@ export function createScreen(env: {
     ): Promise<{ offset?: number; max?: number; element?: ScreenElement; onScreen?: boolean }> {
       const command = parseScroll(arg)
       const { found: all, scrollables } = collectAll()
-      const pick = (t: Target) =>
-        resolveTarget(all, t, undefined, { index: options.index, offscreen: true })
+      // `index` picks among the target's matches; a `within` target carries its own.
       const within = options.within
-        ? scrollableOf(pick(options.within), 'is not a scrollable or inside one')
+        ? scrollableOf(
+            resolveTarget(all, options.within, undefined, { offscreen: true }),
+            'is not a scrollable or inside one',
+          )
         : null
-      const target = command.kind === 'to' ? pick(command.target) : null
-      const scrollable =
-        within ??
-        (target
-          ? scrollableOf(target, 'is not inside a scrollable')
-          : mainScrollable(scrollables, env.window(), 'scroll'))
-      if (target) scrollIntoView(scrollable, target)
-      else if (command.kind === 'toEnd') scrollToEnd(scrollable)
-      else if (command.kind === 'toStart') scrollToOffset(scrollable, 0)
-      else if (command.kind === 'by') {
-        const now = metricsOf(scrollable)
-        if (!now) throw new Error('Can not read the scroll position, so can not scroll by a distance')
-        scrollToOffset(
-          scrollable,
-          Math.max(0, Math.min(now.max ?? Infinity, now.offset + command.amount)),
-        )
+      const target =
+        command.kind === 'to'
+          ? resolveTarget(all, command.target, undefined, {
+              index: options.index,
+              offscreen: true,
+            })
+          : null
+      let metrics: Metrics | null
+      let again: Found | null = null
+      if (target && !within) {
+        scrollableOf(target, 'is not inside a scrollable')
+        ;({ found: again, metrics } = await bringIntoView(target))
+      } else if (target && within) {
+        const offset = offsetFor(within, target)
+        metrics =
+          offset === null
+            ? metricsOf(within)
+            : await scrolled(within, () => (scrollToOffset(within, offset), offset))
+        again = reread(target)
+      } else {
+        const scrollable = within ?? mainScrollable(scrollables, env.window(), 'scroll')
+        metrics = await scrolled(scrollable, () => {
+          if (command.kind === 'toEnd') {
+            scrollToEnd(scrollable)
+            return metricsOf(scrollable)?.max ?? undefined
+          }
+          if (command.kind === 'toStart') {
+            scrollToOffset(scrollable, 0)
+            return 0
+          }
+          const now = metricsOf(scrollable)
+          if (!now)
+            throw new Error('Can not read the scroll position, so can not scroll by a distance')
+          const next = Math.max(
+            0,
+            Math.min(now.max ?? Infinity, now.offset + (command as { amount: number }).amount),
+          )
+          scrollToOffset(scrollable, next)
+          return next
+        })
       }
-      await settle()
-      const after = metricsOf(scrollable)
       const result: {
         offset?: number
         max?: number
         element?: ScreenElement
         onScreen?: boolean
       } = {}
-      if (after) {
-        result.offset = Math.round(after.offset * 100) / 100
-        if (after.max != null) result.max = Math.round(after.max * 100) / 100
+      if (metrics) {
+        result.offset = Math.round(metrics.offset * 100) / 100
+        if (metrics.max != null) result.max = Math.round(metrics.max * 100) / 100
       }
-      if (target) {
-        const again = reread(target)
+      if (again) {
         result.element = again.element
         result.onScreen = again.onScreen
       }

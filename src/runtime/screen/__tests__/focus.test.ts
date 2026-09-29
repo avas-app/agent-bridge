@@ -63,6 +63,12 @@ describe('focused screen', () => {
     ])
   })
 
+  test('a full-window overlay (toast) stays reachable under a modal', () => {
+    const modal = tree(typed(host(), 'RCTModalHostView'), rnText('Sheet'))
+    const toast = tree(typed(host(), 'RNSFullWindowOverlay'), rnText('Saved'))
+    expect(texts(screenOf(rnText('Home'), modal, toast))).toEqual(['Sheet', 'Saved'])
+  })
+
   test('a modal inside an unfocused screen does not hide the focused one', () => {
     const modal = tree(typed(host(), 'RCTModalHostView'), rnText('Ghost'))
     const screen = screenOf(tree(host({ activityState: 0 }), modal), rnText('Home'))
