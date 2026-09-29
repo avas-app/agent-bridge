@@ -13,11 +13,10 @@ import {
   messageById,
   record,
   register,
-  requireAllowed,
+  requireVerified,
   restoreAll,
   sendToPage,
   shown,
-  webViewProps,
   type WebViewLike,
   type WebViewOptions,
   type WebViewRedact,
@@ -51,8 +50,8 @@ export function useWebViewTools(
   // Runs after every render: the ref may hold a new instance by now.
   useEffect(() => host.mount())
   const props = useMemo(
-    () => webViewProps(options),
-    [options.name, options.injectedJavaScriptBeforeDocumentLoaded],
+    () => host.props(),
+    [host, options.injectedJavaScriptBeforeDocumentLoaded],
   )
   return { props, wrap: host.wrap }
 }
@@ -88,6 +87,7 @@ export function webviewTools(): Tools {
           mounted: !!entry.ref.current,
           url: entry.url ?? null,
           loaded: entry.loaded,
+          ready: entry.handshake,
           allowed: isCurrentAllowed(entry) ?? null,
           origins: allowedOrigins(entry),
         })),
@@ -206,7 +206,7 @@ export function webviewTools(): Tools {
           throw new Error(
             `WebView "${entry.options.name}" has no onMessage handler: pass wrap(onMessage) to the WebView`,
           )
-        requireAllowed(entry)
+        requireVerified(entry)
         const body = bodyOf(data)
         record(entry, 'page→app', 'webview.receive', body)
         const result = await entry.handler({

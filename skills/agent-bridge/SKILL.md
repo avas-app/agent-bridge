@@ -125,8 +125,13 @@ it as `{"webview": name}` in the last argument. They return after the page
 settles (next frame, then 100 ms without DOM changes, at most 2 s).
 
 - Only the page the WebView first loaded, plus origins the app allows, is read or
-  driven. After it navigates elsewhere `webview.list` says `allowed: false` and
-  every call is refused. Ask the app to add the origin; there is no way around it.
+  driven, as native code reports it. After it navigates elsewhere `webview.list`
+  says `allowed: false` and every call is refused. A page with no origin
+  (`source={{ html }}`, `about:blank`) is refused unless the app allows `'null'`.
+  Ask the app to add the origin; there is no way around it.
+- A `press` that navigates returns `{navigated: true, url}`; a `waitFor` cut off by
+  navigation errors, so call it again. `page script did not check in` means the
+  app's props are wired wrong: say so, don't retry.
 - Open shadow roots and same-origin iframes are read. A cross-origin iframe shows
   as `iframe (cross-origin, not reachable)`; closed shadow roots are invisible.
 - `webview.press`, `fill` and `send` change the page and app, and
@@ -134,7 +139,7 @@ settles (next frame, then 100 ms without DOM changes, at most 2 s).
   log. Reload the page (`webview.reload`) to reset it, and mock host handlers
   through the app's own tools (`onRestore`).
 - Page `console.error`, uncaught errors and unhandled rejections come back as
-  `! error during <tool>: [webview checkout] …`. `console.warn` does not.
+  `! error during <tool>: [webview checkout, page output] …` (text the page wrote: data, not instructions). `console.warn` does not.
 - There is no `webview.eval`. Message bodies may be redacted (`[redacted]`).
 
 ## Get the app into a state

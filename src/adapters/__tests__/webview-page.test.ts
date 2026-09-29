@@ -236,6 +236,37 @@ describe('fill', () => {
   })
 })
 
+describe('fill secrets', () => {
+  test('a password fill is not echoed back', async () => {
+    const win = make('<input type="password" data-testid="pw"><input data-testid="user">')
+    const pw = await call(win, { op: 'fill', target: 'pw', text: 'hunter2' })
+    expect(pw.result.filled).toBe('[redacted]')
+    expect(JSON.stringify(pw.result)).not.toContain('hunter2')
+    expect((win.document.querySelector('[data-testid=pw]') as unknown as HTMLInputElement).value).toBe('hunter2')
+    expect((await call(win, { op: 'fill', target: 'user', text: 'ada' })).result.filled).toBe('ada')
+  })
+})
+
+describe('settle in iframes', () => {
+  test('waits for changes inside a same-origin iframe', async () => {
+    const win = make('<button data-testid="go">Go</button><iframe id="f"></iframe>')
+    const frame = (win.document.getElementById('f') as unknown as { contentDocument: Document }).contentDocument
+    frame.body.innerHTML = '<p id="in">0</p>'
+    win.document.querySelector('button')!.addEventListener('click', () => {
+      let n = 0
+      const tick = () => {
+        frame.getElementById('in')!.textContent = String(++n)
+        if (n < 5) setTimeout(tick, 50)
+      }
+      tick()
+    })
+    const t0 = Date.now()
+    await call(win, { op: 'press', target: 'go' })
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(300)
+    expect(frame.getElementById('in')!.textContent).toBe('5')
+  })
+})
+
 describe('waitFor', () => {
   test('resolves when a target appears, and when it is gone', async () => {
     const win = make('<div id="root"></div>')

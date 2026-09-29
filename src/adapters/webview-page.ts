@@ -464,10 +464,22 @@ export function pageMain(
         try {
           observer = new win.MutationObserver(wait)
           const options = { subtree: true, childList: true, attributes: true, characterData: true }
-          observer.observe(doc, options)
-          // Mutations inside open shadow roots don't reach the document's observer.
-          for (const el of Array.from(doc.querySelectorAll('*') as ArrayLike<any>)) // oxlint-disable-line no-explicit-any
-            if (el.shadowRoot) observer.observe(el.shadowRoot, options)
+          // Mutations inside open shadow roots and same-origin iframes don't
+          // reach the top document's observer.
+          const observe = (root: any) => { // oxlint-disable-line no-explicit-any
+            observer.observe(root, options)
+            for (const el of Array.from(root.querySelectorAll('*') as ArrayLike<any>)) { // oxlint-disable-line no-explicit-any
+              if (el.shadowRoot) observe(el.shadowRoot)
+              if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+                try {
+                  if (el.contentDocument && el.contentDocument.documentElement) observe(el.contentDocument)
+                } catch {
+                  // Cross-origin.
+                }
+              }
+            }
+          }
+          observe(doc)
         } catch {
           // Quiet period only.
         }
@@ -527,6 +539,7 @@ export function pageMain(
       if (found.info.editable === false) throw new Error(`${describe(found.info)} is not editable`)
       const text = String(args.text)
       const el = found.el
+      const secret = el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'password'
       if (typeof el.focus === 'function') el.focus()
       setValue(el, text)
       const isSelect = el.tagName === 'SELECT'
@@ -542,7 +555,7 @@ export function pageMain(
       }
       const settled = await settle()
       const after = collect().find((f) => f.el === el)
-      return { filled: text, element: (after || found).info, settled }
+      return { filled: secret ? '[redacted]' : text, element: (after || found).info, settled }
     }
     if (args.op === 'waitFor') {
       const timeout = options.timeoutMs ?? 5000
