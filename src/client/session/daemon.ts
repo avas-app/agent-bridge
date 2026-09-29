@@ -6,7 +6,11 @@ import type { ResultMessage } from '../../shared/protocol'
 import type { Connection, TransportName } from '../connection'
 import { metroHost } from '../discover'
 import { openConnection } from '../open'
-import type { SessionRequest, SessionResponse } from './protocol'
+import {
+  type SessionRequest,
+  type SessionResponse,
+  encodeLine,
+} from './protocol'
 import {
   type SessionState,
   projectRoot,
@@ -395,7 +399,7 @@ export async function runSessionDaemon(
         id: req.id,
         error: message(error),
       }))
-      if (!socket.writableEnded) socket.write(`${JSON.stringify(res)}\n`)
+      if (!socket.writableEnded) socket.write(encodeLine(res))
       if (req.op === 'stop') closeClients()
     })
   })

@@ -138,6 +138,14 @@ takes the same shapes as `call`: `step('press', 'screen.press', 'Confirm')`, or
 one array as the argument list. To pass one array as the only argument, wrap
 it: `step('s', 'cart.setItems', [[a, b]])`.
 
+## Big results
+
+`call` prints results over 32 KB as a summary, not the value:
+`{"resultTooLarge": true, "bytes", "size", "shape", "hint"}`. Add
+`--out result.json` to write the whole result to a file (the command prints the
+file, its size and the top-level shape), or `--full` to print it anyway. Flows
+and `connect()` always get the full value.
+
 ## Realtime messages
 
 If the app has `realtime.*` tools, you can see its realtime messages and fake

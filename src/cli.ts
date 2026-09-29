@@ -19,6 +19,7 @@ import {
   runFlow,
 } from './client/flow'
 import { logLine } from './client/log-lines'
+import { renderResult } from './client/output'
 import {
   DAEMON_COMMAND,
   daemonMain,
@@ -52,6 +53,8 @@ Options
   --device <text>        Pick an app when several are connected
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
+  --out <file>           call: write the result to a file; print its size and shape
+  --full                 call: print results over 32 KB instead of a summary
   --strict               run: exit non-zero if the app logged an error
   --scenario <name>      run: also apply this scenario (repeatable). Options as
                          JSON after "=": --scenario 'signedIn={"user":{"name":"Ada"}}'
@@ -83,6 +86,8 @@ async function main() {
       transport: { type: 'string' },
       timeout: { type: 'string' },
       strict: { type: 'boolean' },
+      out: { type: 'string' },
+      full: { type: 'boolean' },
       scenario: { type: 'string', multiple: true },
       name: { type: 'string' },
       idle: { type: 'string' },
@@ -146,7 +151,9 @@ async function main() {
             for (const e of failedLogs(error)) console.error(logLine(e))
             throw error
           })
-        console.log(JSON.stringify(value, null, 2))
+        console.log(
+          await renderResult(value, { out: values.out, full: values.full }),
+        )
         for (const e of logs) console.error(logLine(e))
         if (notice) console.error(`Warning: ${notice}`)
         console.error(

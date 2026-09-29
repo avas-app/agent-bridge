@@ -35,3 +35,10 @@ export type SessionResponse = {
   /** stop: what bridge.restore returned; null with keep. */
   restore?: ResultMessage | null
 }
+
+/**
+ * One JSON line. readline also breaks lines at U+2028 and U+2029, which
+ * JSON.stringify leaves raw, so a result containing one arrived cut in two.
+ */
+export const encodeLine = (message: unknown): string =>
+  `${JSON.stringify(message).replace(/[\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16)}`)}\n`
