@@ -161,7 +161,7 @@ async function setup(options: Parameters<typeof fakeApp>[2] = {}) {
   cleanups.push(metro.close)
   const app = await fakeApp(metro.metro, 'dev-1', options)
   cleanups.push(() => app.ws.close())
-  return { metro: metro.metro, app }
+  return { metro: metro.metro, app, fake: metro }
 }
 
 describe('session daemon', () => {
@@ -428,7 +428,9 @@ describe('session daemon', () => {
 
     const kept = await sessionRequest(state, { op: 'stop', keep: true })
     expect(kept.restore).toBeNull()
-    expect(kept.pending).toEqual({ demo: { key: { snapshot: 1, current: 2 } } })
+    expect(kept.pending).toEqual({
+      demo: { key: { snapshot: 1, current: 2 } },
+    })
     expect(app.restores).toBe(0)
   })
 
@@ -459,7 +461,9 @@ describe('session daemon', () => {
       (error: Error) => ({ error: error.message }),
     )
     await stopping
-    expect(dry).toMatchObject({ error: expect.stringMatching(/stopping|closed|isn't answering/) })
+    expect(dry).toMatchObject({
+      error: expect.stringMatching(/stopping|closed|isn't answering/),
+    })
   })
 
   describe('session stop --dry-run in the CLI', () => {
@@ -483,7 +487,10 @@ describe('session daemon', () => {
       return { out: lines.join('\n'), signals }
     }
     /** A state file for a daemon that answers with `respond`, or hangs up on every request. */
-    const fakeDaemon = async (name: string, respond?: (req: { id: number }) => object) => {
+    const fakeDaemon = async (
+      name: string,
+      respond?: (req: { id: number }) => object,
+    ) => {
       const files = sessionFiles(name, dir)
       writePrivate(
         files.state,
@@ -512,7 +519,10 @@ describe('session daemon', () => {
 
     test('lists pending and says the session is still running', async () => {
       const { app } = await session('cli-dry')
-      await sessionRequest(listSessions()[0]!, { op: 'call', tool: 'demo.set' })
+      await sessionRequest(listSessions()[0]!, {
+        op: 'call',
+        tool: 'demo.set',
+      })
       const { out, signals } = await run({ name: 'cli-dry', 'dry-run': true })
       expect(out).toContain('still running')
       expect(out).toContain('demo: {"key":{"snapshot":1,"current":2}}')
@@ -654,10 +664,94 @@ describe('session daemon', () => {
       expect(await bridge.call('app.reload')).toEqual({ reloading: true })
       app.ws.close()
       await expect(bridge.call('demo.echo', 1)).rejects.toThrow(
-        'The app is reloading; its bridge isn\'t ready yet',
+        "The app is reloading; its bridge isn't ready yet",
       )
     }, 20_000)
   })
+
+  describe('a reconnect that hangs', () => {
+    /** A session whose Metro stops answering, then loses the app. */
+    async function hung(name: string, healthMs = 0) {
+      const { metro, app, fake } = await setup()
+      const daemon = await runSessionDaemon({
+        name,
+        metro,
+        idleMs: 0,
+        healthMs,
+        attemptMs: 1000,
+      })
+      cleanups.push(() => daemon.stop(true))
+      const bridge = await connectSession({ name, timeoutMs: 300 })
+      cleanups.push(bridge.close)
+      expect(await bridge.call('demo.echo', 1)).toEqual([1])
+      fake.live.hangList = true
+      fake.live.hangUpgrade = true
+      app.ws.close()
+      return { metro, fake, daemon, bridge }
+    }
+
+    test('calls fail within one attempt instead of hanging', async () => {
+      const { bridge } = await hung('fast')
+      const t0 = Date.now()
+      const gone = /app not connected|The app is gone/
+      await expect(bridge.call('demo.echo', 2)).rejects.toThrow(gone)
+      await expect(bridge.call('demo.echo', 3)).rejects.toThrow(gone)
+      expect(Date.now() - t0).toBeLessThan(9000)
+    }, 15_000)
+
+    test('stop completes while the reconnect is stuck', async () => {
+      const { daemon, bridge } = await hung('stop')
+      await expect(bridge.call('demo.echo', 2)).rejects.toThrow(
+        /app not connected|The app is gone/,
+      )
+      const stopped = await Promise.race([
+        daemon.stop(),
+        new Promise((r) => setTimeout(() => r('hung'), 4000)),
+      ])
+      expect(stopped).not.toBe('hung')
+      expect(await daemon.done).toBe('stop')
+      expect(listSessions()).toEqual([])
+    }, 10_000)
+
+    test('stop completes when Metro goes away mid-reconnect', async () => {
+      const { fake, daemon, bridge } = await hung('gone-metro')
+      await expect(bridge.call('demo.echo', 2)).rejects.toThrow(
+        /app not connected|The app is gone/,
+      )
+      await fake.close()
+      const stopped = await Promise.race([
+        daemon.stop(true),
+        new Promise((r) => setTimeout(() => r('hung'), 4000)),
+      ])
+      expect(stopped).not.toBe('hung')
+    }, 10_000)
+
+    test('reconnects on the health tick once the stuck attempt gives up', async () => {
+      const { metro, fake } = await hung('retry', 50)
+      // Wait until the daemon is stuck inside an attempt, then let Metro answer.
+      while (!fake.heldCount()) await new Promise((r) => setTimeout(r, 10))
+      fake.live.hangList = false
+      fake.live.hangUpgrade = false
+      const reloaded = await fakeApp(metro, 'dev-2')
+      cleanups.push(() => reloaded.ws.close())
+      while (listSessions()[0]?.device.deviceId !== 'dev-2')
+        await new Promise((r) => setTimeout(r, 25))
+    }, 15_000)
+  })
+
+  test('stop restores through a reconnect when the app is back', async () => {
+    const { metro, app, bridge, daemon } = await session('restore-back')
+    await bridge.call('demo.set')
+    app.ws.close()
+    await expect(bridge.call('demo.echo', 1)).rejects.toThrow('The app is gone')
+    const reloaded = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => reloaded.ws.close())
+    expect(await daemon.stop()).toMatchObject({
+      ok: true,
+      value: { undone: 2 },
+    })
+    expect(reloaded.restores).toBe(1)
+  }, 15_000)
 
   test('a slow tool times out without a retry while the app still answers', async () => {
     const { metro, app } = await setup()

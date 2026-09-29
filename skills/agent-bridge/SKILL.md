@@ -48,6 +48,10 @@ restore. The session notices the app is a new runtime and reports
 had something to undo) as a warning on the next call (also on a failed one) and again in `session stop`. When you see
 it, redo your setup: nothing you changed before the reload will be undone.
 
+If a call fails with `app not connected; reconnecting` or `The app is gone`, the
+session lost the app (Metro or the app is down, or mid-reload). It retries on
+its 5 s health check and on your next call: wait a few seconds and call again. `session stop` still works.
+
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.
 

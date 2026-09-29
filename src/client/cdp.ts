@@ -10,6 +10,7 @@ import {
 } from '../shared/protocol'
 import {
   type Connection,
+  OpenGaveUp,
   createPending,
   newCallId,
   openSocket,
@@ -29,9 +30,14 @@ const targetLabel = (t: CdpTarget) =>
 export async function connectCdp(
   metro: string,
   device?: string,
+  signal?: AbortSignal,
 ): Promise<Connection> {
-  const target = pickOne(await listCdpTargets(metro), device, targetLabel)
-  const hostUri = await expoHostUri(metro)
+  const target = pickOne(
+    await listCdpTargets(metro, signal),
+    device,
+    targetLabel,
+  )
+  const hostUri = await expoHostUri(metro, signal)
   const port = metro.split(':')[1] ?? '8081'
   // Expo wants its advertised host exactly; bare RN accepts any localhost origin.
   const origin = hostUri ? `http://${hostUri}` : `http://localhost:${port}`
@@ -39,11 +45,18 @@ export async function connectCdp(
   // Metro accepts the upgrade and then drops a socket with the wrong Origin,
   // so a close before the first reply is reported with the Origin we sent.
   const closedEarly = `Metro closed the debugger socket. Origin sent: ${origin}. Is that the host Metro advertises?`
-  const ws = await openSocket(target.webSocketDebuggerUrl, {
-    Origin: origin,
-  }).catch(() => {
-    throw new Error(closedEarly)
+  const ws = await openSocket(
+    target.webSocketDebuggerUrl,
+    { Origin: origin },
+    signal,
+  ).catch((error) => {
+    throw error instanceof OpenGaveUp ? error : new Error(closedEarly)
   })
+  // Hermes may never answer the setup commands; an abort drops the socket,
+  // which rejects them (the close handler below).
+  const dropOnAbort = () => ws.terminate()
+  if (signal?.aborted) dropOnAbort()
+  else signal?.addEventListener('abort', dropOnAbort, { once: true })
 
   type Command = {
     resolve: (m: Record<string, any>) => void
@@ -100,8 +113,14 @@ export async function connectCdp(
     return message.result?.result?.value as unknown
   }
 
-  await send('Runtime.enable')
-  await send('Runtime.addBinding', { name: CDP_REPLY_BINDING })
+  try {
+    await send('Runtime.enable')
+    await send('Runtime.addBinding', { name: CDP_REPLY_BINDING })
+  } catch (error) {
+    ws.terminate()
+    signal?.removeEventListener('abort', dropOnAbort)
+    throw error
+  }
 
   let info: DeviceInfo
   try {
@@ -109,7 +128,8 @@ export async function connectCdp(
       String(await evaluate(`${CDP_GLOBAL}.info()`)),
     ) as DeviceInfo
   } catch (error) {
-    ws.close()
+    ws.terminate()
+    signal?.removeEventListener('abort', dropOnAbort)
     throw new Error(
       error instanceof CannotEvaluate
         ? `The debugger for ${targetLabel(target)} can't run code (no Runtime.evaluate, as in Expo Go on Android). Use --transport expo, or a dev build.`
@@ -117,6 +137,7 @@ export async function connectCdp(
     )
   }
 
+  signal?.removeEventListener('abort', dropOnAbort)
   return {
     transport: 'cdp',
     device: { ...info, name: `${info.name} (${targetLabel(target)})` },

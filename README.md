@@ -199,7 +199,7 @@ printf '%s\n' 'router.navigate /inbox' 'screen.waitFor "Inbox"' | agent-bridge c
 
 Measured against the fake Metro used in the tests (Node 24, the built CLI, 30 calls): 665 ms per call for separate `call`s, 54 ms per call with a session running; a batch of 30 through a session took 80 ms in total (about 2.7 ms per call, one process start included), and a direct batch adds about 0.3 ms per call after its single 660 ms start.
 
-A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas that had something to undo) in the next call's output, failed or not, and in `session stop`, because the old runtime's undo state is gone.
+A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas that had something to undo) in the next call's output, failed or not, and in `session stop`, because the old runtime's undo state is gone. Every step of a reconnect is time-bounded (12 s per transport, Expo then CDP), so a Metro that stops answering can't wedge the session: calls fail with `app not connected; reconnecting` or `The app is gone (...)` instead of hanging, the daemon's health check (every 5 s) and the next call each try again until the idle timeout, and `session stop` and SIGTERM always finish (a stop still tries one reconnect so `bridge.restore` can run).
 
 ```ts
 import { connect } from '@avasapp/agent-bridge/client'

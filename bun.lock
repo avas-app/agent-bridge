@@ -27,10 +27,12 @@
         "expo": ">=52",
         "react": ">=18",
         "react-native": ">=0.76",
+        "react-native-webview": ">=13",
       },
       "optionalPeers": [
         "@tanstack/query-core",
         "expo",
+        "react-native-webview",
       ],
     },
   },
