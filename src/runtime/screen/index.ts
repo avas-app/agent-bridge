@@ -45,7 +45,10 @@ export function createScreen(env: {
       text: string,
       options: { submit?: boolean; index?: number } = {},
     ): Promise<{ filled: string; element: ScreenElement }> {
-      const found = resolveTarget(collect(), target, (f) => !!f.input, options)
+      const found = resolveTarget(collect(), target, (f) => !!f.input, {
+        index: options.index,
+        afterText: true,
+      })
       const filled = fillInput(found, String(text), options)
       await settle()
       return { filled, element: refresh(found) }

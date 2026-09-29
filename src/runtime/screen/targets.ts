@@ -121,12 +121,13 @@ export function onScreenSummary(found: Found[], max = 15): string {
  * The one on-screen element a target means. When several match, those that
  * can do what the caller wants (`press`, `fill`) win; still several is an error.
  * `options.index` is the trailing `{ index }` argument; it beats the target's own.
+ * `options.afterText` says the caller takes a text argument before its options (fill).
  */
 export function resolveTarget(
   found: Found[],
   target: Target,
   prefer?: (f: Found) => boolean,
-  options?: { index?: number },
+  options?: { index?: number; afterText?: boolean },
 ): Found {
   let matches = matchTarget(
     found.filter((f) => f.onScreen),
@@ -160,7 +161,7 @@ export function resolveTarget(
       .join('; ')
     const example =
       typeof target === 'string'
-        ? `["${target}",{"index":1}] (index as a trailing argument)`
+        ? `${JSON.stringify(options?.afterText ? [target, '<text>', { index: 1 }] : [target, { index: 1 }])} (index as the last argument)`
         : `${JSON.stringify({ ...target, index: 1 })} (index inside the target)`
     throw new Error(
       `${showTarget(target)} matches ${matches.length} elements; pick one with an index, e.g. ${example}, or use a narrower target. ${list}`,

@@ -24,6 +24,9 @@ function setup() {
     input({ testID: 'days', maxLength: 2 }),
     input({ testID: 'locked', editable: false }),
     pressable({ onPress: log('press'), onPressIn: log('in'), onPressOut: log('out'), testID: 'save' }, rnText('Save')),
+    pressable({ onPress: log('copy'), testID: 'copy' }, rnText('Save copy')),
+    input({ placeholder: 'Name' }),
+    input({ placeholder: 'Name' }),
     pressable({ onPress: log('press'), disabled: true, testID: 'off' }, rnText('Off')),
     tree(composite({ onPress: log('icon') }), host({}, { x: 300, y: 100, width: 40, height: 40 })),
   )
@@ -42,8 +45,8 @@ describe('fill', () => {
 
   test('refuses inputs that are not editable, and things that are not inputs', async () => {
     const { screen, calls } = setup()
-    expect(screen.fill('locked', 'x')).rejects.toThrow(/not editable/)
-    expect(screen.fill('Save', 'x')).rejects.toThrow(/not a text input/)
+    await expect(screen.fill('locked', 'x')).rejects.toThrow(/not editable/)
+    await expect(screen.fill('Save', 'x')).rejects.toThrow(/not a text input/)
     expect(calls).toEqual([])
   })
 })
@@ -58,13 +61,13 @@ describe('press', () => {
 
   test('refuses disabled buttons', async () => {
     const { screen, calls } = setup()
-    expect(screen.press('off')).rejects.toThrow(/button #off "Off" disabled is disabled/)
+    await expect(screen.press('off')).rejects.toThrow(/button #off "Off" disabled is disabled/)
     expect(calls).toEqual([])
   })
 
   test('refusal mentions force, and force presses anyway', async () => {
     const { screen, calls } = setup()
-    expect(screen.press('off')).rejects.toThrow(/pass \{"force":true\}/)
+    await expect(screen.press('off')).rejects.toThrow(/pass \{"force":true\}/)
     await screen.press('off', { force: true })
     expect(calls.map((c) => c[0])).toEqual(['press'])
   })
@@ -77,15 +80,25 @@ describe('press', () => {
 
   test('unknown keys press nothing', async () => {
     const { screen, calls } = setup()
-    expect(screen.press({ near: 'Save' } as never)).rejects.toThrow(/Unknown target key/)
+    await expect(screen.press({ near: 'Save' } as never)).rejects.toThrow(/Unknown target key/)
     expect(calls).toEqual([])
   })
 
   test('index works inside the target and as a trailing option', async () => {
     const { screen, calls } = setup()
-    expect(screen.press('press')).rejects.toThrow()
+    await expect(screen.press('Sav')).rejects.toThrow(/matches 2 elements.*\["Sav",\{"index":1\}\]/)
+    await screen.press('Sav', { index: 1 })
     await screen.press({ testID: 'save', index: 0 })
     await screen.press('Save', { index: 0 })
-    expect(calls.map((c) => c[0])).toEqual(['in', 'press', 'out', 'in', 'press', 'out'])
+    expect(calls.map((c) => c[0])).toEqual(['copy', 'in', 'press', 'out', 'in', 'press', 'out'])
+  })
+})
+
+describe('fill ambiguity', () => {
+  test('the example puts index after the text, and index picks the input', async () => {
+    const { screen, calls } = setup()
+    await expect(screen.fill('Name', 'x')).rejects.toThrow(/\["Name","<text>",\{"index":1\}\]/)
+    await screen.fill('Name', 'x', { index: 1 })
+    expect(calls.map((c) => c[0])).toContain('changeText')
   })
 })
