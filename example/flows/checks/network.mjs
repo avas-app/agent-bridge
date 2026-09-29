@@ -36,7 +36,7 @@ export default async ({ step, call }) => {
 
   const removed = await step('restore', 'net.restore')
   check(removed === 2, `net.restore removed ${removed} mocks, wanted 2`)
-  const inbox = await step('refetch inbox', 'query.refetch', ['inbox'])
+  const { data: inbox } = await step('refetch inbox', 'query.refetch', ['inbox'])
   check(Array.isArray(inbox) && inbox.some((m) => m.title === 'Fern is thirsty'), `inbox is not the real data: ${JSON.stringify(inbox)}`)
   const [last] = await call('net.log', { url: '/inbox', limit: 1 })
   check(last.status === 200, `last /inbox request: ${JSON.stringify(last)}`)

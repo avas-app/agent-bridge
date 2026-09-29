@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { QueryClient, QueryObserver } from '@tanstack/query-core'
 
+import { createRegistry } from '../../runtime/registry'
 import type { ToolFn, Tools } from '../../runtime/types'
 import { queryTools } from '../tanstack-query'
 
@@ -126,8 +127,8 @@ describe('queryTools', () => {
       let n = 0
       const queryFn = async () => ++n
       for (const q of client.getQueryCache().findAll({ queryKey: ['expressInfo'] })) q.setOptions({ queryFn })
-      expect(await run(tools, 'query.refetch', 'expressInfo', 'id')).toEqual({ matched: 1, data: 1 })
-      expect(await run(tools, 'query.refetch', ['expressInfo'])).toMatchObject({ matched: 2 })
+      expect(await run(tools, 'query.refetch', 'expressInfo', 'id')).toEqual({ matched: 1, refetched: 1, data: 1 })
+      expect(await run(tools, 'query.refetch', ['expressInfo'])).toMatchObject({ matched: 2, refetched: 2 })
       await expect(run(tools, 'query.refetch', 'missing')).rejects.toThrow('No cached query matches key ["missing"]')
     })
 
@@ -145,12 +146,47 @@ describe('queryTools', () => {
       expect(only(['expressInfo', 'id'])[0]).toMatchObject({ isInvalidated: true, isStale: true })
     })
 
-    test('query.invalidate and query.unpin take a flat key; extra args to fixed tools are rejected by maxArgs', () => {
+    test('query.invalidate and query.unpin take a flat key', async () => {
+      const { client, tools } = setup()
+      await run(tools, 'query.pin', ['flat', 'pin'], 1)
+      expect(run(tools, 'query.unpin', 'flat', 'pin')).toBe(true)
+      expect(run(tools, 'query.unpin', 'flat', 'pin')).toBe(false)
+      await run(tools, 'query.invalidate', 'expressInfo')
+      expect(client.getQueryState(['expressInfo', 'id'])?.isInvalidated).toBe(true)
+    })
+
+    test('query.unpin of an uncached key does not create an entry', () => {
       const { tools } = setup()
-      const def = tools['query.set'] as { maxArgs: number }
-      expect(def.maxArgs).toBe(2)
-      run(tools, 'query.invalidate', 'expressInfo')
-      expect(run(tools, 'query.unpin', 'expressInfo', 'id')).toBe(false)
+      expect(run(tools, 'query.unpin', 'typo')).toBe(false)
+      expect(() => run(tools, 'query.get', 'typo')).toThrow('No cached query')
+    })
+
+    test('query.set and query.pin reject a key that is not an array, and extra args', async () => {
+      const { client, tools } = setup()
+      await expect(run(tools, 'query.set', 'todos', { a: 1 })).rejects.toThrow('takes the key as an array')
+      await expect(run(tools, 'query.pin', 'todos', { a: 1 })).rejects.toThrow('Wrap it: [["todos"], <data>]')
+      expect(client.getQueryData('todos' as never)).toBeUndefined()
+      const registry = createRegistry(() => tools)
+      const call = (tool: string, ...args: unknown[]) => registry.dispatch({ id: '1', tool, args }, 'dev')
+      expect(await call('query.set', ['x'], 1, 2)).toMatchObject({ ok: false, error: expect.stringContaining('at most 2') })
+      expect(await call('query.unpinAll', 1)).toMatchObject({ ok: false })
+    })
+
+    test('query.unpinAll unpins every pin, including flat-looking keys', async () => {
+      const { tools } = setup()
+      await run(tools, 'query.pin', ['p'], 1)
+      await run(tools, 'query.pin', ['q', 1], 2)
+      expect(run(tools, 'query.unpinAll')).toBe(2)
+      expect((run(tools, 'query.list', 'p') as Array<{ pinned: boolean }>)[0]!.pinned).toBe(false)
+      expect(run(tools, 'query.unpinAll')).toBe(0)
+    })
+
+    test('query.refetch does not count queries it cannot fetch', async () => {
+      const { client, tools } = setup()
+      // ['todos'] was built with no data and no queryFn.
+      await expect(run(tools, 'query.refetch', 'todos')).rejects.toThrow('none can be refetched')
+      client.getQueryCache().find({ queryKey: ['expressInfo', 'id'] })!.setOptions({ queryFn: async () => 5 })
+      expect(await run(tools, 'query.refetch', 'expressInfo')).toMatchObject({ matched: 2, refetched: 1 })
     })
   })
 })

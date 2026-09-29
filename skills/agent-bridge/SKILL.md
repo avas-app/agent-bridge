@@ -98,9 +98,14 @@ npx agent-bridge call store.get '["app", {"keys": true}]'  # top-level keys and 
 ```
 
 `query.get` errors on a key that is not cached (with similar keys), so a
-`null` reply means the data is undefined. A tool given more arguments than it
-takes fails instead of ignoring them. In a flow, `step` takes the same shapes:
-`step('press', 'screen.press', 'Confirm')`, or one array as the argument list.
+`null` reply means the data is undefined. `query.refetch` replies
+`{matched, refetched, data}`. `query.set` and `query.pin` need the key as an
+array (`'[["todos"], <data>]'`). `query.set`, `query.pin`, `query.unpinAll`,
+`query.restore`, `store.list` and `store.restore` fail when given more
+arguments than they take; other tools may ignore extras. In a flow, `step`
+takes the same shapes as `call`: `step('press', 'screen.press', 'Confirm')`, or
+one array as the argument list. To pass one array as the only argument, wrap
+it: `step('s', 'cart.setItems', [[a, b]])`.
 
 ## Realtime messages
 

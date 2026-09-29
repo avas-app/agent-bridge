@@ -85,6 +85,11 @@ describe('storeTools', () => {
       expect(run(t, 'store.get', 'app', 'auth', { pick: ['isLoggedIn'] })).toEqual({ isLoggedIn: true })
     })
 
+    test('a null or undefined path means the whole state', () => {
+      expect(run(t, 'store.get', 'app', null)).toEqual(app.getState())
+      expect(run(t, 'store.get', 'app', undefined, { pick: ['n'] })).toEqual({ n: 0 })
+    })
+
     test('keys lists top-level keys and types without values', () => {
       expect(run(t, 'store.get', 'app', { keys: true })).toEqual({
         auth: 'object',

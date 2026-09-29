@@ -47,7 +47,9 @@ type GetOptions = { pick?: unknown[]; keys?: boolean }
 
 // store.get("s", "a", "b.c", ["d"], { pick }): everything between the name
 // and a trailing options object is the path.
-function readState(state: unknown, args: unknown[]): unknown {
+function readState(state: unknown, given: unknown[]): unknown {
+  // null and undefined mean no path or options.
+  const args = given.filter((a) => a != null)
   const last = args.at(-1)
   const isOptions = isObject(last) && !Array.isArray(last)
   const options = (isOptions ? last : {}) as GetOptions

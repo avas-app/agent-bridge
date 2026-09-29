@@ -8,8 +8,10 @@ export type FlowApi = {
   bridge: AgentBridge
   call: AgentBridge['call']
   /**
-   * Times one call. Arguments are spread, `step('press', 'screen.press', 'Confirm')`;
-   * a single array is the whole argument list, as with `agent-bridge call`.
+   * Times one call. Arguments are spread, `step('press', 'screen.press', 'Confirm')`.
+   * A single array is the whole argument list, as with `agent-bridge call`, so
+   * to pass one array as the only argument wrap it: `step('s', 'cart.setItems', [[a, b]])`.
+   * `call` does not do this: it passes its arguments as they are.
    */
   step: (label: string, tool: string, ...args: unknown[]) => Promise<unknown>
   /** What each declared scenario's apply returned, by name. */
