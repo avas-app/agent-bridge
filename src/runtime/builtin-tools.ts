@@ -1,7 +1,7 @@
 import type { LogCapture } from './logs'
 import { DevSettings } from 'react-native'
 
-import { appTools } from './tools/app'
+import { appTools, type ExpoHost, selectReload } from './tools/app'
 import { bridgeTools } from './tools/bridge'
 import { captureTools, loadViewShot } from './tools/capture'
 import { logTools } from './tools/logs'
@@ -20,7 +20,9 @@ export function builtinTools(
 ): Tools {
   return {
     ...bridgeTools(listTools),
-    ...appTools(() => DevSettings.reload()),
+    ...appTools(
+      selectReload(globalThis as ExpoHost, () => DevSettings.reload()),
+    ),
     ...logTools(logs),
     ...restoreTools(getTools),
     ...screenTools(),
