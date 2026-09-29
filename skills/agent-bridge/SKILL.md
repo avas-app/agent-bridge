@@ -66,6 +66,7 @@ real account instead.
 ```sh
 npx agent-bridge call screen.snapshot                          # buttons, inputs, text on screen
 npx agent-bridge call screen.press '"add-plant"'               # by testID, label or text
+npx agent-bridge call screen.press '[{"at":[350,60]}]'          # icon-only button: by point; {"index":1} picks among matches; {"force":true} presses disabled
 npx agent-bridge call screen.fill '["plant-name", "Fern"]'     # runs the input's handlers
 npx agent-bridge call screen.waitFor '"Name is required"'      # {"gone": true} waits for it to go
 ```

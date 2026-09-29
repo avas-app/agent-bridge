@@ -3,7 +3,8 @@ import type { Found, ScreenElement } from './elements'
 /**
  * What to act on. A string tries testID, then label, then placeholder, then
  * visible text (exact, then substring). An object must match every field it
- * sets; `index` picks one of several matches.
+ * sets; `index` picks one of several matches; `at: [x, y]` picks the smallest
+ * element covering that point (for controls with no text, label or testID).
  */
 export type Target =
   | string
@@ -12,10 +13,44 @@ export type Target =
       label?: string
       placeholder?: string
       text?: string
+      at?: [number, number]
       index?: number
     }
 
+const TARGET_KEYS = ['testID', 'label', 'placeholder', 'text', 'at', 'index']
+
+/** Rejects what would otherwise match everything, like a typo'd key. */
+function checkTarget(target: Target): void {
+  if (typeof target === 'string') return
+  if (target === null || typeof target !== 'object' || Array.isArray(target))
+    throw new Error(
+      `A target is a string or an object with ${TARGET_KEYS.join(', ')}; got ${JSON.stringify(target)}`,
+    )
+  const unknown = Object.keys(target).filter((k) => !TARGET_KEYS.includes(k))
+  if (unknown.length)
+    throw new Error(
+      `Unknown target key ${unknown.map((k) => JSON.stringify(k)).join(', ')}. Valid keys: ${TARGET_KEYS.join(', ')}`,
+    )
+  const { at, index } = target
+  if (
+    at !== undefined &&
+    !(Array.isArray(at) && at.length === 2 && at.every(Number.isFinite))
+  )
+    throw new Error(`Target "at" must be [x, y] in window points; got ${JSON.stringify(at)}`)
+  if (index !== undefined && !Number.isInteger(index))
+    throw new Error(`Target "index" must be an integer; got ${JSON.stringify(index)}`)
+}
+
 type Test = (e: ScreenElement) => boolean
+
+const covers = (e: ScreenElement, [x, y]: [number, number]) =>
+  !!e.rect &&
+  x >= e.rect.x &&
+  x <= e.rect.x + e.rect.width &&
+  y >= e.rect.y &&
+  y <= e.rect.y + e.rect.height
+
+const area = (f: Found) => (f.element.rect ? f.element.rect.width * f.element.rect.height : 0)
 
 function tiers(target: Target): Test[] {
   if (typeof target === 'string') {
@@ -27,9 +62,10 @@ function tiers(target: Target): Test[] {
       (e) => !!e.text?.includes(target),
     ]
   }
-  const { testID, label, placeholder, text } = target
+  const { testID, label, placeholder, text, at } = target
   const fields: Test = (e) =>
     (testID === undefined || e.testID === testID) &&
+    (at === undefined || covers(e, at)) &&
     (label === undefined || e.label === label) &&
     (placeholder === undefined || e.placeholder === placeholder)
   if (text === undefined) return [fields]
@@ -41,12 +77,17 @@ function tiers(target: Target): Test[] {
 
 /** Matches from the first tier that has any. */
 export function matchTarget(found: Found[], target: Target): Found[] {
+  checkTarget(target)
   for (const test of tiers(target)) {
     const matches = found.filter((f) => test(f.element))
-    if (matches.length) return matches
+    // Innermost first, so a point on an icon means the icon, not its screen.
+    if (matches.length)
+      return isAt(target) ? matches.sort((a, b) => area(a) - area(b)) : matches
   }
   return []
 }
+
+const isAt = (target: Target) => typeof target === 'object' && target.at !== undefined
 
 export const indexOf = (target: Target) =>
   typeof target === 'object' ? target.index : undefined
@@ -79,11 +120,14 @@ export function onScreenSummary(found: Found[], max = 15): string {
 /**
  * The one on-screen element a target means. When several match, those that
  * can do what the caller wants (`press`, `fill`) win; still several is an error.
+ * `options.index` is the trailing `{ index }` argument; it beats the target's own.
+ * `options.afterText` says the caller takes a text argument before its options (fill).
  */
 export function resolveTarget(
   found: Found[],
   target: Target,
   prefer?: (f: Found) => boolean,
+  options?: { index?: number; afterText?: boolean },
 ): Found {
   let matches = matchTarget(
     found.filter((f) => f.onScreen),
@@ -101,7 +145,7 @@ export function resolveTarget(
   }
   const preferred = prefer ? matches.filter(prefer) : []
   if (preferred.length) matches = preferred
-  const index = indexOf(target)
+  const index = options?.index ?? indexOf(target) ?? (isAt(target) ? 0 : undefined)
   if (index !== undefined) {
     const pick = matches[index]
     if (!pick)
@@ -115,8 +159,12 @@ export function resolveTarget(
       .slice(0, 10)
       .map((f, i) => `${i}: ${describe(f.element)}`)
       .join('; ')
+    const example =
+      typeof target === 'string'
+        ? `${JSON.stringify(options?.afterText ? [target, '<text>', { index: 1 }] : [target, { index: 1 }])} (index as the last argument)`
+        : `${JSON.stringify({ ...target, index: 1 })} (index inside the target)`
     throw new Error(
-      `${showTarget(target)} matches ${matches.length} elements; pass { index } or a narrower target. ${list}`,
+      `${showTarget(target)} matches ${matches.length} elements; pick one with an index, e.g. ${example}, or use a narrower target. ${list}`,
     )
   }
   return matches[0] as Found
