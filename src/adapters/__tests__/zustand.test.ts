@@ -106,7 +106,7 @@ describe('storeTools', () => {
   })
 
   describe('write output and redaction', () => {
-    type Auth = { accessToken: string; user: { name: string; phone: string }; isLoggedIn: boolean; logout: () => void; whoami: () => unknown }
+    type Auth = { accessToken: string; user: { name: string; phone: string }; isLoggedIn: boolean; logout: () => void; whoami: () => unknown; refresh: () => Promise<unknown> }
     const makeAuth = () =>
       createStore<Auth>()((set, get) => ({
         accessToken: 'secret-token',
@@ -114,6 +114,10 @@ describe('storeTools', () => {
         isLoggedIn: true,
         logout: () => set({ isLoggedIn: false }),
         whoami: () => get().user,
+        refresh: async () => {
+          await Promise.resolve()
+          set({ accessToken: 'refreshed' })
+        },
       }))
 
     test('store.set returns only the changed keys', () => {
@@ -141,6 +145,18 @@ describe('storeTools', () => {
       expect(run(tools, 'store.set', 'auth', { accessToken: 'new-secret' })).toEqual({ accessToken: '[redacted]' })
       expect(auth.getState().accessToken).toBe('new-secret')
       expect(run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
+    })
+
+    test('store.call awaits async actions, with and without redact', async () => {
+      const auth = makeAuth()
+      expect(await run(storeTools({ auth }), 'store.call', 'auth', 'refresh')).toEqual({ changed: ['accessToken'] })
+      expect(auth.getState().accessToken).toBe('refreshed')
+
+      const tools = storeTools({ auth }, { redact: { auth: ['accessToken', 'user.phone'] } })
+      auth.setState({ accessToken: 'again' })
+      expect(await run(tools, 'store.call', 'auth', 'refresh')).toEqual({ changed: ['accessToken'] })
+      auth.setState({ whoami: async () => auth.getState().user })
+      expect(await run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
     })
 
     test('a redact hook sees each store, path and value', () => {

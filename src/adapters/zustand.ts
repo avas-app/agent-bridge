@@ -95,6 +95,12 @@ function restore(store: StoreLike, snapshot: unknown) {
  * (`{ auth: ['accessToken', 'user.phone'] }`), or a hook called for the store
  * value and every nested value with its dotted path; what it returns is
  * printed instead.
+ *
+ * Paths are store paths. A `store.call` result that is a piece of the store's
+ * state (same object, e.g. `() => get().user`) is matched by where it lives; a
+ * copy or derived value (`() => ({ ...get().user })`) is not, so its paths are
+ * matched relative to the result and store paths like `user.phone` won't apply.
+ * Use the hook, or don't return secrets from actions.
  */
 export type Redact =
   | Record<string, string[]>
@@ -180,19 +186,19 @@ export function storeTools(
     'store.call': {
       description:
         'Call an action on a store, e.g. ("settings", "setColorScheme", "dark"). Returns the action\'s return value, or { changed: [keys] } when it returns nothing or the store state.',
-      run: (name: string, action: string, ...args: unknown[]) => {
+      run: async (name: string, action: string, ...args: unknown[]) => {
         const store = get(name)
         const fn = (store.getState() as Record<string, unknown>)[action]
         if (typeof fn !== 'function')
           throw new Error(`Store "${name}" has no action "${action}"`)
         beforeChange(store)
         const before = store.getState()
-        const result = (fn as (...a: unknown[]) => unknown)(...args)
+        const result = await (fn as (...a: unknown[]) => unknown)(...args)
         const after = store.getState()
-        if (result !== undefined && result !== before && result !== after)
-        {
+        if (result !== undefined && result !== before && result !== after) {
           // An action often returns a piece of its own state; redact that by
-          // the path it lives at.
+          // the path it lives at. A copy or derived value isn't found by
+          // identity, so its paths are relative to the result.
           const key = isObject(after)
             ? Object.keys(after).find((k) => after[k] === result)
             : undefined
