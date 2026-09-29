@@ -124,7 +124,7 @@ export const showTarget = (target: Target) => JSON.stringify(target)
 
 /** A short list of what is on screen, for error messages. */
 export function onScreenSummary(found: Found[], max = 15): string {
-  const on = found.filter((f) => f.onScreen)
+  const on = found.filter((f) => f.onScreen && !f.hidden)
   if (!on.length) return 'nothing'
   const shown = on.slice(0, max).map((f) => describe(f.element))
   if (on.length > max) shown.push(`+${on.length - max} more`)
@@ -136,22 +136,30 @@ export function onScreenSummary(found: Found[], max = 15): string {
  * can do what the caller wants (`press`, `fill`) win; still several is an error.
  * `options.index` is the trailing `{ index }` argument; it beats the target's own.
  * `options.afterText` says the caller takes a text argument before its options (fill).
+ * Elements on screens the user can't reach never match. With `options.offscreen`,
+ * a match that is scrolled out of view counts when nothing on screen matches.
  */
 export function resolveTarget(
   found: Found[],
   target: Target,
   prefer?: (f: Found) => boolean,
-  options?: { index?: number; afterText?: boolean },
+  options?: { index?: number; afterText?: boolean; offscreen?: boolean },
 ): Found {
+  const reachable = found.filter((f) => !f.hidden)
   let matches = matchTarget(
-    found.filter((f) => f.onScreen),
+    reachable.filter((f) => f.onScreen),
     target,
   )
+  if (!matches.length && options?.offscreen) matches = matchTarget(reachable, target)
   if (!matches.length) {
     const hidden = matchTarget(found, target)[0]
+    if (hidden?.hidden)
+      throw new Error(
+        `${showTarget(target)} matches ${describe(hidden.element)}, which is on a screen that is not in front (an unfocused tab or stack screen, or behind a modal). screen.snapshot {all:true} lists it`,
+      )
     if (hidden)
       throw new Error(
-        `${showTarget(target)} matches ${describe(hidden.element)}, which is not on screen`,
+        `${showTarget(target)} matches ${describe(hidden.element)}, which is not on screen. Pass {scroll:true} to scroll it into view, or use screen.scroll`,
       )
     throw new Error(
       `Nothing on screen matches ${showTarget(target)}. On screen: ${onScreenSummary(found)}`,

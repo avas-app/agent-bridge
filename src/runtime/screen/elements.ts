@@ -27,6 +27,8 @@ export type ScreenElement = {
   rect: Rect | null
   /** Only in `screen.snapshot({ all: true })`. */
   onScreen?: boolean
+  /** Only in `screen.snapshot({ all: true })`: on a screen the user can't reach. */
+  hidden?: boolean
 }
 
 /** An element plus the fibers the actions need. */
@@ -42,6 +44,21 @@ export type Found = {
   /** Outermost fiber with text-input handlers, when the element is an input. */
   input: Fiber | null
   maxLength?: number
+  /**
+   * On a screen the user can't reach: an unfocused tab or stack screen, under
+   * an open modal, `display: none`, or hidden from accessibility.
+   */
+  hidden: boolean
+  /** The nearest enclosing scrollable, or the element itself when it is one. */
+  scroller: Scrollable | null
+}
+
+/** A ScrollView, FlatList, FlashList (or a scrolling DOM element) and its host. */
+export type Scrollable = {
+  host: Fiber
+  /** Every fiber over this host with scroll methods, outermost first. */
+  fibers: Fiber[]
+  hidden: boolean
 }
 
 export type Window = { width: number; height: number }
@@ -57,6 +74,71 @@ const propsOf = (fiber: Fiber): Props | null =>
   fiber.memoizedProps && typeof fiber.memoizedProps === 'object'
     ? (fiber.memoizedProps as Props)
     : null
+
+type Node = Record<string, unknown>
+
+const nodeOf = (fiber: Fiber): Node | null => {
+  const n = fiber.stateNode
+  return n && typeof n === 'object' ? (n as Node) : null
+}
+
+const SCROLL_METHODS = ['scrollTo', 'scrollToOffset']
+
+/** Whether the fiber's instance (or host node) can be told to scroll. */
+function scrolls(fiber: Fiber): boolean {
+  const node = nodeOf(fiber)
+  if (!node || !SCROLL_METHODS.some((m) => isFn(node[m]))) return false
+  // DOM-like nodes all have scrollTo; only ones with overflow scroll.
+  if (typeof node.scrollHeight === 'number' && typeof node.clientHeight === 'number')
+    return (
+      node.scrollHeight > node.clientHeight + 1 ||
+      (node.scrollWidth as number) > (node.clientWidth as number) + 1
+    )
+  return true
+}
+
+const flatStyle = (style: unknown): Props => {
+  const out: Props = {}
+  const walk = (s: unknown) => {
+    if (Array.isArray(s)) s.forEach(walk)
+    else if (s && typeof s === 'object') Object.assign(out, s)
+  }
+  walk(style)
+  return out
+}
+
+// What React Native and react-native-screens say about a subtree the user can't
+// reach: inactive screens (`activityState` 0), `display: none` (react-navigation
+// hides unfocused tabs that way), and accessibility hiding.
+const hiddenBy = (p: Props) =>
+  p.activityState === 0 ||
+  flatStyle(p.style).display === 'none' ||
+  p['aria-hidden'] === true ||
+  p.accessibilityElementsHidden === true ||
+  p.importantForAccessibility === 'no-hide-descendants'
+
+const MODAL_HOSTS = new Set(['RCTModalHostView', 'ModalHostView'])
+const SCREEN_STACK = 'RNSScreenStack'
+const STACK_SCREENS = new Set(['RNSScreen', 'RNSModalScreen'])
+
+/** A native stack shows only its last screen; the ones beneath stay mounted. */
+function coveredScreens(stack: Fiber): Fiber[] {
+  const screens: Fiber[] = []
+  const todo = stack.child ? [stack.child] : []
+  while (todo.length) {
+    const f = todo.pop() as Fiber
+    if (f.sibling) todo.push(f.sibling)
+    if (f.tag === HOST_COMPONENT && STACK_SCREENS.has(f.type as string)) {
+      if (propsOf(f)?.activityState !== 0) screens.push(f)
+    } else if (f.child) todo.push(f.child)
+  }
+  return screens.slice(0, -1)
+}
+
+const within = (fiber: Fiber, ancestor: Fiber) => {
+  for (let f: Fiber | null = fiber; f; f = f.return) if (f === ancestor) return true
+  return false
+}
 
 const SWITCH_HOSTS = new Set(['RCTSwitch', 'AndroidSwitch'])
 
@@ -184,16 +266,29 @@ function absorbChain(rec: Rec, fiber: Fiber, host: Fiber) {
 }
 
 /**
- * Every element outside inactive screens, in tree order. One element per
- * control: a Pressable and the View it renders are one button, a field
- * component handing its onChangeText to a TextInput is one input (measured at
- * the TextInput), and the outermost fiber with a handler is the one actions call.
+ * Every element in tree order, with `hidden` set for the ones on screens the
+ * user can't reach. One element per control: a Pressable and the View it
+ * renders are one button, a field component handing its onChangeText to a
+ * TextInput is one input (measured at the TextInput), and the outermost fiber
+ * with a handler is the one actions call.
  */
-export function collectElements(roots: Fiber[], window: Window): Found[] {
+export function collectScreen(
+  roots: Fiber[],
+  window: Window,
+): { found: Found[]; scrollables: Scrollable[] } {
   const byHost = new Map<Fiber, Rec>()
   const order: Rec[] = []
+  const scrollByHost = new Map<Fiber, Scrollable>()
+  const covered = new Set<Fiber>()
+  let topModal: Fiber | null = null
 
-  const recFor = (fiber: Fiber, host: Fiber, parent: Rec | null): Rec => {
+  const recFor = (
+    fiber: Fiber,
+    host: Fiber,
+    parent: Rec | null,
+    hidden: boolean,
+    scroller: Scrollable | null,
+  ): Rec => {
     let rec = byHost.get(host)
     if (rec) return rec
     rec = {
@@ -203,6 +298,8 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
       host,
       press: null,
       input: null,
+      hidden,
+      scroller,
       parent,
       parts: [],
     }
@@ -231,14 +328,43 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
     }
   }
 
-  type Item = { fiber: Fiber; rec: Rec | null }
-  const stack: Item[] = roots.map((fiber) => ({ fiber, rec: null }))
+  type Item = {
+    fiber: Fiber
+    rec: Rec | null
+    hidden: boolean
+    scroller: Scrollable | null
+  }
+  const stack: Item[] = roots.map((fiber) => ({
+    fiber,
+    rec: null,
+    hidden: false,
+    scroller: null,
+  }))
   while (stack.length) {
-    const { fiber, rec: parentRec } = stack.pop() as Item
-    if (fiber.sibling) stack.push({ fiber: fiber.sibling, rec: parentRec })
+    const item = stack.pop() as Item
+    const { fiber, rec: parentRec } = item
+    if (fiber.sibling) stack.push({ ...item, fiber: fiber.sibling })
     const p = propsOf(fiber)
-    // react-native-screens keeps inactive tabs and screens mounted.
-    if (fiber.tag === HOST_COMPONENT && p?.activityState === 0) continue
+    let { hidden, scroller } = item
+    if (p && hiddenBy(p)) hidden = true
+    if (covered.has(fiber)) hidden = true
+    if (fiber.tag === HOST_COMPONENT) {
+      if (fiber.type === SCREEN_STACK)
+        for (const screen of coveredScreens(fiber)) covered.add(screen)
+      if (!hidden && MODAL_HOSTS.has(fiber.type as string)) topModal = fiber
+    }
+    if (scrolls(fiber)) {
+      const host = firstHost(fiber)
+      if (host) {
+        let found = scrollByHost.get(host)
+        if (!found) {
+          found = { host, fibers: [], hidden }
+          scrollByHost.set(host, found)
+        }
+        found.fibers.push(fiber)
+        scroller = found
+      }
+    }
 
     let rec = parentRec
     if (p && interesting(p)) {
@@ -250,23 +376,30 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
         absorbChain(same, fiber, host)
         rec = same
       } else if (host) {
-        rec = recFor(fiber, host, parentRec)
+        rec = recFor(fiber, host, parentRec, hidden, scroller)
         absorb(rec, fiber, p)
       }
     }
     const found = textOf(fiber)
     if (found?.host) {
       const host = textHost(found.host)
-      const owner = buttonOf(rec) ?? recFor(host, host, rec)
+      const owner = buttonOf(rec) ?? recFor(host, host, rec, hidden, scroller)
       const last = owner.parts[owner.parts.length - 1]
       if (last?.host === host) last.text += found.text
       else owner.parts.push({ host, text: found.text })
     }
-    if (fiber.child) stack.push({ fiber: fiber.child, rec })
+    if (fiber.child) stack.push({ fiber: fiber.child, rec, hidden, scroller })
   }
+
+  // Under an open modal, only the top-most modal's content can be touched.
+  const modal = topModal as Fiber | null
+  const covers = (host: Fiber) => !!modal && !within(host, modal)
+  for (const scrollable of scrollByHost.values())
+    scrollable.hidden ||= covers(scrollable.host)
 
   for (const rec of order) {
     const e = rec.element
+    rec.hidden ||= covers(rec.host)
     const text = rec.parts
       .map((part) => part.text.replace(ICON_GLYPHS, '').replace(/\s+/g, ' ').trim())
       .filter(Boolean)
@@ -285,10 +418,19 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
     rec.onScreen = isOnScreen(rect, window)
   }
   // A text-only element whose glyphs were all icons has nothing to show.
-  return order.filter(
-    (rec) => rec.element.kind !== 'text' || rec.element.text !== undefined,
-  )
+  return {
+    found: order.filter(
+      (rec) => rec.element.kind !== 'text' || rec.element.text !== undefined,
+    ),
+    scrollables: [...scrollByHost.values()],
+  }
 }
+
+export const collectElements = (roots: Fiber[], window: Window): Found[] =>
+  collectScreen(roots, window).found
+
+/** What a user could touch: not hidden behind another screen. */
+export const focused = (found: Found[]): Found[] => found.filter((f) => !f.hidden)
 
 /** The fiber `press` should call: the element's own, or the nearest ancestor's. */
 export function pressFiberOf(found: Found): Fiber | null {
