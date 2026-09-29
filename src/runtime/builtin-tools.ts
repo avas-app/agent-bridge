@@ -3,6 +3,7 @@ import { DevSettings } from 'react-native'
 
 import { appTools } from './tools/app'
 import { bridgeTools } from './tools/bridge'
+import { captureTools, loadViewShot } from './tools/capture'
 import { logTools } from './tools/logs'
 import { restoreTools } from './tools/restore'
 import { scenarioTools } from './tools/scenario'
@@ -23,6 +24,7 @@ export function builtinTools(
     ...logTools(logs),
     ...restoreTools(getTools),
     ...screenTools(),
+    ...captureTools(loadViewShot),
     // Only when the app defines scenarios, so `tools` doesn't list empty ones.
     ...(getScenarios && scenarioTools(getScenarios, getTools)),
   }

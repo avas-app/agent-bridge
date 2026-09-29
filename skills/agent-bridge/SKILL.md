@@ -90,6 +90,13 @@ npx agent-bridge call screen.waitFor '"Name is required"'      # {"gone": true} 
 check sees it. `fill` skips the keyboard: autocorrect and native-only input
 behaviour need one real typing step from agent-device.
 
+For a picture of the screen, call `screen.capture` (returns `{path}` of a PNG on
+the device; `{"base64":true}` returns it inline when small). It works only if
+the app already has `react-native-view-shot`. If it errors, take the screenshot
+with agent-device, `xcrun simctl io booted screenshot <file>` or
+`adb exec-out screencap -p > <file>` instead. Don't install anything or ask the
+user to.
+
 ## Get the app into a state
 
 ```sh
