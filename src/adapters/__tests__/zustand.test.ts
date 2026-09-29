@@ -159,6 +159,18 @@ describe('storeTools', () => {
       expect(await run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
     })
 
+    test('redaction also covers split paths and pick', () => {
+      const auth = makeAuth()
+      const tools = storeTools({ auth }, { redact: { auth: ['accessToken', 'user.phone'] } })
+      expect(run(tools, 'store.get', 'auth', 'user', 'phone')).toBe('[redacted]')
+      expect(run(tools, 'store.get', 'auth', ['user', 'phone'])).toBe('[redacted]')
+      expect(run(tools, 'store.get', 'auth', { pick: ['accessToken', 'user.name'] })).toEqual({
+        accessToken: '[redacted]',
+        'user.name': 'Ada',
+      })
+      expect(run(tools, 'store.get', 'auth', 'user', { pick: ['phone'] })).toEqual({ phone: '[redacted]' })
+    })
+
     test('a redact hook sees each store, path and value', () => {
       const auth = makeAuth()
       const tools = storeTools({ auth }, { redact: (_s, path, value) => (path.endsWith('Token') ? 'x' : value) })
