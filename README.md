@@ -121,7 +121,7 @@ npx agent-bridge session stop             # runs bridge.restore, then disconnect
 
 **Skip npx for agents.** `npx` loads npm's config on every call. If the project's `.npmrc` has keys npm doesn't know, each call prints `npm warn Unknown project config …` into the agent's output, and npx adds process startup. The installed bin does neither: run `./node_modules/.bin/agent-bridge …` (or `bunx agent-bridge …`) in place of `npx agent-bridge` in every command here.
 
-**Timing checks and long sequences.** Every CLI call is a new process. On a fast machine that is ~55–90 ms with the bin and ~250–320 ms through `npx`, all of it startup rather than the bridge. For a timing check, or more than a handful of calls, write a flow file and use `agent-bridge run`: it pays startup once and prints how long each step took.
+**Timing checks and long sequences.** Every CLI call is a new process. Measured on one Linux box (machine-dependent), that is roughly 90–100 ms with the bin and 280–320 ms through `npx` (about 55 and 250 ms with a session running), all of it startup rather than the bridge. For a timing check, or more than a handful of calls, write a flow file and use `agent-bridge run`: it pays startup once and prints how long each step took.
 
 ```js
 // flows/back-nav.mjs
