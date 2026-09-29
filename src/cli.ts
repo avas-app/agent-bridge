@@ -18,7 +18,7 @@ import {
   parseScenarioFlag,
   runFlow,
 } from './client/flow'
-import { parseCallArgs, runBatch } from './client/batch'
+import { parseCallArgv, readArgFile, runBatch } from './client/batch'
 import { logLine } from './client/log-lines'
 import { renderResult } from './client/output'
 import { DEFAULT_HISTORY_FILE, runRepl } from './client/repl'
@@ -37,7 +37,11 @@ Usage
   agent-bridge devices                    Apps connected to Metro
   agent-bridge tools                      Tools the app exposes
   agent-bridge call <tool> [args]         Call a tool. args: a JSON array, or one JSON value
-  agent-bridge call --batch               Read \`tool args\` lines from stdin; one JSON line per call, one connection
+  agent-bridge call <tool> @args.json     Same, read from a file (@- is stdin): no argv size limit
+  agent-bridge call <tool> '"/feed"' @feed.json
+                                          With several words each is one argument; @file is
+                                          that file's JSON. A string starting with @: '"@user"'
+  agent-bridge call --batch               Read \`tool args\` lines from stdin (args may be @file); one JSON line per call, one connection
   agent-bridge repl                       Interactive prompt (history, tab completion, .help). With
                                           stdin not a terminal it behaves like call --batch
   agent-bridge run <flow.mjs|.ts>         Run a flow: export default async ({ step, call }) => {}
@@ -73,6 +77,12 @@ Options
 /** Errors a failed call brought back, for printing before the failure. */
 const failedLogs = (error: unknown): LogEntry[] =>
   error instanceof AgentBridgeCallError ? error.logs : []
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
+}
 
 async function main() {
   // `call --batch | head -1`: the reader left, so stop quietly. Not a stdout
@@ -164,11 +174,18 @@ async function main() {
           throw new Error('call --batch reads calls from stdin; pass no tool')
         return withBridge((bridge) => batch(bridge))
       }
-      const [tool, raw] = rest
+      const [tool, ...words] = rest
       if (!tool) throw new Error('Usage: agent-bridge call <tool> [args]')
+      if (words.filter((w) => w === '@-').length > 1)
+        throw new Error('Only one argument can be @- (stdin)')
+      // Parsed before connecting, so a bad file fails fast.
+      const stdin = words.includes('@-') ? await readStdin() : ''
+      const args = parseCallArgv(words, (path) =>
+        path === '-' ? stdin : readArgFile(path),
+      )
       return withBridge(async (bridge) => {
         const { value, ms, appMs, logs, notice } = await bridge
-          .timed(tool, ...parseCallArgs(raw))
+          .timed(tool, ...args)
           .catch((error: unknown) => {
             for (const e of failedLogs(error)) console.error(logLine(e))
             throw error

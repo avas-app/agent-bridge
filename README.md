@@ -181,6 +181,8 @@ export default async ({ step }) => {
 
 `call` prints a result over 32 KB as a summary (`resultTooLarge`, size, shape, a hint) instead of flooding the terminal: pass `--out <file>` to write it to a file, or `--full` to print it. Flows and `connect()` always get the full value. To keep big values small at the source, `query.get` takes a last `{ pages: [from, to] }` (an infinite query's pages, `to` exclusive, with `totalPages`) or `{ path: "pages.0.items" }`, and `net.mocks` cuts response bodies over ~2 KB like `net.log` (`{ full: true }` returns them whole).
 
+**Big arguments.** The shell caps one argument at about 128 KB on Linux (`Argument list too long`). `call <tool> @args.json` reads the arguments from a file, and `@-` from stdin, with the inline rules: an array is the argument list, any other JSON value is one argument. With several words each is one argument and `@feed.json` is that file's JSON as it is: `call net.mock '"/feed"' @feed.json`. A bare word that starts with `@` is always a path; write a string like that as JSON (`'"@user"'`). A missing file or invalid JSON fails before connecting and names the path. `call --batch` lines take `@file` as their whole argument list (relative to the cwd; `@-` isn't allowed there, stdin carries the calls).
+
 ### Batch and REPL
 
 For a sequence of ad-hoc calls where a flow file is too much, `call --batch` reads one call per line from stdin (`tool args`, args as in `call`; blank lines and `#` lines are skipped; arguments that start like JSON but don't parse are reported as an error line rather than sent as a string) and prints one JSON line per call over a single connection:

@@ -18,7 +18,7 @@ import {
 } from '../../shared/protocol'
 import { runSessionDaemon } from '../session/daemon'
 import { connectSession } from '../session/client'
-import { parseBatchLine, parseCallArgs, runBatch } from '../batch'
+import { parseBatchLine, parseCallArgs, parseCallArgv, runBatch } from '../batch'
 import { type AgentBridge, connect } from '../index'
 import {
   DOT_COMMANDS,
@@ -546,5 +546,81 @@ describe('review fixes', () => {
     const code = await new Promise((r) => child.on('close', r))
     expect(stderr).toContain('flow crashed')
     expect(code).toBe(1)
+  })
+
+  const run = async (args: string[], stdin?: string, cwd?: string) => {
+    const child = spawn(process.execPath, [resolve(import.meta.dir, '../../cli.ts'), ...args], {
+      env: { ...process.env, AGENT_BRIDGE_STATE_DIR: dir },
+      cwd,
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (d) => (stdout += d))
+    child.stderr.on('data', (d) => (stderr += d))
+    child.stdin.end(stdin)
+    const code = await new Promise((r) => child.on('close', r))
+    return { stdout, stderr, code }
+  }
+
+  test('CLI: call reads its arguments from a file or stdin, past the argv limit', async () => {
+    const { metro } = await setup()
+    const flags = ['--metro', metro, '--no-session']
+    const big = 'x'.repeat(1_500_000)
+    const file = join(dir, 'big.json')
+    writeFileSync(file, JSON.stringify(['/feed', { big }]))
+    const out = join(dir, 'out.json')
+    const fromFile = await run(['call', 'demo.echo', `@${file}`, '--out', out, ...flags])
+    expect(fromFile.code).toBe(0)
+    const echoed = JSON.parse(readFileSync(out, 'utf8'))
+    expect(echoed[0]).toBe('/feed')
+    expect(echoed[1].big.length).toBe(big.length)
+
+    // A single value is one argument; @- is stdin.
+    const fromStdin = await run(['call', 'demo.echo', '@-', ...flags], '{"a":1}')
+    expect(JSON.parse(fromStdin.stdout)).toEqual([{ a: 1 }])
+
+    // Several words: each is one argument, @file is that file's JSON as-is.
+    writeFileSync(join(dir, 'list.json'), '[1,2]')
+    const mixed = await run(['call', 'demo.echo', '"/feed"', 'text', '@list.json', ...flags], undefined, dir)
+    expect(JSON.parse(mixed.stdout)).toEqual(['/feed', 'text', [1, 2]])
+  })
+
+  test('CLI: a bad @file names the path', async () => {
+    const flags = ['--metro', 'localhost:1', '--no-session']
+    const missing = await run(['call', 'demo.echo', '@nope.json', ...flags])
+    expect(missing.stderr).toContain('Cannot read arguments file nope.json')
+    expect(missing.code).toBe(1)
+    const bad = join(dir, 'bad.json')
+    writeFileSync(bad, '{oops')
+    const invalid = await run(['call', 'demo.echo', `@${bad}`, ...flags])
+    expect(invalid.stderr).toContain(`${bad} is not valid JSON`)
+    expect(invalid.code).toBe(1)
+  })
+
+  test('parseCallArgv: @file rules', () => {
+    const read = (path: string) => (path === 'list' ? '[1,2]' : path === 'one' ? '{"a":1}' : '{bad')
+    expect(parseCallArgv(['@list'], read)).toEqual([1, 2])
+    expect(parseCallArgv(['@one'], read)).toEqual([{ a: 1 }])
+    expect(parseCallArgv(['"/feed"', '@list'], read)).toEqual(['/feed', [1, 2]])
+    expect(parseCallArgv(['"@user"'], read)).toEqual(['@user'])
+    expect(parseCallArgv(['a', '7'], read)).toEqual(['a', 7])
+    expect(() => parseCallArgv(['@bad'], read)).toThrow('bad is not valid JSON')
+    expect(() => parseCallArgv(['@'], read)).toThrow('needs a path')
+  })
+
+  test('call --batch: a line can take its arguments from a file', async () => {
+    const { metro } = await setup()
+    const bridge = await connect({ metro, transport: 'expo' })
+    cleanups.push(() => bridge.close())
+    writeFileSync(join(dir, 'args.json'), '["a",{"b":2}]')
+    const { out, failed } = await batch(bridge, [
+      `demo.echo @${join(dir, 'args.json')}`,
+      'demo.echo @missing.json',
+      'demo.echo @-',
+    ])
+    expect(out[0]).toMatchObject({ ok: true, value: ['a', { b: 2 }] })
+    expect(out[1]?.error).toContain('Cannot read arguments file missing.json')
+    expect(out[2]?.error).toContain('stdin carries the calls')
+    expect(failed).toBe(2)
   })
 })
