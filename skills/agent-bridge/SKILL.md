@@ -97,6 +97,14 @@ npx agent-bridge call query.pin '[["features"], <data>]'       # stays through r
 npx agent-bridge call store.call '["settings", "setTheme", "dark"]'
 npx agent-bridge call router.navigate /inbox
 npx agent-bridge call router.current
+npx agent-bridge call router.dismiss                            # closes a route-based modal
+```
+
+`router.back` only pops the navigator: an in-app modal or sheet the app renders
+itself stays open and the screen under it is popped. Close those with the app's
+own tool (e.g. `modal.close`) if it has one; check `tools` first.
+
+```sh
 npx agent-bridge call net.mock '["/inbox", {"status": 500}]'   # or {"offline": true}
 npx agent-bridge call net.log '[{"since": 1700000000000}]'     # entries carry startedAt (epoch ms)
 npx agent-bridge call net.entry 3                              # one request, bodies whole

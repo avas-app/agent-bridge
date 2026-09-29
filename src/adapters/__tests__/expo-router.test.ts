@@ -45,6 +45,9 @@ function fakeApp(routes: Record<string, State>, start: string) {
     replace: go,
     back: () => queue(() => (state = history.pop())),
     canGoBack: () => history.length > 0,
+    dismiss: (count) => queue(() => (state = history.splice(-(count ?? 1)).at(0))),
+    dismissAll: () => queue(() => (state = history.splice(0).at(0))),
+    canDismiss: () => history.length > 0,
   }
   const navigation: NavigationLike = {
     getRootState: () => state,
@@ -151,7 +154,44 @@ describe('routerTools', () => {
       back: () => {},
       canGoBack: () => false,
       dismiss: (_count?: number) => {},
+      dismissAll: () => {},
+      canDismiss: () => false,
     }
     expect(Object.keys(routerTools(typed))).toContain('router.current')
+  })
+
+  test('router.back and router.dismiss say what they leave alone', () => {
+    const { router } = fakeApp({ '/': tabs('index') }, '/')
+    const tools = routerTools(router)
+    expect((tools['router.back'] as { description: string }).description).toContain('modal.close')
+    expect((tools['router.dismiss'] as { description: string }).description).toContain('app-rendered')
+  })
+
+  test('router.dismiss closes the top screen, or several, and reports when there is nothing to close', async () => {
+    const { router, navigation } = fakeApp(
+      { '/': tabs('index'), '/a': tabs('a'), '/b': tabs('b'), '/c': tabs('c') },
+      '/',
+    )
+    const tools = routerTools(router, { navigation })
+    expect(await run(tools, 'router.dismiss')).toBe(false)
+    for (const href of ['/a', '/b', '/c']) await run(tools, 'router.push', href)
+
+    expect(await run(tools, 'router.dismiss')).toBe(true)
+    expect(run(tools, 'router.current')).toMatchObject({ pathname: '/b' })
+    expect(await run(tools, 'router.dismiss', 1)).toBe(true)
+    expect(run(tools, 'router.current')).toMatchObject({ pathname: '/a' })
+  })
+
+  test('router.dismissAll goes back to the first screen', async () => {
+    const { router, navigation } = fakeApp(
+      { '/': tabs('index'), '/a': tabs('a'), '/b': tabs('b') },
+      '/',
+    )
+    const tools = routerTools(router, { navigation })
+    expect(await run(tools, 'router.dismissAll')).toBe(false)
+    await run(tools, 'router.push', '/a')
+    await run(tools, 'router.push', '/b')
+    expect(await run(tools, 'router.dismissAll')).toBe(true)
+    expect(run(tools, 'router.current')).toMatchObject({ pathname: '/', canGoBack: false })
   })
 })

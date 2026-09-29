@@ -10,6 +10,9 @@ export type RouterLike = {
   replace(href: never): void
   back(): void
   canGoBack(): boolean
+  dismiss(count?: number): void
+  dismissAll(): void
+  canDismiss(): boolean
 }
 
 /** The root navigation container, from `useNavigationContainerRef()` in expo-router. */
@@ -177,10 +180,26 @@ export function routerTools(router: RouterLike, options: RouterToolsOptions = {}
       run: (href: string) => go(() => router.replace(href as never), href),
     },
     'router.back': {
-      description: 'Go back if possible. Returns whether it could.',
+      description:
+        'Pop the navigator once if it can. Returns whether it could. Ignores modals and sheets the app renders itself, so it can pop the screen under one: close those with the app\'s own tool, e.g. modal.close.',
       run: () => {
         const could = router.canGoBack()
         return could ? go(() => router.back(), true) : false
+      },
+    },
+    'router.dismiss': {
+      description:
+        'Close the top route-based modal (or `count` screens of the nearest stack). Returns whether it could. Does not close app-rendered modals or sheets.',
+      run: (count?: number) => {
+        const could = router.canDismiss()
+        return could ? go(() => router.dismiss(count), true) : false
+      },
+    },
+    'router.dismissAll': {
+      description: 'Pop the nearest stack to its first screen. Returns whether it could.',
+      run: () => {
+        const could = router.canDismiss()
+        return could ? go(() => router.dismissAll(), true) : false
       },
     },
     'router.current': {
