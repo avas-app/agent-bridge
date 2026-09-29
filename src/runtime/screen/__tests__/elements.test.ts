@@ -95,4 +95,31 @@ describe('collectElements', () => {
       ['Below', false],
     ])
   })
+
+  test('keeps checked, selected and expanded from accessibilityState and aria-*', () => {
+    const radio = pressable(
+      { onPress: () => {}, accessibilityRole: 'radio', accessibilityState: { checked: true, selected: false } },
+      rnText('Card'),
+    )
+    const box = pressable({ onPress: () => {}, role: 'checkbox', 'aria-checked': 'mixed' }, rnText('All'))
+    const section = pressable({ onPress: () => {}, 'aria-expanded': false, 'aria-selected': true }, rnText('More'))
+    expect(elementsOf(radio, box, section)).toMatchObject([
+      { role: 'radio', checked: true, selected: false },
+      { role: 'checkbox', checked: 'mixed' },
+      { expanded: false, selected: true },
+    ])
+  })
+
+  test("a Switch's boolean value is its checked state", () => {
+    const toggle = tree(composite({ value: true, onValueChange: () => {}, testID: 'notify' }), host({ value: true }))
+    const [e] = elementsOf(toggle)
+    expect(e).toMatchObject({ testID: 'notify', role: 'switch', checked: true })
+    expect(e?.value).toBeUndefined()
+  })
+
+  test('lists a view that is only an accessibility label', () => {
+    expect(elementsOf(host({ accessibilityLabel: 'Payment method' }))).toMatchObject([
+      { kind: 'view', label: 'Payment method' },
+    ])
+  })
 })

@@ -3,6 +3,8 @@
 
 export type Fiber = {
   tag: number
+  /** The host component's name on native ('RCTText'), or tag on web. */
+  type?: unknown
   memoizedProps: unknown
   stateNode: unknown
   child: Fiber | null
@@ -11,14 +13,6 @@ export type Fiber = {
 }
 
 export type Rect = { x: number; y: number; width: number; height: number }
-
-export type TextMatch = { text: string; rect: Rect | null; onScreen: boolean }
-
-export type FindTextResult = {
-  found: number
-  onScreen: number
-  matches: TextMatch[]
-}
 
 export const HOST_COMPONENT = 5
 export const HOST_TEXT = 6
@@ -98,52 +92,4 @@ export function textOf(fiber: Fiber): { text: string; host: Fiber | null } | nul
     return { text: String(children), host: fiber }
   }
   return null
-}
-
-// Inactive tabs and stack screens stay mounted with their layout intact;
-// react-native-screens marks them with activityState 0 instead.
-function inActiveScreen(fiber: Fiber): boolean {
-  for (let f: Fiber | null = fiber; f; f = f.return) {
-    if (f.tag !== HOST_COMPONENT) continue
-    const props = f.memoizedProps as { activityState?: number } | null
-    if (props?.activityState === 0) return false
-  }
-  return true
-}
-
-export function findTextInTree(
-  roots: Fiber[],
-  text: string,
-  window: { width: number; height: number },
-  options: { exact?: boolean } = {},
-): FindTextResult {
-  const stack = [...roots]
-  const matches: TextMatch[] = []
-  while (stack.length) {
-    const fiber = stack.pop() as Fiber
-    const found = textOf(fiber)
-    if (
-      found &&
-      (options.exact ? found.text === text : found.text.includes(text))
-    ) {
-      const rect = found.host ? measureHost(found.host) : null
-      const onScreen =
-        !!rect &&
-        inActiveScreen(fiber) &&
-        rect.width > 0 &&
-        rect.height > 0 &&
-        rect.x < window.width &&
-        rect.y < window.height &&
-        rect.x + rect.width > 0 &&
-        rect.y + rect.height > 0
-      matches.push({ text: found.text, rect, onScreen })
-    }
-    if (fiber.child) stack.push(fiber.child)
-    if (fiber.sibling) stack.push(fiber.sibling)
-  }
-  return {
-    found: matches.length,
-    onScreen: matches.filter((m) => m.onScreen).length,
-    matches,
-  }
 }

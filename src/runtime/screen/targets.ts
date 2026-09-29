@@ -96,12 +96,16 @@ const clip = (s: string) => (s.length > 40 ? `${s.slice(0, 39)}…` : s)
 
 /** One line an agent can read, e.g. `button #save-plant "Save plant"`. */
 export function describe(e: ScreenElement): string {
-  const bits: string[] = [e.kind]
+  const stated = e.checked !== undefined || e.selected !== undefined || e.expanded !== undefined
+  const bits: string[] = [stated && e.role ? e.role : e.kind]
   if (e.testID) bits.push(`#${e.testID}`)
   if (e.text) bits.push(JSON.stringify(clip(e.text)))
   if (e.label && e.label !== e.text) bits.push(`label=${JSON.stringify(clip(e.label))}`)
   if (e.placeholder) bits.push(`placeholder=${JSON.stringify(clip(e.placeholder))}`)
   if (e.value !== undefined) bits.push(`value=${JSON.stringify(clip(e.value))}`)
+  if (e.checked !== undefined) bits.push(e.checked === true ? 'checked' : e.checked === false ? 'unchecked' : 'mixed')
+  if (e.selected !== undefined) bits.push(e.selected ? 'selected' : 'unselected')
+  if (e.expanded !== undefined) bits.push(e.expanded ? 'expanded' : 'collapsed')
   if (e.disabled) bits.push('disabled')
   return bits.join(' ')
 }

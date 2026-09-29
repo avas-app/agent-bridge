@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { collectElements } from '../elements'
-import { resolveTarget } from '../targets'
+import { describe as show, resolveTarget } from '../targets'
 import { WINDOW, host, pressable, rnText, text, textInput, tree } from './fake-tree'
 
 const root = tree(
@@ -61,5 +61,15 @@ describe('target shape', () => {
       resolveTarget(found, t, undefined, { index }).element.text
     expect(at('Water every', 1)).toBe('Water every 3 days')
     expect(at({ text: 'Water every' }, 0)).toBe('Water every 7 days')
+  })
+})
+
+describe('describe', () => {
+  test('shows checked, selected and expanded state, led by the role', () => {
+    const rect = null
+    expect(show({ kind: 'button', role: 'radio', text: 'Card', checked: true, rect })).toBe('radio "Card" checked')
+    expect(show({ kind: 'button', role: 'checkbox', text: 'All', checked: 'mixed', rect })).toBe('checkbox "All" mixed')
+    expect(show({ kind: 'view', role: 'switch', checked: false, rect })).toBe('switch unchecked')
+    expect(show({ kind: 'button', text: 'Tab', selected: true, expanded: false, rect })).toBe('button "Tab" selected collapsed')
   })
 })

@@ -8,6 +8,7 @@ import {
   type ScreenElement,
   type Window,
 } from './elements'
+import { findText, type FindTextOptions } from './find-text'
 import { settle } from './settle'
 import { resolveTarget, type Target } from './targets'
 import { type WaitForOptions, waitForTarget } from './wait-for'
@@ -39,6 +40,9 @@ export function createScreen(env: {
         elements: found.map((f) => ({ ...f.element, onScreen: f.onScreen })),
       }
     },
+
+    findText: (text: string, options?: FindTextOptions) =>
+      findText(collect(), text, options),
 
     async fill(
       target: Target,
