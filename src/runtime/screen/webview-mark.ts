@@ -1,6 +1,6 @@
 // How a registered WebView shows up in screen.snapshot: the react-native-webview
 // adapter puts this comment at the head of the WebView's
-// `injectedJavaScriptBeforeDocumentLoaded`, a prop that survives every wrapper
+// `injectedJavaScriptBeforeContentLoaded`, a prop that survives every wrapper
 // down to the native host, and element extraction reads the name back.
 const MARK = /^\/\*agent-bridge:webview:([^*]*)\*\//
 
@@ -11,7 +11,7 @@ export const webViewMark = (name: string): string =>
 
 /** The registered name in a WebView's props, if it is one. */
 export function webViewNameOf(props: Record<string, unknown>): string | undefined {
-  const script = props.injectedJavaScriptBeforeDocumentLoaded
+  const script = props.injectedJavaScriptBeforeContentLoaded
   const found = typeof script === 'string' ? MARK.exec(script) : null
   if (!found) return undefined
   try {

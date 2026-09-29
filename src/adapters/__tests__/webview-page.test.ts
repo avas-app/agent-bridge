@@ -17,13 +17,13 @@ async function call(win: Window, args: Record<string, unknown>, allowed = [ORIGI
   const posted: string[] = []
   const done = new Promise<Record<string, unknown>>((resolve) => {
     const fn = new Function(`return (${src})`)()
-    fn(win, JSON.stringify({ nonce: 'n1', allowed, ...args }), (s: string) => {
+    fn(win, JSON.stringify({ nonce: 'n1', token: 'tok', allowed, ...args }), (s: string) => {
       posted.push(s)
       resolve(JSON.parse(s))
     })
   })
   const reply = await done
-  expect(reply).toMatchObject({ __agentBridge: 1, kind: 'reply', nonce: 'n1' })
+  expect(reply).toMatchObject({ __agentBridge: 1, kind: 'reply', nonce: 'n1', t: 'tok' })
   return reply as { ok: boolean; result?: any; error?: string; origin: string }
 }
 
@@ -293,9 +293,11 @@ describe('bootMain', () => {
     const sent: any[] = []
     ;(win as any).ReactNativeWebView = {}
     const fn = new Function(`return (${bootMain.toString()})`)()
-    fn(win, (s: string) => sent.push(JSON.parse(s)))
-    fn(win, () => sent.push('twice')) // idempotent
-    expect(sent[0]).toMatchObject({ kind: 'state', state: 'loading', origin: ORIGIN })
+    fn(win, (s: string) => sent.push(JSON.parse(s)), 'tok')
+    fn(win, () => sent.push('twice'), 'tok') // idempotent
+    expect(sent[0]).toMatchObject({ kind: 'state', state: 'loading', origin: ORIGIN, t: 'tok' })
+    expect((win as any).__agentBridgeBoot).toBe(true) // a flag only; the token is not on window
+    expect(JSON.stringify(Object.keys(win))).not.toContain('tok')
 
     win.console.error('boom', { a: 1 })
     win.console.warn('careful')

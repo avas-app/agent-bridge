@@ -11,12 +11,15 @@
 export function bootMain(
   win: any, // oxlint-disable-line no-explicit-any -- the page's window
   post: (message: string) => void,
+  token: string,
 ): void {
   if (win.__agentBridgeBoot) return
   win.__agentBridgeBoot = true
+  // Kept in this closure, and JSON.stringify taken now, before the page can replace it.
+  const stringify = win.JSON.stringify.bind(win.JSON)
   const queue: string[] = []
   const send = (payload: Record<string, unknown>) => {
-    const message = JSON.stringify({ __agentBridge: 1, ...payload })
+    const message = stringify({ __agentBridge: 1, t: token, ...payload })
     queue.push(message)
     try {
       // The native bridge object can arrive after this script runs.
@@ -35,7 +38,7 @@ export function bootMain(
       return error.stack || `${error.name || 'Error'}: ${error.message}`
     }
     try {
-      const json = JSON.stringify(value)
+      const json = stringify(value)
       return json === undefined ? String(value) : json
     } catch {
       return String(value)
@@ -100,6 +103,7 @@ export function pageMain(
 
   const args = JSON.parse(argsJson) as {
     nonce: string
+    token: string
     op: 'snapshot' | 'press' | 'fill' | 'waitFor'
     allowed: string[]
     target?: Target
@@ -112,8 +116,8 @@ export function pageMain(
       post(
         JSON.stringify(
           ok
-            ? { __agentBridge: 1, kind: 'reply', nonce: args.nonce, origin, ok, result: payload }
-            : { __agentBridge: 1, kind: 'reply', nonce: args.nonce, origin, ok, error: payload },
+            ? { __agentBridge: 1, t: args.token, kind: 'reply', nonce: args.nonce, origin, ok, result: payload }
+            : { __agentBridge: 1, t: args.token, kind: 'reply', nonce: args.nonce, origin, ok, error: payload },
         ),
       )
     } catch {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import { settle } from '../runtime/screen/settle'
 import type { Tools } from '../runtime/types'
@@ -43,6 +43,9 @@ export function useWebViewTools(
 ) {
   const host = useMemo(() => register(ref, options), [ref, options.name])
   host.entry.options = options
+  // The token changes after a page that isn't allowed: render the new props.
+  const [version, setVersion] = useState(0)
+  host.entry.onRotate = () => setVersion((v) => v + 1)
   useEffect(() => {
     host.mount()
     return host.dispose
@@ -51,7 +54,7 @@ export function useWebViewTools(
   useEffect(() => host.mount())
   const props = useMemo(
     () => host.props(),
-    [host, options.injectedJavaScriptBeforeDocumentLoaded],
+    [host, version, options.injectedJavaScriptBeforeContentLoaded],
   )
   return { props, wrap: host.wrap }
 }

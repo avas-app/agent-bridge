@@ -29,8 +29,8 @@ export type WebViewOptions = {
   /** Origins besides the page the WebView first loads that may be read and driven, e.g. `https://pay.example.com`. */
   allowedOrigins?: string[]
   redact?: WebViewRedact
-  /** Your own `injectedJavaScriptBeforeDocumentLoaded`; it runs after the adapter's. */
-  injectedJavaScriptBeforeDocumentLoaded?: string
+  /** Your own `injectedJavaScriptBeforeContentLoaded`; it runs after the adapter's. */
+  injectedJavaScriptBeforeContentLoaded?: string
   /** The adapter listens to these; pass yours here so spreading `props` doesn't replace them. */
   onLoadStart?: (event: NativeEvent) => void
   onLoadEnd?: (event: NativeEvent) => void
@@ -73,6 +73,10 @@ export type Entry = {
   /** Native reported the current document finished loading. */
   nativeLoaded: boolean
   warnedDuplicate: boolean
+  /** Secret shared with the main-frame script; every adapter message must carry it. */
+  token: string
+  /** Called when the token changes, so the hook renders the new props. */
+  onRotate: (() => void) | undefined
   onHandshake: Set<() => void>
   log: MessageEntry[]
   pending: Map<string, Pending>
@@ -236,7 +240,10 @@ const randomNonce = (): string => {
 }
 
 // The page-side functions, as source: the fixed scripts.
-const BOOT = `(${bootMain.toString()})(window,function(s){window.ReactNativeWebView.postMessage(s)});true;`
+// The token is a literal inside this script and never reaches `window`. The
+// native postMessage is captured now, before the page's own scripts run.
+const bootScript = (token: string) =>
+  `(function(){var rn=window.ReactNativeWebView,p=rn&&rn.postMessage&&rn.postMessage.bind(rn);(${bootMain.toString()})(window,function(s){(p||window.ReactNativeWebView.postMessage.bind(window.ReactNativeWebView))(s)},${JSON.stringify(token)})})();true;`
 const PAGE = pageMain.toString()
 
 /** JSON as a JS string literal, safe in any engine (U+2028/2029 escaped). */
@@ -322,6 +329,11 @@ function navigated(entry: Entry, url: string | undefined): void {
   }
 }
 
+function rotateToken(entry: Entry): void {
+  entry.token = randomNonce()
+  entry.onRotate?.()
+}
+
 /** What native code says about the top-level page. */
 function seeNative(
   entry: Entry,
@@ -333,6 +345,9 @@ function seeNative(
   const origin = originOf(info.url)
   entry.initialOrigin ??= origin
   if (kind === 'start' || origin !== entry.origin) navigated(entry, info.url)
+  // A page that isn't allowed ran the script that carries the token, so it
+  // may have seen it: the next pages get a new one.
+  if (!isAllowed(entry, origin) && kind !== 'message') rotateToken(entry)
   else entry.url = info.url
   if (kind === 'end') {
     entry.nativeLoaded = true
@@ -349,6 +364,8 @@ function onOwnMessage(
 ): void {
   // Only what native code says counts: the page's own claims about where it is
   // are ignored. From anywhere but an allowed top-level page, nothing is used.
+  // Forged by a frame that never saw the token, or left over from before a rotation.
+  if (message.t !== entry.token) return
   if (!seeNative(entry, event, 'message')) return
   if (!isAllowed(entry, entry.origin)) return
   const url = event.nativeEvent?.url as string
@@ -391,6 +408,8 @@ export function register(ref: Ref, options: WebViewOptions) {
     handshake: false,
     nativeLoaded: false,
     warnedDuplicate: false,
+    token: randomNonce(),
+    onRotate: undefined,
     onHandshake: new Set(),
     log: [],
     pending: new Map(),
@@ -414,7 +433,9 @@ export function register(ref: Ref, options: WebViewOptions) {
   // The props to spread: the boot script, and the load events that tell the
   // adapter, from native code, which page it is talking to.
   const props = () => ({
-    injectedJavaScriptBeforeDocumentLoaded: `${webViewMark(entry.options.name)}${BOOT}${entry.options.injectedJavaScriptBeforeDocumentLoaded ?? ''}`,
+    injectedJavaScriptBeforeContentLoaded: `${webViewMark(entry.options.name)}${bootScript(entry.token)}${entry.options.injectedJavaScriptBeforeContentLoaded ?? ''}`,
+    // Forced: in a sub-frame the script's token would be in reach of a page that isn't the app's.
+    injectedJavaScriptBeforeContentLoadedForMainFrameOnly: true as const,
     onLoadStart: (event: NativeEvent) => {
       seeNative(entry, event, 'start')
       entry.options.onLoadStart?.(event)
@@ -475,7 +496,7 @@ export const notAllowed = (entry: Entry) =>
 const handshakeError = (entry: Entry) =>
   new Error(
     entry.nativeLoaded
-      ? `WebView "${entry.options.name}" loaded but its page script did not check in. Spread useWebViewTools' props and pass wrap(onMessage) as onMessage; if you set your own injectedJavaScriptBeforeDocumentLoaded, pass it through useWebViewTools options instead`
+      ? `WebView "${entry.options.name}" loaded but its page script did not check in. Spread useWebViewTools' props and pass wrap(onMessage) as onMessage; if you set your own injectedJavaScriptBeforeContentLoaded, pass it through useWebViewTools options instead`
       : `WebView "${entry.options.name}" is still loading`,
   )
 
@@ -533,7 +554,7 @@ export async function callPage(
   requireVerified(entry)
   const allowed = allowedOrigins(entry)
   const nonce = randomNonce()
-  const script = callScript(JSON.stringify({ ...args, op, nonce, allowed }))
+  const script = callScript(JSON.stringify({ ...args, op, nonce, allowed, token: entry.token }))
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       entry.pending.delete(nonce)
