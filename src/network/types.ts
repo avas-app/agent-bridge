@@ -40,6 +40,8 @@ export type MockOptions = {
   times?: number
   /** Wait before answering. */
   delayMs?: number
+  /** Higher is tried first, whatever its age. Default 0; ties go to the newest. Negative makes a fallback. */
+  priority?: number
   /** Registering again with the same id replaces the mock (handy with Fast Refresh). */
   id?: string
 }
@@ -54,6 +56,8 @@ export type LogEntry = {
   id: number
   method: string
   url: string
+  /** When the request started, epoch ms (the app's clock). */
+  startedAt: number
   status?: number
   ms: number
   pending?: boolean

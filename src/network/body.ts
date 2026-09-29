@@ -1,17 +1,22 @@
 const MAX_BODY = 2048
+/** The most of one body kept for `net.entry`; beyond it a body can't become a mock. */
+export const MAX_FULL_BODY = 1_000_000
 
-/** Body text for the log: JSON re-serialised compactly, cut at ~2 KB. */
-export function formatBody(text: string | undefined): string | undefined {
+/** Body text for the log: JSON re-serialised compactly. */
+export function compactBody(text: string | undefined): string | undefined {
   if (text === undefined || text === '') return undefined
-  let out = text
   try {
-    out = JSON.stringify(JSON.parse(text))
+    return JSON.stringify(JSON.parse(text))
   } catch {
-    // not JSON; keep the text as it is
+    return text // not JSON; keep the text as it is
   }
-  return out.length > MAX_BODY
-    ? `${out.slice(0, MAX_BODY)}… (+${out.length - MAX_BODY} chars)`
-    : out
+}
+
+/** Cuts a compact body at ~2 KB, saying how much is left out. */
+export function truncateBody(text: string): string {
+  return text.length > MAX_BODY
+    ? `${text.slice(0, MAX_BODY)}… (+${text.length - MAX_BODY} chars)`
+    : text
 }
 
 /** A request body as text, or a short label for binary bodies. */

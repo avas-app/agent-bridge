@@ -1,3 +1,4 @@
+import { compactBody, MAX_FULL_BODY, truncateBody } from './body'
 import type {
   LogEntry,
   MockHandler,
@@ -19,6 +20,7 @@ export type Mock = {
   response: MockResponse | MockHandler
   times?: number
   delayMs: number
+  priority: number
   hits: number
   seq: number
   test: (method: string, url: string) => boolean
@@ -129,18 +131,50 @@ export function deriveDevHost(): string | null {
 
 // ---- the log ----
 
+type FullBodies = {
+  requestBody?: string
+  responseBody?: string
+  /** A body was cut at MAX_FULL_BODY, so it can't stand in for the real one. */
+  cut?: boolean
+}
+
+/** Untruncated bodies, kept off the entries so `net.log` stays small. */
+const FULL = new WeakMap<LogEntry, FullBodies>()
+
+function keepBody(
+  entry: LogEntry,
+  key: 'requestBody' | 'responseBody',
+  text: string | undefined,
+): void {
+  const body = compactBody(text)
+  if (body === undefined) return
+  entry[key] = truncateBody(body)
+  const full = FULL.get(entry) ?? {}
+  if (body.length > MAX_FULL_BODY) {
+    full[key] = body.slice(0, MAX_FULL_BODY)
+    full.cut = true
+  } else full[key] = body
+  FULL.set(entry, full)
+}
+
+/** Sets the response body from its raw text: compact, cut for the log, whole for `net.entry`. */
+export function setResponseBody(entry: LogEntry, text: string | undefined): void {
+  keepBody(entry, 'responseBody', text)
+}
+
 export function startEntry(
   state: NetworkState,
-  fields: Pick<LogEntry, 'method' | 'url' | 'requestBody'>,
-): LogEntry & { started: number } {
-  const entry = {
+  fields: { method: string; url: string; requestBody?: string },
+): LogEntry {
+  const entry: LogEntry = {
     id: state.nextLogId++,
-    ...fields,
+    method: fields.method,
+    url: fields.url,
+    startedAt: Date.now(),
     ms: 0,
     pending: true,
-    started: Date.now(),
   }
-  if (entry.requestBody === undefined) delete entry.requestBody
+  keepBody(entry, 'requestBody', fields.requestBody)
   state.log.push(entry)
   if (state.log.length > LOG_SIZE)
     state.log.splice(0, state.log.length - LOG_SIZE)
@@ -148,22 +182,33 @@ export function startEntry(
 }
 
 export function finishEntry(
-  entry: LogEntry & { started: number },
+  entry: LogEntry,
   fields: Pick<LogEntry, 'status' | 'error' | 'responseBody'>,
 ): void {
-  entry.ms = Date.now() - entry.started
+  entry.ms = Date.now() - entry.startedAt
   delete entry.pending
-  for (const [key, value] of Object.entries(fields))
+  const { responseBody, ...rest } = fields
+  for (const [key, value] of Object.entries(rest))
     if (value !== undefined) (entry as Record<string, unknown>)[key] = value
+  keepBody(entry, 'responseBody', responseBody)
 }
 
-/** Copies without bookkeeping, pending ones with their time so far. */
-export function publicEntry(entry: LogEntry): LogEntry {
-  const { started, ...rest } = entry as LogEntry & { started?: number }
-  return rest.pending && started !== undefined
-    ? { ...rest, ms: Date.now() - started }
-    : rest
+/** A copy, pending ones with their time so far; `full` puts the untruncated bodies back. */
+export function publicEntry(entry: LogEntry, full = false): LogEntry {
+  const out = entry.pending ? { ...entry, ms: Date.now() - entry.startedAt } : { ...entry }
+  if (full) {
+    const { requestBody, responseBody } = FULL.get(entry) ?? {}
+    if (requestBody !== undefined) out.requestBody = requestBody
+    if (responseBody !== undefined) out.responseBody = responseBody
+  }
+  return out
 }
+
+/** The whole response body of a logged request, and whether it was cut short. */
+export const fullResponse = (entry: LogEntry) => ({
+  body: FULL.get(entry)?.responseBody,
+  cut: FULL.get(entry)?.cut === true,
+})
 
 // ---- mocks ----
 
@@ -204,6 +249,7 @@ export function addMock(
     response,
     times: options.times,
     delayMs: options.delayMs ?? 0,
+    priority: options.priority ?? 0,
     hits: 0,
     seq,
     test: compileMatch(match),
@@ -221,9 +267,26 @@ export function removeMocks(
   return before - state.mocks.length
 }
 
-/** The order mocks get a say in: agent before app, newest first. */
+/** The order mocks get a say in: highest priority, then agent before app, then newest first. */
 export const mockOrder = (a: Mock, b: Mock) =>
-  Number(b.source === 'agent') - Number(a.source === 'agent') || b.seq - a.seq
+  b.priority - a.priority ||
+  Number(b.source === 'agent') - Number(a.source === 'agent') ||
+  b.seq - a.seq
+
+/** Agent mocks the new one is tried before and would also answer, judged by their URL substring. */
+export function shadowedMocks(state: NetworkState, added: Mock): Mock[] {
+  return state.mocks.filter((old) => {
+    if (old === added || old.source !== 'agent' || mockOrder(added, old) >= 0)
+      return false
+    const spec = typeof old.match === 'string' ? { url: old.match } : old.match
+    if (typeof spec.url !== 'string') return false
+    const method = spec.method?.toUpperCase()
+    // An old mock for any method is shadowed only by a new one for any method.
+    if (!method && typeof added.match !== 'string' && added.match.method)
+      return false
+    return added.test(method ?? 'GET', spec.url)
+  })
+}
 
 export function matchingMocks(
   state: NetworkState,

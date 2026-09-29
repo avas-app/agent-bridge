@@ -1,4 +1,4 @@
-import { bodyText, errorMessage, formatBody } from './body'
+import { bodyText, errorMessage } from './body'
 import {
   answer,
   blockedResponse,
@@ -15,7 +15,7 @@ import {
 } from './state'
 import type { LogEntry, MockResponse } from './types'
 
-type Entry = LogEntry & { started: number }
+type Entry = LogEntry
 type Meta = {
   method: string
   url: string
@@ -59,7 +59,7 @@ function track(xhr: XMLHttpRequest, entry: Entry): void {
     finishEntry(entry, {
       status: error ? undefined : xhr.status,
       error,
-      responseBody: error ? undefined : formatBody(responseTextOf(xhr)),
+      responseBody: error ? undefined : responseTextOf(xhr),
     })
   })
 }
@@ -167,7 +167,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
     const entry = startEntry(state, {
       method,
       url,
-      requestBody: formatBody(text),
+      requestBody: text,
     })
     // No mock answered: the network, or strict mode's error response.
     const passOn = () => {
@@ -182,7 +182,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
         entry,
         isOffline(blocked)
           ? { error: `${OFFLINE_MESSAGE} (strict network)` }
-          : { status, responseBody: formatBody(out) },
+          : { status, responseBody: out },
       )
       // Answered after send returns, as a real response would be.
       void Promise.resolve().then(() => {
@@ -209,7 +209,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
           entry,
           offline
             ? { error: `${OFFLINE_MESSAGE} (mocked offline)` }
-            : { status, responseBody: formatBody(out) },
+            : { status, responseBody: out },
         )
         respond(this, hit.response, url)
       },

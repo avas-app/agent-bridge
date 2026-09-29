@@ -1,4 +1,4 @@
-import { bodyText, errorMessage, formatBody, isTextual } from './body'
+import { bodyText, errorMessage, isTextual } from './body'
 import type { MockResponse } from './types'
 import {
   answer,
@@ -12,6 +12,7 @@ import {
   OFFLINE_MESSAGE,
   responseParts,
   sleep,
+  setResponseBody,
   startEntry,
 } from './state'
 
@@ -99,7 +100,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     const entry = startEntry(state, {
       method,
       url,
-      requestBody: formatBody(requestBody),
+      requestBody,
     })
 
     const real = () => {
@@ -119,8 +120,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
               .clone()
               .text()
               .then((text) => {
-                const body = formatBody(text)
-                if (body !== undefined) entry.responseBody = body
+                setResponseBody(entry, text)
               })
               .catch(() => {})
           }
@@ -143,7 +143,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
         return Promise.reject(new TypeError(OFFLINE_MESSAGE))
       }
       const { status, text } = responseParts(blocked)
-      finishEntry(entry, { status, responseBody: formatBody(text) })
+      finishEntry(entry, { status, responseBody: text })
       return Promise.resolve(mockedResponse(blocked))
     }
 
@@ -185,7 +185,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
         throw new TypeError(OFFLINE_MESSAGE)
       }
       const { status, text } = responseParts(hit.response)
-      finishEntry(entry, { status, responseBody: formatBody(text) })
+      finishEntry(entry, { status, responseBody: text })
       return mockedResponse(hit.response)
     })
   }
