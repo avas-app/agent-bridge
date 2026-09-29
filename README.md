@@ -181,6 +181,22 @@ export default async ({ step }) => {
 
 `call` prints a result over 32 KB as a summary (`resultTooLarge`, size, shape, a hint) instead of flooding the terminal: pass `--out <file>` to write it to a file, or `--full` to print it. Flows and `connect()` always get the full value. To keep big values small at the source, `query.get` takes a last `{ pages: [from, to] }` (an infinite query's pages, `to` exclusive, with `totalPages`) or `{ path: "pages.0.items" }`, and `net.mocks` cuts response bodies over ~2 KB like `net.log` (`{ full: true }` returns them whole).
 
+### Batch and REPL
+
+For a sequence of ad-hoc calls where a flow file is too much, `call --batch` reads one call per line from stdin (`tool args`, args as in `call`; blank lines and `#` lines are skipped; arguments that start like JSON but don't parse are reported as an error line rather than sent as a string) and prints one JSON line per call over a single connection:
+
+```sh
+printf '%s\n' 'router.navigate /inbox' 'screen.waitFor "Inbox"' | agent-bridge call --batch
+# {"tool":"router.navigate","ok":true,"ms":1.8,"appMs":1,"value":{...}}
+# {"tool":"screen.waitFor","ok":false,"ms":2003.1,"error":"..."}
+```
+
+`ms` is the client's round trip and `appMs` the time inside the app. `logs` and `notice` (what `call` prints on stderr) are added when present. It uses the running session under the same rules as `call`, or one direct connection. `--stop-on-error` stops at the first failed call; the exit code is 1 if any call failed. Results over 32 KB are summarised (`--full` prints them); `--out <dir>` (a new or empty directory) writes each call's full result to `<dir>/<n>-<tool>.json` and puts the file summary in `value`. Lines starting with `.` are the REPL's dot commands, run locally (`.tools`, `.time`, `.pending`, `.restore`, `.exit`), never sent to the app. Exiting early (`--stop-on-error`, or the reader closing stdout) doesn't wait for stdin.
+
+`agent-bridge repl` is the same loop with a prompt: history (`~/.agent-bridge/repl_history`, last 500 lines, saved as you type), tab completion of tool names and dot commands, pretty-printed values with their timings, and errors in red. Dot commands: `.help`, `.tools [prefix]`, `.time <call> [xN]` (N runs, min/median/max), `.pending`, `.restore`, `.exit`. Ctrl-C clears the line, or, during a call or `.time`, stops waiting for it (the app may still finish the call); Ctrl-D or `.exit` leaves. `.time` runs at most 1000 times. When stdin is not a terminal, `repl` behaves exactly like `call --batch`, so piping into it is safe; prompt and colours also need stdout to be a terminal. `repl` takes no `--out`.
+
+Measured against the fake Metro used in the tests (Node 24, the built CLI, 30 calls): 665 ms per call for separate `call`s, 54 ms per call with a session running; a batch of 30 through a session took 80 ms in total (about 2.7 ms per call, one process start included), and a direct batch adds about 0.3 ms per call after its single 660 ms start.
+
 A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas that had something to undo) in the next call's output, failed or not, and in `session stop`, because the old runtime's undo state is gone.
 
 ```ts

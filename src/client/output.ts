@@ -35,6 +35,43 @@ export type RenderOptions = {
   out?: string
   full?: boolean
   limit?: number
+  /** What `--out` names in the hint of a summary. */
+  outKind?: 'file' | 'dir'
+}
+
+const fileSummary = (file: string, bytes: number, value: unknown) => ({
+  file,
+  bytes,
+  size: kb(bytes),
+  shape: shapeOf(value),
+})
+
+const tooLarge = (
+  bytes: number,
+  value: unknown,
+  outKind: 'file' | 'dir' = 'file',
+) => ({
+  resultTooLarge: true,
+  bytes,
+  size: kb(bytes),
+  shape: shapeOf(value),
+  hint: `Not printed: the result is ${kb(bytes)}. Re-run with --out <${outKind === 'dir' ? 'dir' : 'file'}> to write it to a ${outKind === 'dir' ? 'file in that directory' : 'file'}, or --full to print it, or narrow the call (a path, a filter, a smaller page).`,
+})
+
+/** What `call` prints for a value, before formatting: the value itself, or, when it is big or goes to a file, a summary. */
+export async function shapedResult(
+  value: unknown,
+  options: RenderOptions = {},
+): Promise<unknown> {
+  const json = JSON.stringify(value, null, 2) ?? 'null'
+  const bytes = Buffer.byteLength(json)
+  if (options.out) {
+    await writeFile(options.out, `${json}\n`)
+    return fileSummary(options.out, bytes, value)
+  }
+  if (options.full || bytes <= (options.limit ?? OUTPUT_LIMIT_BYTES))
+    return value === undefined ? null : value
+  return tooLarge(bytes, value, options.outKind)
 }
 
 /** The text `call` prints for a value: the JSON itself, or, when it is big, a summary that is JSON too. */
@@ -46,23 +83,9 @@ export async function renderResult(
   const bytes = Buffer.byteLength(json)
   if (options.out) {
     await writeFile(options.out, `${json}\n`)
-    return JSON.stringify(
-      { file: options.out, bytes, size: kb(bytes), shape: shapeOf(value) },
-      null,
-      2,
-    )
+    return JSON.stringify(fileSummary(options.out, bytes, value), null, 2)
   }
   if (options.full || bytes <= (options.limit ?? OUTPUT_LIMIT_BYTES))
     return json
-  return JSON.stringify(
-    {
-      resultTooLarge: true,
-      bytes,
-      size: kb(bytes),
-      shape: shapeOf(value),
-      hint: `Not printed: the result is ${kb(bytes)}. Re-run with --out <file> to write it to a file, or --full to print it, or narrow the call (a path, a filter, a smaller page).`,
-    },
-    null,
-    2,
-  )
+  return JSON.stringify(tooLarge(bytes, value), null, 2)
 }

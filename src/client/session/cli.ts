@@ -35,7 +35,7 @@ export type SessionFlags = {
   'no-session'?: boolean
 }
 
-/** The session `call`, `tools` and `run` should go through, or null to connect directly. */
+/** The session `call`, `tools`, `repl` and `run` should go through, or null to connect directly. */
 export function sessionFor(flags: SessionFlags): SessionState | null {
   if (flags['no-session']) return null
   return pickSession({
@@ -139,7 +139,7 @@ async function start(flags: SessionFlags) {
     `Session "${state.name}": ${state.device.name} via ${state.transport}${idle}`,
   )
   console.log(
-    '`call`, `tools` and `run` go through it; `agent-bridge session stop` undoes and ends it.',
+    '`call`, `tools`, `repl` and `run` go through it; `agent-bridge session stop` undoes and ends it.',
   )
 }
 
