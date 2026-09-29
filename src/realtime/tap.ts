@@ -35,6 +35,8 @@ export type RealtimeTapOptions<M> = {
    * agent passed after the channel. Defaults to the first value.
    */
   toMessage?: (values: unknown[], context: { channel: string; id: string }) => M
+  /** What to pass to `realtime.emit` for this library, appended to its description. */
+  emitUsage?: string
   /** Extra fields for `realtime.channels`, e.g. the library's channel state. */
   channelInfo?: (channel: string) => Record<string, unknown>
   /** Adds `realtime.connection`, to fake connection states. */
@@ -241,7 +243,8 @@ export function createRealtimeTap<M = unknown>(
     },
     [`${ns}.emit`]: {
       description:
-        'Deliver a fake message to every listener on a channel: [channel, message]. Runs the app\'s own handlers. Returns { id, delivered }.',
+        'Deliver a fake message to every listener on a channel: [channel, message]. Runs the app\'s own handlers. Returns { id, delivered }.' +
+        (options.emitUsage ? ` ${options.emitUsage}` : ''),
       run: (channel: string, ...values: unknown[]) => {
         const entries = channels.get(channel)
         if (!entries?.size)

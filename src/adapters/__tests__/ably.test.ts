@@ -56,6 +56,68 @@ describe('ablyTools', () => {
     ])
   })
 
+  test('an injected message has the fields of one ably-js decodes off the wire', async () => {
+    const { tools, channel } = setup()
+    const a = mock()
+    await channel('chat').subscribe(a)
+
+    const real = await Ably.Realtime.Message.fromEncoded({
+      id: 'wire:0:0',
+      name: 'typing',
+      data: { user: 'sam' },
+      timestamp: 5,
+      clientId: 'c',
+      connectionId: 'k',
+      extras: { headers: { h: 'v' } },
+      serial: 's',
+      version: { serial: 's', timestamp: 5 },
+    })
+    run(tools, 'realtime.emit', 'chat', {
+      name: 'typing',
+      data: { user: 'sam' },
+      clientId: 'c',
+      connectionId: 'k',
+      extras: { headers: { h: 'v' } },
+      serial: 's',
+    })
+    const injected = a.mock.calls[0]![0] as Record<string, unknown>
+    const own = (m: object) => Object.keys(m).filter((k) => typeof (m as never)[k] !== 'function').sort()
+    expect(own(injected)).toEqual(own(real).filter((k) => k !== 'encoding'))
+    expect(injected).toMatchObject({
+      name: 'typing',
+      action: real.action,
+      annotations: real.annotations,
+      data: real.data,
+      extras: real.extras,
+      clientId: 'c',
+      connectionId: 'k',
+      id: 'agent-bridge-1',
+      serial: 's',
+      timestamp: expect.any(Number),
+      version: { serial: 's', timestamp: injected.timestamp },
+    })
+  })
+
+  test('version follows the passed serial and timestamp; serial defaults per message', async () => {
+    const { tools, channel } = setup()
+    const a = mock()
+    await channel('chat').subscribe(a)
+    run(tools, 'realtime.emit', 'chat', { name: 'x', timestamp: 5, serial: 's' })
+    run(tools, 'realtime.emit', 'chat', { name: 'x' })
+    run(tools, 'realtime.emit', 'chat', { name: 'x', event: 'y' })
+    const [first, second, third] = a.mock.calls.map((c) => c[0] as Record<string, unknown>)
+    expect(first!.version).toEqual({ serial: 's', timestamp: 5 })
+    expect(second!.serial).toBe('agent-bridge-2')
+    expect(second!.version).toEqual({ serial: second!.serial, timestamp: second!.timestamp })
+    expect(third).not.toHaveProperty('event')
+  })
+
+  test('rejects "event", which Ably messages do not have', async () => {
+    const { tools, channel } = setup()
+    await channel('chat').subscribe(mock())
+    expect(() => run(tools, 'realtime.emit', 'chat', { event: 'typing' })).toThrow('"name", not "event"')
+  })
+
   test('honours event-name filters for injected messages', async () => {
     const { tools, channel } = setup()
     const typing = mock()
