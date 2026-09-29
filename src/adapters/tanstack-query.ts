@@ -1,6 +1,7 @@
 import { hashKey, type QueryClient, type QueryKey } from '@tanstack/query-core'
 
 import type { Tools } from '../runtime/types'
+import { trackMockedQueries } from './query-mocked'
 
 type PinState = {
   pins: Map<string, { key: QueryKey; data: unknown }>
@@ -120,6 +121,8 @@ export function queryTools(queryClient: QueryClient): Tools {
     return true
   }
 
+  const mocked = trackMockedQueries(queryClient, (hash) => pins.has(hash))
+
   return {
     'query.list': {
       description:
@@ -220,9 +223,9 @@ export function queryTools(queryClient: QueryClient): Tools {
     },
     'query.restore': {
       maxArgs: 0,
-      pending: () => pins.size > 0 || state.changed.size > 0,
+      pending: () => pins.size > 0 || state.changed.size > 0 || mocked.pending(),
       description:
-        'Undo the agent: unpin everything and refetch real data for keys changed with query.set.',
+        'Undo the agent: unpin everything, refetch real data for keys changed with query.set, and reset queries that fetched while a net.mock answered (net.unmock and net.restore do this too). Returns { unpinned, refetched, mockedCleared }.',
       run: async () => {
         const unpinned = [...pins.values()].map((p) => p.key)
         const changed = [...state.changed]
@@ -234,8 +237,10 @@ export function queryTools(queryClient: QueryClient): Tools {
         state.unsubscribe = null
         for (const key of unpinned) refetchReal(key)
         const refetched = changed.filter((key) => refetchReal(key)).length
+        mocked.clear()
+        const mockedCleared = mocked.takeCleared()
         await rendered()
-        return { unpinned: unpinned.length, refetched }
+        return { unpinned: unpinned.length, refetched, mockedCleared }
       },
     },
     'query.invalidate': {

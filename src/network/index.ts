@@ -1,4 +1,5 @@
 import type { Tools } from '../runtime/types'
+import { signalMocksRemoved } from '../shared/mock-signal'
 import { type ApiRoutes, apiRoutes, type MockApiOptions } from './api'
 import { patchFetch } from './fetch'
 import {
@@ -244,9 +245,16 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
     },
     'net.unmock': {
       description:
-        'Remove one agent mock by id, or every agent mock when no id. Returns how many.',
-      run: (id?: string) =>
-        removeMocks(state, (m) => isAgent(m) && (id === undefined || m.id === id)),
+        'Remove one agent mock by id, or every agent mock when no id. Returns how many. With the query adapter, queries that fetched while the mock answered are reset, so its fake data can\'t outlive it.',
+      run: (id?: string) => {
+        const removed = state.mocks.filter(
+          (m) => isAgent(m) && (id === undefined || m.id === id),
+        )
+        const count = removeMocks(state, (m) => removed.includes(m))
+        // A spent mock (times) is already gone, so the id alone still counts.
+        signalMocksRemoved(id === undefined ? undefined : [id])
+        return count
+      },
     },
     'net.strict': {
       description:
@@ -280,10 +288,12 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
     'net.restore': {
       pending: () => state.strictAgent !== null || state.mocks.some(isAgent),
       description:
-        "Undo the agent's network changes: remove agent mocks and its net.strict setting, keep the app's. Returns how many mocks were removed.",
+        "Undo the agent's network changes: remove agent mocks and its net.strict setting, keep the app's. Returns how many mocks were removed. With the query adapter, queries that fetched while an agent mock answered are reset (query.restore reports how many).",
       run: () => {
         state.strictAgent = null
-        return removeMocks(state, isAgent)
+        const count = removeMocks(state, isAgent)
+        signalMocksRemoved()
+        return count
       },
     },
   }

@@ -1,3 +1,4 @@
+import { signalRequestStarted } from '../shared/mock-signal'
 import { compactBody, FULL_BUDGET, MAX_FULL_BODY, truncateBody } from './body'
 import type {
   LogEntry,
@@ -221,6 +222,7 @@ export function startEntry(
   }
   keepRequestBody(entry, fields.requestBody)
   state.log.push(entry)
+  signalRequestStarted(entry.id)
   if (state.log.length > LOG_SIZE)
     state.log.splice(0, state.log.length - LOG_SIZE)
   return entry

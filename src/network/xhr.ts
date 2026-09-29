@@ -1,3 +1,4 @@
+import { signalMockAnswered } from '../shared/mock-signal'
 import { bodyText, errorMessage } from './body'
 import {
   answer,
@@ -204,6 +205,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
       async (hit) => {
         if (!hit) return passOn()
         entry.mocked = true
+        if (hit.mock.source === 'agent') signalMockAnswered(hit.mock.id, entry.id)
         await sleep(hit.mock.delayMs)
         if (meta.aborted) {
           finishEntry(entry, { error: 'aborted' })
