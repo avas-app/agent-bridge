@@ -83,8 +83,15 @@ npx agent-bridge call store.call '["settings", "setTheme", "dark"]'
 npx agent-bridge call router.navigate /inbox
 npx agent-bridge call router.current
 npx agent-bridge call net.mock '["/inbox", {"status": 500}]'   # or {"offline": true}
-npx agent-bridge call net.log
+npx agent-bridge call net.log '[{"since": 1700000000000}]'     # entries carry startedAt (epoch ms)
+npx agent-bridge call net.entry 3                              # one request, bodies whole
+npx agent-bridge call net.mockFromLog '[3, {"user": {"name": "Moss"}}]'  # a real response, patched
 ```
+
+`net.log` cuts bodies at about 2 KB; use `net.entry <id>` (or `{"full": true}`)
+for the whole thing. The newest mock is tried first, so a later broad mock
+shadows an earlier specific one: give the specific one `{"priority": 1}` as
+`net.mock`'s third argument, or read `shadows` in its result.
 
 Arguments are a JSON array (or a single JSON value): the array is spread into
 the tool's arguments. Read the current value first and change only what you need:

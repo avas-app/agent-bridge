@@ -141,10 +141,224 @@ describe('log', () => {
   })
 })
 
+describe('log entries', () => {
+  beforeEach(() => {
+    network('web')
+    tools = networkTools()
+  })
+
+  test('startedAt is epoch ms and since filters on it', async () => {
+    const before = Date.now()
+    await fetch(`${API}/a`)
+    await tick(20)
+    const mid = Date.now()
+    await fetch(`${API}/b`)
+    const all = log()
+    expect(all[1]!.startedAt).toBeGreaterThanOrEqual(before)
+    expect(all[0]!.startedAt).toBeGreaterThanOrEqual(mid)
+    expect(log({ since: mid }).map((e) => e.url)).toEqual([`${API}/b`])
+    expect(log({ since: before })).toHaveLength(2)
+  })
+
+  test('full: true and net.entry return whole bodies', async () => {
+    const big = JSON.stringify({ items: 'x'.repeat(5000) })
+    server.handle = () => ({ status: 200, body: big })
+    await fetch(`${API}/big`, { method: 'POST', body: JSON.stringify({ q: 'y'.repeat(3000) }) })
+    await tick()
+    const id = log()[0]!.id
+    expect(log()[0]!.responseBody).toContain('… (+')
+    expect(log({ full: true })[0]!.responseBody).toBe(big)
+    expect(log({ full: true })[0]!.requestBody).toHaveLength(3000 + 8)
+    const entry = run(tools, 'net.entry', id) as LogEntry
+    expect(entry.responseBody).toBe(big)
+    expect(() => run(tools, 'net.entry', 999)).toThrow('No logged request')
+  })
+
+  test('net.mockFromLog mocks a logged response, with a deep patch', async () => {
+    server.handle = () => ({
+      status: 201,
+      body: JSON.stringify({ user: { name: 'Fern', tags: ['a'], pad: 'x'.repeat(3000) }, ok: true }),
+    })
+    await fetch(`${API}/me?x=1`)
+    await tick()
+    const id = log()[0]!.id
+    server.handle = () => ({ status: 500, body: 'down' })
+    run(tools, 'net.mockFromLog', id, { user: { name: 'Moss', tags: ['b'] } })
+    const res = await fetch(`${API}/me?x=1`)
+    expect(res.status).toBe(201)
+    const json = (await res.json()) as { user: Record<string, unknown>; ok: boolean }
+    expect(json.user).toEqual({ name: 'Moss', tags: ['b'], pad: 'x'.repeat(3000) })
+    expect(json.ok).toBe(true)
+    // the mock is for that URL only, and for that method
+    expect((await fetch(`${API}/me?x=12`)).status).toBe(500)
+    expect((await fetch(`${API}/me?x=1`, { method: 'POST' })).status).toBe(500)
+  })
+
+  test('net.mockFromLog refuses what it cannot copy', async () => {
+    server.handle = () => ({ status: 200, body: 'plain' })
+    await fetch(`${API}/t`)
+    await tick()
+    const id = log()[0]!.id
+    expect(() => run(tools, 'net.mockFromLog', id, { a: 1 })).toThrow('not JSON')
+    run(tools, 'net.mockFromLog', id)
+    expect(await (await fetch(`${API}/t`)).text()).toBe('plain')
+    run(tools, 'net.mock', '/fails', { offline: true })
+    await fetch(`${API}/fails`).catch(() => {})
+    expect(() => run(tools, 'net.mockFromLog', log()[0]!.id)).toThrow('no response')
+  })
+})
+
+describe('whole bodies', () => {
+  const entry = (id: number) => run(tools, 'net.entry', id) as LogEntry
+  const failsWith = (id: number, text: string) =>
+    expect(() => run(tools, 'net.mockFromLog', id)).toThrow(text)
+
+  beforeEach(() => {
+    network('web')
+    tools = networkTools()
+  })
+
+  test('keeps the text as sent: a big id survives net.entry and the mock', async () => {
+    const raw = '{"id": 1234567890123456789, "n": 1}'
+    server.handle = () => ({ status: 200, body: raw })
+    await fetch(`${API}/big-int`)
+    await tick()
+    const id = log()[0]!.id
+    expect(log()[0]!.responseBody).toBe('{"id":1234567890123456789,"n":1}'.replace('1234567890123456789', '1234567890123456800'))
+    expect(entry(id).responseBody).toBe(raw)
+    run(tools, 'net.mockFromLog', id)
+    const res = await fetch(`${API}/big-int`)
+    expect(await res.text()).toBe(raw)
+    expect(res.headers.get('content-type')).toBe('application/json')
+  })
+
+  test('a body over 1 MB is not kept whole and cannot be mocked', async () => {
+    server.handle = () => ({ status: 200, body: JSON.stringify({ x: 'a'.repeat(1_000_001) }) })
+    await fetch(`${API}/huge`)
+    await tick()
+    const id = log()[0]!.id
+    expect(entry(id).truncated).toBe(true)
+    expect(entry(id).responseBody).toContain('… (+')
+    failsWith(id, 'too large')
+  })
+
+  test('the total kept is capped: oldest bodies go first, previews stay', async () => {
+    server.handle = () => ({ status: 200, body: JSON.stringify({ x: 'a'.repeat(900_000) }) })
+    for (let i = 0; i < 8; i++) await fetch(`${API}/poll/${i}`)
+    await tick(30)
+    const all = log({ limit: 100 }).reverse()
+    const oldest = all[0]!.id
+    const newest = all.at(-1)!.id
+    expect(entry(oldest).truncated).toBe(true)
+    expect(entry(oldest).responseBody).toContain('… (+')
+    failsWith(oldest, 'dropped')
+    expect(entry(newest).truncated).toBeUndefined()
+    expect(entry(newest).responseBody).toHaveLength(900_008)
+    const whole = all.filter((e) => !entry(e.id).truncated).length
+    expect(whole).toBeLessThanOrEqual(4)
+    expect(whole).toBeGreaterThan(0)
+  })
+
+  test('a fetch response that is not text is not copied', async () => {
+    resetNetworkState()
+    g.fetch = async () => new Response('PNG', { headers: { 'content-type': 'image/png' } })
+    tools = networkTools()
+    await fetch(`${API}/logo.png`)
+    await tick()
+    failsWith(log()[0]!.id, 'not captured')
+  })
+
+  test('a response still being read is refused, then copied once read', async () => {
+    resetNetworkState()
+    g.fetch = async () =>
+      ({
+        status: 200,
+        headers: { get: () => 'application/json' },
+        clone: () => ({ text: () => new Promise<string>((r) => setTimeout(() => r('{"a":1}'), 30)) }),
+      }) as unknown as Response
+    tools = networkTools()
+    await fetch(`${API}/slow`)
+    const id = log()[0]!.id
+    failsWith(id, 'still being read')
+    await tick(60)
+    run(tools, 'net.mockFromLog', id)
+    expect(await (await fetch(`${API}/slow`)).text()).toBe('{"a":1}')
+  })
+
+  test('an XHR blob response is not copied', async () => {
+    await sendXhr('GET', `${API}/file`, undefined, 'blob')
+    failsWith(log()[0]!.id, 'not captured')
+  })
+})
+
+describe('log filters', () => {
+  beforeEach(() => {
+    network('web')
+    tools = networkTools()
+  })
+
+  test('since rejects what is not an epoch time; sinceId filters by id', async () => {
+    await fetch(`${API}/a`)
+    await fetch(`${API}/b`)
+    const [b, a] = log()
+    expect(() => log({ since: 42 })).toThrow('epoch time')
+    expect(log({ sinceId: a!.id }).map((e) => e.id)).toEqual([b!.id])
+  })
+})
+
 describe('mocks', () => {
   beforeEach(() => {
     network('rn')
     tools = networkTools()
+  })
+
+  test('priority beats age, and a negative one is a fallback', async () => {
+    run(tools, 'net.mock', { url: '/ride/cancel', method: 'POST' }, { json: { ok: 'specific' } }, { priority: 1 })
+    run(tools, 'net.mock', { url: '/', method: 'POST' }, { json: { ok: 'generic' } })
+    run(tools, 'net.mock', '/ride', { json: { ok: 'fallback' } }, { priority: -1 })
+    const post = (path: string) => fetch(`${API}${path}`, { method: 'POST' }).then((r) => r.json())
+    expect(await post('/ride/cancel')).toEqual({ ok: 'specific' })
+    expect(await post('/other')).toEqual({ ok: 'generic' })
+    expect(await (await fetch(`${API}/ride/x`)).json()).toEqual({ ok: 'fallback' })
+    const listed = run(tools, 'net.mocks') as Array<{ priority?: number }>
+    expect(listed.map((m) => m.priority)).toEqual([1, undefined, -1])
+  })
+
+  test('an app mock with a priority still comes after agent mocks', async () => {
+    mock('/x', { body: 'app' }, { priority: 5 })
+    expect(await (await fetch(`${API}/x`)).text()).toBe('app')
+    run(tools, 'net.mock', '/x', { body: 'agent' })
+    expect(await (await fetch(`${API}/x`)).text()).toBe('agent')
+  })
+
+  test('priority must be a finite number', () => {
+    expect(() => run(tools, 'net.mock', '/x', { status: 200 }, { priority: 'high' })).toThrow('finite')
+    expect(() => run(tools, 'net.mock', '/x', { status: 200 }, { priority: NaN })).toThrow('finite')
+  })
+
+  test('shadows only reports certain cases', () => {
+    const add = (match: unknown, response: unknown) =>
+      run(tools, 'net.mock', match, response) as { id: string; shadows?: string[] }
+    const regex = add({ url: { regex: '^https://a/cancel$' } }, { status: 200 })
+    const anyMethod = add('/ride/cancel', { status: 200 })
+    // a regex old mock is never judged; a new mock for one method can't be sure of a method-less old one
+    expect(add({ url: '/', method: 'POST' }, { status: 200 }).shadows).toBeUndefined()
+    // a regex new mock isn't judged either
+    expect(add({ url: { regex: '/' } }, { status: 200 }).shadows).toBeUndefined()
+    const covering = add('/', { status: 200 })
+    expect(covering.shadows).toContain(anyMethod.id)
+    expect(covering.shadows).not.toContain(regex.id)
+  })
+
+  test('warns when a new mock shadows an earlier agent mock', () => {
+    const first = run(tools, 'net.mock', { url: '/ride/cancel', method: 'POST' }, { status: 200 }) as { id: string; shadows?: string[] }
+    expect(first.shadows).toBeUndefined()
+    const broad = run(tools, 'net.mock', { url: '/', method: 'POST' }, { status: 200 }) as { id: string; shadows?: string[] }
+    expect(broad.shadows).toEqual([first.id])
+    const other = run(tools, 'net.mock', { url: '/', method: 'GET' }, { status: 200 }) as { shadows?: string[] }
+    expect(other.shadows).toBeUndefined()
+    const lower = run(tools, 'net.mock', '/ride', { status: 200 }, { priority: -1 }) as { shadows?: string[] }
+    expect(lower.shadows).toBeUndefined()
   })
 
   test('answers from a mock, logged as mocked, without reaching the server', async () => {

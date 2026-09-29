@@ -1,8 +1,9 @@
-import { bodyText, errorMessage, formatBody, isTextual } from './body'
+import { bodyText, errorMessage, isTextual } from './body'
 import type { MockResponse } from './types'
 import {
   answer,
   blockedResponse,
+  contentTypeOf,
   finishEntry,
   isOffline,
   isSkipped,
@@ -12,6 +13,8 @@ import {
   OFFLINE_MESSAGE,
   responseParts,
   sleep,
+  markResponse,
+  setResponseBody,
   startEntry,
 } from './state'
 
@@ -99,7 +102,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     const entry = startEntry(state, {
       method,
       url,
-      requestBody: formatBody(requestBody),
+      requestBody,
     })
 
     const real = () => {
@@ -113,17 +116,15 @@ export function patchFetch(state: NetworkState): (() => void) | null {
       return promise.then(
         (res) => {
           finishEntry(entry, { status: res.status })
-          const type = res.headers?.get?.('content-type')
+          const type = res.headers?.get?.('content-type') ?? undefined
           if (isTextual(type) && typeof res.clone === 'function') {
+            markResponse(entry, 'pending')
             res
               .clone()
               .text()
-              .then((text) => {
-                const body = formatBody(text)
-                if (body !== undefined) entry.responseBody = body
-              })
-              .catch(() => {})
-          }
+              .then((text) => setResponseBody(entry, text, type))
+              .catch(() => markResponse(entry, 'none'))
+          } else markResponse(entry, 'none')
           return res
         },
         (error: unknown) => {
@@ -142,8 +143,8 @@ export function patchFetch(state: NetworkState): (() => void) | null {
         finishEntry(entry, { error: `${OFFLINE_MESSAGE} (strict network)` })
         return Promise.reject(new TypeError(OFFLINE_MESSAGE))
       }
-      const { status, text } = responseParts(blocked)
-      finishEntry(entry, { status, responseBody: formatBody(text) })
+      const { status, text, headers } = responseParts(blocked)
+      finishEntry(entry, { status, responseBody: text, contentType: contentTypeOf(headers) })
       return Promise.resolve(mockedResponse(blocked))
     }
 
@@ -184,8 +185,8 @@ export function patchFetch(state: NetworkState): (() => void) | null {
         finishEntry(entry, { error: `${OFFLINE_MESSAGE} (mocked offline)` })
         throw new TypeError(OFFLINE_MESSAGE)
       }
-      const { status, text } = responseParts(hit.response)
-      finishEntry(entry, { status, responseBody: formatBody(text) })
+      const { status, text, headers } = responseParts(hit.response)
+      finishEntry(entry, { status, responseBody: text, contentType: contentTypeOf(headers) })
       return mockedResponse(hit.response)
     })
   }

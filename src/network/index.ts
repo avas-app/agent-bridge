@@ -4,11 +4,13 @@ import { patchFetch } from './fetch'
 import {
   addMock,
   deriveDevHost,
+  fullResponse,
   type Mock,
   mockOrder,
   networkState,
   publicEntry,
   removeMocks,
+  shadowedMocks,
   strictRule,
   strictRules,
 } from './state'
@@ -38,7 +40,8 @@ export function installNetwork(): void {
 
 /**
  * Answers matching requests from the app's own code, e.g. a fake backend.
- * Agent mocks (from `net.mock`) take precedence; `net.restore` keeps these.
+ * Agent mocks (from `net.mock`) are tried first, whatever their priority;
+ * `net.restore` keeps these.
  */
 export function mock(
   match: MockMatch,
@@ -96,6 +99,19 @@ export type NetworkToolsOptions = {
   skip?: Array<string | RegExp>
 }
 
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const isPlain = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** Objects merge key by key; anything else in the patch replaces. */
+function deepMerge(base: unknown, patch: unknown): unknown {
+  if (!isPlain(base) || !isPlain(patch)) return patch
+  const out = { ...base }
+  for (const [key, value] of Object.entries(patch)) out[key] = deepMerge(base[key], value)
+  return out
+}
+
 const describeMock = (m: Mock) => ({
   id: m.id,
   source: m.source,
@@ -104,6 +120,7 @@ const describeMock = (m: Mock) => ({
   times: m.times,
   hits: m.hits,
   delayMs: m.delayMs || undefined,
+  priority: m.priority || undefined,
 })
 
 /** Read the request log and mock responses: `net.*`. */
@@ -112,36 +129,62 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
   const state = networkState()
   if (options.skip) state.skip = options.skip
   const isAgent = (m: Mock) => m.source === 'agent'
+  const logged = (id: number) => {
+    const entry = state.log.find((e) => e.id === id)
+    if (!entry) throw new Error(`No logged request with id ${id}; it may have left the log`)
+    return entry
+  }
+  const addAgentMock = (
+    match: MockMatch,
+    response: MockResponse,
+    { times, delayMs, priority }: Omit<MockOptions, 'id'>,
+  ) => {
+    const added = addMock(state, 'agent', match, response, { times, delayMs, priority })
+    const shadows = shadowedMocks(state, added).map((m) => m.id)
+    return shadows.length ? { id: added.id, shadows } : { id: added.id }
+  }
 
   return {
     'net.log': {
       description:
-        'Recent requests, newest first: method, url, status, ms, bodies (~2 KB), error, mocked. Filter by url substring or method; clear: true empties the log after reading.',
+        'Recent requests, newest first: method, url, startedAt (epoch ms), status, ms, bodies (~2 KB, cut with "… (+N chars)"), error, mocked. Filter by url substring, method, since (epoch ms: startedAt >= since) or sinceId (id > sinceId); full: true returns whole bodies (truncated: true when one is too large or gone); clear: true empties the log after reading. net.entry gets one request whole.',
       run: (
         filter: {
           url?: string
           method?: string
+          since?: number
+          sinceId?: number
           limit?: number
+          full?: boolean
           clear?: boolean
         } = {},
       ) => {
         const method = filter.method?.toUpperCase()
+        if (filter.since !== undefined && !(filter.since >= 1e11))
+          throw new Error('since is an epoch time in ms (e.g. Date.now()); use sinceId for log ids')
         const entries = state.log
           .filter(
             (e) =>
               (!filter.url || e.url.includes(filter.url)) &&
-              (!method || e.method === method),
+              (!method || e.method === method) &&
+              (filter.since === undefined || e.startedAt >= filter.since) &&
+              (filter.sinceId === undefined || e.id > filter.sinceId),
           )
           .reverse()
           .slice(0, filter.limit ?? 20)
-          .map(publicEntry)
+          .map((e) => publicEntry(e, filter.full))
         if (filter.clear) state.log.length = 0
         return entries
       },
     },
+    'net.entry': {
+      description:
+        'One logged request by id, with its request and response bodies whole (not cut at ~2 KB). Ids come from net.log.',
+      run: (id: number) => publicEntry(logged(id), true),
+    },
     'net.mock': {
       description:
-        'Answer matching requests with a canned response until unmocked. match: "/path" or { url: string | { regex }, method? }. response: { status?, json?, body?, headers? } or { offline: true }. options: { times?, delayMs? }.',
+        'Answer matching requests with a canned response until unmocked. match: "/path" or { url: string | { regex }, method? }. response: { status?, json?, body?, headers? } or { offline: true }. options: { times?, delayMs?, priority? }. The newest mock is tried first, so a later broad mock shadows an earlier specific one; give the specific one a higher priority (default 0, ties newest first; negative makes a fallback); agent mocks still come before the app mocks. The result lists `shadows` when the new mock will be tried before an agent mock it also matches.',
       run: (
         match: MockMatch,
         response: MockResponse,
@@ -149,8 +192,49 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
       ) => {
         if (typeof response !== 'object' || response === null)
           throw new Error('response must be an object, e.g. { status: 500 }')
-        const { times, delayMs } = mockOptions
-        return { id: addMock(state, 'agent', match, response, { times, delayMs }).id }
+        return addAgentMock(match, response, mockOptions)
+      },
+    },
+    'net.mockFromLog': {
+      description:
+        'Mock the same method and URL as a logged request (id from net.log) with its status and whole response body, optionally changed by patch: JSON objects merge deeply, other values replace. [id, patch?, options?] options as net.mock. Returns { id, match, response }.',
+      run: (
+        id: number,
+        patch?: unknown,
+        mockOptions: Omit<MockOptions, 'id'> = {},
+      ) => {
+        const entry = logged(id)
+        if (entry.status === undefined)
+          throw new Error(`Request ${id} has no response to copy (${entry.error ?? 'still pending'})`)
+        const { state: kept, body, contentType } = fullResponse(entry)
+        if (kept !== 'kept' || body === undefined)
+          throw new Error(
+            `Request ${id}'s response body can't be copied: ${
+              {
+                pending: 'it is still being read, try again',
+                none: 'it was not captured (binary or unreadable)',
+                cut: 'it is too large',
+                evicted: 'it was dropped to save memory',
+                kept: 'it is missing',
+              }[kept]
+            }`,
+          )
+        const response: MockResponse = { status: entry.status }
+        if (patch !== undefined) {
+          let json: unknown
+          try {
+            json = JSON.parse(body)
+          } catch {
+            throw new Error(`Request ${id}'s response is not JSON, so it can't take a patch`)
+          }
+          response.json = deepMerge(json, patch)
+        } else {
+          // The text as the server sent it, not re-serialised (big ints survive).
+          response.body = body
+          if (contentType) response.headers = { 'content-type': contentType }
+        }
+        const match = { url: { regex: `^${escapeRegex(entry.url)}$` }, method: entry.method }
+        return { ...addAgentMock(match, response, mockOptions), match: { url: entry.url, method: entry.method }, response }
       },
     },
     'net.mocks': {
