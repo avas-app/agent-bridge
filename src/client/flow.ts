@@ -32,6 +32,8 @@ export type FlowResult = {
   errors: number
   /** Restorers that failed in the closing bridge.restore, with why. */
   restoreErrors: string[]
+  /** "app reloaded; N pending restores lost" warnings seen during the flow. */
+  notices: string[]
 }
 
 /** The scenarios a flow module declares, in order. */
@@ -84,6 +86,9 @@ export function mergeScenarios(
 const failedLogs = (error: unknown): LogEntry[] =>
   error instanceof AgentBridgeCallError ? error.logs : []
 
+const failedNotice = (error: unknown) =>
+  error instanceof AgentBridgeCallError ? error.notice : undefined
+
 export type RunFlowOptions = {
   /** Where step lines go. Default: console.log. */
   print?: (line: string) => void
@@ -108,9 +113,14 @@ export async function runFlow(
   let total = 0
   let errors = 0
   const t0 = performance.now()
-  const report = (logs: LogEntry[]) => {
+  const notices: string[] = []
+  const report = (logs: LogEntry[], notice?: string) => {
     errors += logs.length
     for (const e of logs) print(`   ${logLine(e)}`)
+    if (notice) {
+      notices.push(notice)
+      print(`   ! ${notice}`)
+    }
   }
   // Every call the flow makes reports the errors its reply carried.
   const timed = async <T>(
@@ -119,10 +129,10 @@ export async function runFlow(
   ): Promise<Timed<T>> => {
     try {
       const result = await bridge.timed<T>(tool, ...args)
-      report(result.logs)
+      report(result.logs, result.notice)
       return result
     } catch (error) {
-      report(failedLogs(error))
+      report(failedLogs(error), failedNotice(error))
       throw error
     }
   }
@@ -131,17 +141,17 @@ export async function runFlow(
   const step = async (label: string, tool: string, ...given: unknown[]) => {
     // Same as `agent-bridge call`: one array is the argument list.
     const args = given.length === 1 && Array.isArray(given[0]) ? given[0] : given
-    const { value, ms, logs } = await bridge
+    const { value, ms, logs, notice } = await bridge
       .timed(tool, ...args)
       .catch((error: unknown) => {
-        report(failedLogs(error))
+        report(failedLogs(error), failedNotice(error))
         throw error
       })
     total += ms
     print(
       `${String(++n).padStart(2, '0')} ${label.padEnd(30)} ${ms.toFixed(1).padStart(7)} ms`,
     )
-    report(logs)
+    report(logs, notice)
     return value
   }
 
@@ -185,7 +195,7 @@ export async function runFlow(
     }
   }
   print(
-    `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}`,
+    `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}${notices.length ? ', the app reloaded' : ''}`,
   )
-  return { steps: n, errors, restoreErrors }
+  return { steps: n, errors, restoreErrors, notices }
 }

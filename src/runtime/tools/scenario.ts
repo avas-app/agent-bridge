@@ -108,6 +108,7 @@ export function scenarioTools(
       },
     },
     'scenario.restore': {
+      pending: () => active.size > 0,
       description:
         'Undo every active scenario, newest first. bridge.restore runs this after every other restorer.',
       run: async () => {

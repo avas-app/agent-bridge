@@ -14,6 +14,11 @@ export type ToolDefinition =
        */
       maxArgs?: number
       run: ToolFn
+      /**
+       * On a `*.restore` tool: whether the agent has changed something it
+       * would undo. A session reports these areas if the app reloads.
+       */
+      pending?: () => unknown
     }
 
 /** Tools by name. Namespace them with a dot, e.g. `query.pin`. */

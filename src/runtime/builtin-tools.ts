@@ -1,4 +1,6 @@
 import type { LogCapture } from './logs'
+import { DevSettings } from 'react-native'
+
 import { appTools } from './tools/app'
 import { bridgeTools } from './tools/bridge'
 import { logTools } from './tools/logs'
@@ -14,11 +16,10 @@ export function builtinTools(
   getTools: () => Tools,
   logs: LogCapture,
   getScenarios?: () => Scenarios,
-  deviceId?: string,
 ): Tools {
   return {
-    ...bridgeTools(listTools, deviceId),
-    ...appTools(),
+    ...bridgeTools(listTools),
+    ...appTools(() => DevSettings.reload()),
     ...logTools(logs),
     ...restoreTools(getTools),
     ...screenTools(),

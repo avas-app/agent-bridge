@@ -278,6 +278,7 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
       },
     },
     'net.restore': {
+      pending: () => state.strictAgent !== null || state.mocks.some(isAgent),
       description:
         "Undo the agent's network changes: remove agent mocks and its net.strict setting, keep the app's. Returns how many mocks were removed.",
       run: () => {

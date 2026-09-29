@@ -97,7 +97,7 @@ Every app also gets:
 - `screen.fill`, `screen.press`: call an input's or button's own handlers, found by `testID`, label, placeholder or text, and return once React has rendered the result. A target is a string or `{testID, label, placeholder, text, at:[x,y], index}`; unknown keys are errors. `{at:[x,y]}` hits the smallest element covering that point (icon-only buttons), and `index` picks among several matches, in the target or as a trailing `{index}` argument. `screen.press(target, {force:true})` presses a disabled element on purpose.
 - `screen.waitFor`, `screen.findText`: wait for, or check, text or a target on screen. Both match the same joined text the snapshot shows; `findText` also matches accessibility labels (`{labels:false}` for text only) and lists near misses when nothing matches.
 - `bridge.restore`: undo what the agent changed, by running every `*.restore` tool.
-- `app.reload`: reload the app's JS (`DevSettings.reload`). Pending restores are lost.
+- `app.reload`: reload the app's JS (`DevSettings.reload`). Pending restores are lost; a session waits for the new bridge before the next call.
 - `bridge.logs`, `bridge.ping`, `bridge.tools`.
 
 Custom tools that change the screen can `await settle()` (from `@avasapp/agent-bridge`) so the next check sees the render.
@@ -119,7 +119,7 @@ npx agent-bridge run flows/add-plant.mjs --strict   # fail if the app logged an 
 npx agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
 
-A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas you had called) in the next call's output and in `session stop`, because the old runtime's undo state is gone.
+A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas that had something to undo) in the next call's output, failed or not, and in `session stop`, because the old runtime's undo state is gone.
 
 ```ts
 import { connect } from '@avasapp/agent-bridge/client'

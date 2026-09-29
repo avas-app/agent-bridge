@@ -215,6 +215,7 @@ export function storeTools(
     },
     'store.restore': {
       maxArgs: 0,
+      pending: () => Object.values(stores).some((s) => snapshots.has(s)),
       description:
         'Undo the agent: put back each store changed with store.set or store.call. Returns their names.',
       run: () =>

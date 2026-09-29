@@ -1,11 +1,10 @@
 import type { Tools } from '../types'
 
-export function bridgeTools(listTools: () => unknown, deviceId?: string): Tools {
+export function bridgeTools(listTools: () => unknown): Tools {
   return {
     'bridge.ping': {
-      description:
-        'Round-trip check. Returns the app clock and the id this bridge install has; a new id means the app reloaded.',
-      run: () => ({ pong: true, at: Date.now(), deviceId }),
+      description: 'Round-trip check. Returns the app clock.',
+      run: () => ({ pong: true, at: Date.now() }),
     },
     'bridge.tools': {
       description: 'Every tool this app exposes.',
