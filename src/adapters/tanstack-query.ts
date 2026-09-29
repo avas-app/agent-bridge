@@ -42,6 +42,73 @@ const rendered = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 const keyOf = (args: unknown[]): QueryKey =>
   args.length === 1 && Array.isArray(args[0]) ? args[0] : args
 
+type GetOptions = { pages?: unknown; path?: unknown }
+
+/** A trailing `{ pages }` / `{ path }` on query.get, as opposed to an object key part. */
+const isGetOptions = (v: unknown): v is GetOptions =>
+  !!v &&
+  typeof v === 'object' &&
+  !Array.isArray(v) &&
+  Object.keys(v).length > 0 &&
+  Object.keys(v).every((k) => k === 'pages' || k === 'path')
+
+/** An infinite query's pages [from, to), like Array.slice, with the total. */
+function slicePages(data: unknown, range: unknown): unknown {
+  const infinite = data as { pages?: unknown; pageParams?: unknown } | undefined
+  if (!infinite || !Array.isArray(infinite.pages))
+    throw new Error('pages only applies to an infinite query (data with a pages array)')
+  const [from, to] = Array.isArray(range) ? range : [range]
+  if (
+    typeof from !== 'number' ||
+    (to !== undefined && typeof to !== 'number')
+  )
+    throw new Error(
+      `pages is [from, to] (to exclusive, like Array.slice) or a start index, got ${JSON.stringify(range)}`,
+    )
+  return {
+    ...infinite,
+    pages: infinite.pages.slice(from, to),
+    ...(Array.isArray(infinite.pageParams) && {
+      pageParams: infinite.pageParams.slice(from, to),
+    }),
+    totalPages: infinite.pages.length,
+  }
+}
+
+/** The value at a dotted path ("pages.0.items") or array of segments; errors name the step that is missing. */
+function atPath(value: unknown, path: unknown): unknown {
+  const segments =
+    typeof path === 'string'
+      ? path.split('.').filter(Boolean)
+      : Array.isArray(path) &&
+          path.every((p) => typeof p === 'string' || typeof p === 'number')
+        ? path
+        : null
+  if (!segments)
+    throw new Error(
+      `path is a dotted string or an array of segments, got ${JSON.stringify(path)}`,
+    )
+  let current = value
+  segments.forEach((segment, i) => {
+    if (
+      current === null ||
+      typeof current !== 'object' ||
+      !(String(segment) in current)
+    ) {
+      const where = segments.slice(0, i).join('.') || 'the data'
+      const has =
+        current && typeof current === 'object'
+          ? Array.isArray(current)
+            ? `an array of ${current.length}`
+            : `keys ${Object.keys(current).slice(0, 10).join(', ') || '(none)'}`
+          : JSON.stringify(current) ?? 'undefined'
+      throw new Error(`No "${segment}" in ${where}: it has ${has}`)
+    }
+    current = (current as Record<string, unknown>)[segment as string]
+  })
+  return current
+}
+
 /**
  * Read and seed the TanStack Query cache. `query.pin` keeps a seed in place:
  * when a refetch lands with real data, the seed is put back until unpinned.
@@ -142,9 +209,18 @@ export function queryTools(queryClient: QueryClient): Tools {
     },
     'query.get': {
       description:
-        'Cached data for a query key, e.g. ("todos", 1) or (["todos", 1]). Errors when no such query is cached, listing keys that start the same.',
+        'Cached data for a query key, e.g. ("todos", 1) or (["todos", 1]). Errors when no such query is cached, listing keys that start the same. For a big one, a last { pages: [from, to] } returns only those pages of an infinite query (to exclusive, like Array.slice; adds totalPages), and { path: "pages.0.items" } returns only the value there (after pages, if both).',
       run: (...args: unknown[]) => {
-        const key = keyOf(args)
+        // A trailing object is options only if the key with it isn't cached,
+        // since objects are valid key parts too.
+        const last = args[args.length - 1]
+        const options =
+          args.length > 1 &&
+          isGetOptions(last) &&
+          !cache.find({ queryKey: keyOf(args), exact: true })
+            ? last
+            : undefined
+        const key = keyOf(options ? args.slice(0, -1) : args)
         if (!key.length) throw new Error('query.get needs a query key')
         if (!cache.find({ queryKey: key, exact: true })) {
           const near = cache
@@ -155,7 +231,10 @@ export function queryTools(queryClient: QueryClient): Tools {
             `No cached query with key ${JSON.stringify(key)}.${near.length ? ` Similar: ${near.join(', ')}` : ' See query.list.'}`,
           )
         }
-        return queryClient.getQueryData(key)
+        let data = queryClient.getQueryData(key)
+        if (options?.pages !== undefined) data = slicePages(data, options.pages)
+        if (options?.path !== undefined) data = atPath(data, options.path)
+        return data
       },
     },
     'query.set': {
