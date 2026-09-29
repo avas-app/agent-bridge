@@ -122,7 +122,7 @@ await app.call('screen.fill', 'plant-name', 'Fiddle leaf fig')
 await app.call('screen.press', 'save-plant')
 ```
 
-A flow is a module the CLI runs without a model in the loop:
+A flow is a module the CLI runs without a model in the loop. `step(label, tool, ...args)` takes the arguments spread, or one array as the whole list, as `call` does:
 
 ```js
 export const scenario = 'signedIn'   // optional: see Scenarios

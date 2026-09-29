@@ -85,8 +85,22 @@ npx agent-bridge call net.mock '["/inbox", {"status": 500}]'   # or {"offline": 
 npx agent-bridge call net.log
 ```
 
-Arguments are a JSON array (or a single JSON value). Read the current value
-first (`query.get`, `store.get`) and change only what you need.
+Arguments are a JSON array (or a single JSON value): the array is spread into
+the tool's arguments. Read the current value first and change only what you need:
+
+```sh
+npx agent-bridge call query.get '["todos", 1]'             # a flat key or '[["todos", 1]]'
+npx agent-bridge call query.list '["todos"]'               # key prefix; shows isStale, isInvalidated, fetchStatus
+npx agent-bridge call query.refetch '["todos"]'            # {matched, data}; errors when nothing matches
+npx agent-bridge call store.get '["app", "auth.isLoggedIn"]'   # or ["app","auth","isLoggedIn"]
+npx agent-bridge call store.get '["app", {"pick": ["auth.isLoggedIn", "settings.fontScale"]}]'
+npx agent-bridge call store.get '["app", {"keys": true}]'  # top-level keys and types, no values
+```
+
+`query.get` errors on a key that is not cached (with similar keys), so a
+`null` reply means the data is undefined. A tool given more arguments than it
+takes fails instead of ignoring them. In a flow, `step` takes the same shapes:
+`step('press', 'screen.press', 'Confirm')`, or one array as the argument list.
 
 ## Realtime messages
 

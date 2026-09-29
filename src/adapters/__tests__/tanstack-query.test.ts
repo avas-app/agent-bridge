@@ -96,4 +96,61 @@ describe('queryTools', () => {
     expect(await run(queryTools(client), 'query.restore')).toEqual({ unpinned: 0, refetched: 0 })
     for (const stop of stops) stop()
   })
+
+  describe('key shapes', () => {
+    const setup = () => {
+      const client = new QueryClient()
+      client.setQueryData(['expressInfo', 'id'], { a: 1 })
+      client.setQueryData(['expressInfo', 'other'], 2)
+      client.getQueryCache().build(client, { queryKey: ['todos'] })
+      return { client, tools: queryTools(client) }
+    }
+
+    test('query.get takes a flat key or a wrapped one', () => {
+      const { tools } = setup()
+      expect(run(tools, 'query.get', 'expressInfo', 'id')).toEqual({ a: 1 })
+      expect(run(tools, 'query.get', ['expressInfo', 'id'])).toEqual({ a: 1 })
+    })
+
+    test('query.get errors on a missing query, with similar keys, but not on undefined data', () => {
+      const { tools } = setup()
+      expect(() => run(tools, 'query.get', 'expressInfo', 'nope')).toThrow(
+        'No cached query with key ["expressInfo","nope"]. Similar: ["expressInfo","id"]',
+      )
+      expect(() => run(tools, 'query.get')).toThrow('needs a query key')
+      expect(run(tools, 'query.get', ['todos'])).toBeUndefined()
+    })
+
+    test('query.refetch reports how many matched and errors on none', async () => {
+      const { client, tools } = setup()
+      let n = 0
+      const queryFn = async () => ++n
+      for (const q of client.getQueryCache().findAll({ queryKey: ['expressInfo'] })) q.setOptions({ queryFn })
+      expect(await run(tools, 'query.refetch', 'expressInfo', 'id')).toEqual({ matched: 1, data: 1 })
+      expect(await run(tools, 'query.refetch', ['expressInfo'])).toMatchObject({ matched: 2 })
+      await expect(run(tools, 'query.refetch', 'missing')).rejects.toThrow('No cached query matches key ["missing"]')
+    })
+
+    test('query.list shows staleness and timestamps, and filters by prefix in either shape', () => {
+      const { client, tools } = setup()
+      type Row = { key: unknown[]; isInvalidated: boolean; isStale: boolean; fetchStatus: string; dataUpdatedAt: number; errorUpdatedAt: number }
+      const only = (...args: unknown[]) => run(tools, 'query.list', ...args) as Row[]
+      expect(only()).toHaveLength(3)
+      expect(only('expressInfo').map((q) => q.key)).toEqual([['expressInfo', 'id'], ['expressInfo', 'other']])
+      expect(only(['expressInfo', 'id'])).toHaveLength(1)
+      const [entry] = only(['expressInfo', 'id'])
+      expect(entry).toMatchObject({ isInvalidated: false, fetchStatus: 'idle', errorUpdatedAt: 0 })
+      expect(entry!.dataUpdatedAt).toBeGreaterThan(0)
+      void client.invalidateQueries({ queryKey: ['expressInfo', 'id'], refetchType: 'none' })
+      expect(only(['expressInfo', 'id'])[0]).toMatchObject({ isInvalidated: true, isStale: true })
+    })
+
+    test('query.invalidate and query.unpin take a flat key; extra args to fixed tools are rejected by maxArgs', () => {
+      const { tools } = setup()
+      const def = tools['query.set'] as { maxArgs: number }
+      expect(def.maxArgs).toBe(2)
+      run(tools, 'query.invalidate', 'expressInfo')
+      expect(run(tools, 'query.unpin', 'expressInfo', 'id')).toBe(false)
+    })
+  })
 })

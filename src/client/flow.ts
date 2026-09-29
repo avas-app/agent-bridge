@@ -7,6 +7,10 @@ export type FlowScenario = string | { name: string; options?: unknown }
 export type FlowApi = {
   bridge: AgentBridge
   call: AgentBridge['call']
+  /**
+   * Times one call. Arguments are spread, `step('press', 'screen.press', 'Confirm')`;
+   * a single array is the whole argument list, as with `agent-bridge call`.
+   */
   step: (label: string, tool: string, ...args: unknown[]) => Promise<unknown>
   /** What each declared scenario's apply returned, by name. */
   scenarios: Record<string, unknown>
@@ -122,7 +126,9 @@ export async function runFlow(
   }
   const call = async <T>(tool: string, ...args: unknown[]) =>
     (await timed<T>(tool, ...args)).value
-  const step = async (label: string, tool: string, ...args: unknown[]) => {
+  const step = async (label: string, tool: string, ...given: unknown[]) => {
+    // Same as `agent-bridge call`: one array is the argument list.
+    const args = given.length === 1 && Array.isArray(given[0]) ? given[0] : given
     const { value, ms, logs } = await bridge
       .timed(tool, ...args)
       .catch((error: unknown) => {
