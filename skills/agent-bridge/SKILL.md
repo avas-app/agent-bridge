@@ -167,6 +167,24 @@ npx agent-bridge call net.mocks '[{"full": true}]'   # net.mocks cuts bodies ove
 `pages` is `[from, to]` with `to` exclusive, like `Array.slice`; `path` applies
 after `pages` when both are given.
 
+## Big arguments
+
+The shell caps one argument at about 128 KB on Linux. For a bigger value (a long
+feed, a large `net.mock` body), write JSON to a file and pass `@file`:
+
+```sh
+npx agent-bridge call query.pin @args.json                  # the file is the argument list, like the inline form
+npx agent-bridge call net.mock '"/feed"' @feed.json         # several words: each is one argument; @file is its JSON as-is
+some-generator | npx agent-bridge call store.set @-         # @- reads stdin
+```
+
+A file holding an array is the argument list; any other JSON value is one
+argument. With several words, `@feed.json` is one argument even when it is an
+array. A bare word starting with `@` is always a path, so pass a string like that
+as JSON: `'"@user"'`. A missing file or invalid JSON fails before connecting and
+names the path. Only one `@-` per call. `call --batch` lines take `@file` as their
+whole argument list (paths relative to where you run it; not `@-`, stdin is the calls).
+
 ## Realtime messages
 
 If the app has `realtime.*` tools, you can see its realtime messages and fake

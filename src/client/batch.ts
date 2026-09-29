@@ -1,4 +1,5 @@
 // `agent-bridge call --batch`: many calls over one connection, one JSON line each.
+import { readFileSync } from 'node:fs'
 import { mkdir, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -16,6 +17,60 @@ export function parseCallArgs(raw: string | undefined): unknown[] {
     return [raw]
   }
   return Array.isArray(value) ? value : [value]
+}
+
+/** Reads the text behind `@<path>`; `-` is stdin, which the caller must supply. */
+export type ArgSource = (path: string) => string
+
+/** `@<path>` -> the file's text. Relative paths resolve against the cwd. */
+export const readArgFile: ArgSource = (path) => {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch (error) {
+    throw new Error(
+      `Cannot read arguments file ${path}: ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`,
+    )
+  }
+}
+
+function fileJson(ref: string, read: ArgSource): unknown {
+  const path = ref.slice(1)
+  if (!path)
+    throw new Error(
+      'An argument that is just "@" needs a path (@file, or @- for stdin). To pass the text itself, quote it as JSON: \'"@"\'',
+    )
+  const text = read(path)
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw new Error(
+      `${path === '-' ? 'stdin' : path} is not valid JSON (${error instanceof Error ? error.message : error})`,
+    )
+  }
+}
+
+/**
+ * The words after `call <tool>`. One word follows `parseCallArgs`; `@file` (or
+ * `@-` for stdin) reads that text instead, so size isn't limited by argv. With
+ * several words each is one argument: JSON, else a string, and `@file` is that
+ * file's JSON as one argument (an array stays one argument). A string that
+ * starts with @ is written as JSON: '"@user"'.
+ */
+export function parseCallArgv(argv: string[], read: ArgSource = readArgFile): unknown[] {
+  if (argv.length === 1) {
+    const [only] = argv as [string]
+    if (!only.startsWith('@')) return parseCallArgs(only)
+    const value = fileJson(only, read)
+    return Array.isArray(value) ? value : [value]
+  }
+  return argv.map((word) => {
+    if (word.startsWith('@')) return fileJson(word, read)
+    try {
+      return JSON.parse(word)
+    } catch {
+      return word
+    }
+  })
 }
 
 export type ParsedLine = { tool: string; args: unknown[] }
@@ -50,6 +105,20 @@ export function parseBatchLine(line: string): ParsedLine | null {
         tool,
         `Arguments start like JSON but don't parse (${error instanceof Error ? error.message : error}). Fix the JSON, or quote the text to send it as a string: ${JSON.stringify(raw)}`,
       )
+    }
+  }
+  if (raw.startsWith('@')) {
+    try {
+      return {
+        tool,
+        args: parseCallArgv([raw], (path) => {
+          if (path === '-')
+            throw new Error('@- is not available in a batch: stdin carries the calls')
+          return readArgFile(path)
+        }),
+      }
+    } catch (error) {
+      throw new BatchParseError(tool, (error as Error).message)
     }
   }
   return { tool, args: parseCallArgs(raw) }
