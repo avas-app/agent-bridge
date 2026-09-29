@@ -208,9 +208,11 @@ then undoes active scenarios, so the next run starts from the real state.
 It also resets queries that hold data a `net.mock` produced (`query.restore`
 reports `mockedCleared`), so fake data can't survive a failing real refetch.
 Only agent mocks are tracked, not app or scenario mocks. A query counts as
-mocked when a request its queryFn made synchronously was answered by a mock; a
-queryFn that awaits before requesting is marked if any mock answered while it
-fetched. Infinite queries stay marked until reset.
+mocked when a request its queryFn started synchronously was answered by a mock.
+A request started later (after an await, behind an async interceptor, in a
+retry) can't be tied to a query, so every query fetching at that moment is
+marked; on restore those reset even if real, and an observed one refetches
+once. Infinite queries stay marked until reset.
 
 ## Traps
 

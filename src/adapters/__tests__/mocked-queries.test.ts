@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { InfiniteQueryObserver, QueryClient, QueryObserver } from '@tanstack/query-core'
+import { InfiniteQueryObserver, onlineManager, QueryClient, QueryObserver } from '@tanstack/query-core'
 
 import { networkTools } from '../../network'
 import { mockSignalListeners } from '../../shared/mock-signal'
@@ -146,13 +146,44 @@ describe('attribution', () => {
     expect(await run(tools, 'query.restore')).toMatchObject({ mockedCleared: 1 })
   })
 
+  // An async interceptor (axios auth token) starts every request after a tick.
+  const late = (key: string, options: object = {}) =>
+    client
+      .fetchQuery({
+        queryKey: [key],
+        retry: false,
+        queryFn: async () => {
+          await Promise.resolve()
+          return (await fetch(`${API}/${key}`)).json()
+        },
+        ...options,
+      })
+      .catch(() => undefined)
+
   test('a query function that awaits before requesting is still caught', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await late('plants')
+    expect(data('plants')).toEqual({ fake: true })
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+  })
+
+  test('behind an async interceptor, a real query fetching in parallel is reset too', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await Promise.all([late('plants'), late('user')])
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+    // The trade-off: attribution can't tell them apart, so the real one goes as well.
+    expect(data('user')).toBeUndefined()
+  })
+
+  test('a request after an await in a query function is attributed', async () => {
     run(tools, 'net.mock', '/plants', { json: { fake: true } })
     await client
       .fetchQuery({
         queryKey: ['plants'],
         queryFn: async () => {
-          await Promise.resolve()
+          await fetch(`${API}/me`)
           return (await fetch(`${API}/plants`)).json()
         },
       })
@@ -160,6 +191,50 @@ describe('attribution', () => {
     expect(data('plants')).toEqual({ fake: true })
     run(tools, 'net.restore')
     expect(data('plants')).toBeUndefined()
+  })
+
+  test('a retry that lands on the mock is attributed', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    let attempts = 0
+    await client.fetchQuery({
+      queryKey: ['plants'],
+      retry: 1,
+      retryDelay: 1,
+      queryFn: async () => {
+        if (attempts++ === 0) throw new Error('first try fails')
+        return (await fetch(`${API}/plants`)).json()
+      },
+    })
+    expect(data('plants')).toEqual({ fake: true })
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+  })
+
+  test('a fetch that paused (offline) is still marked when it succeeds', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    client.mount() // resumes paused fetches when back online
+    onlineManager.setOnline(false)
+    try {
+      const loading = load('plants')
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      expect(client.getQueryCache().find({ queryKey: ['plants'] })?.state.fetchStatus).toBe('paused')
+      onlineManager.setOnline(true)
+      await loading
+    } finally {
+      onlineManager.setOnline(true)
+      client.unmount()
+    }
+    expect(data('plants')).toEqual({ fake: true })
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+  })
+
+  test('setQueryData is not a fetch: it drops the mark, and mid-fetch leaves it', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await load('plants')
+    client.setQueryData(['plants'], { app: 'wrote this' })
+    run(tools, 'net.restore')
+    expect(data('plants')).toEqual({ app: 'wrote this' })
   })
 
   test('an infinite query keeps no fake page when a later page came from the network', async () => {
@@ -181,6 +256,27 @@ describe('attribution', () => {
     failRealEndpoint()
     run(tools, 'net.restore')
     expect(data('pages')).toBeUndefined()
+  })
+
+  test('a full refetch of an infinite query keeps its mark', async () => {
+    run(tools, 'net.mock', '/pages', { json: { page: 'fake' } }, { times: 1 })
+    const observer = new InfiniteQueryObserver(client, {
+      queryKey: ['pages'],
+      retry: false,
+      initialPageParam: 1,
+      getNextPageParam: (_l: unknown, all: unknown[]) => all.length + 1,
+      queryFn: async ({ pageParam }: { pageParam: number }) =>
+        (await fetch(`${API}/pages?page=${pageParam}`)).json(),
+    })
+    const stop = observer.subscribe(() => {})
+    await observer.refetch()
+    await observer.fetchNextPage()
+    await observer.refetch()
+    stop()
+    // Conservative: the pages are real now, but a refetch of an infinite query isn't proof.
+    failRealEndpoint()
+    run(tools, 'net.restore')
+    expect(await run(tools, 'query.restore')).toMatchObject({ mockedCleared: 1 })
   })
 
   test('a response that lands after the mock was removed is cleared on arrival', async () => {

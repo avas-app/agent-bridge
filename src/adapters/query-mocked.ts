@@ -8,7 +8,7 @@ type Fetch = {
   own: Set<number>
   /** Agent mocks that answered one of `own`. */
   ids: Set<string>
-  /** Agent mocks that answered anything, for a query function that only requests after an await. */
+  /** Agent mocks that answered a request no fetch owns (started after an await, a retry). */
   loose: Set<string>
   fetchMore: boolean
   /** Its mock was removed before the fetch finished. */
@@ -23,7 +23,18 @@ export type MockedQueries = {
   takeCleared: () => number
 }
 
-const trackers = new WeakMap<QueryClient, MockedQueries & { isPinned: (hash: string) => boolean }>()
+type Tracker = MockedQueries & { isPinned: (hash: string) => boolean }
+
+// On globalThis, like mock-signal, so a second copy of this module (ESM and CJS)
+// shares the one tracker instead of wrapping and resetting the same queries twice.
+const KEY = Symbol.for('@avasapp/agent-bridge/query-mocked')
+const trackers = ((globalThis as unknown as Record<symbol, WeakMap<QueryClient, Tracker>>)[KEY] ??=
+  new WeakMap())
+
+// queryType is a getter from query-core 5.10x on; before, an infinite query set options.behavior.
+const isInfinite = (query: Query) =>
+  (query as unknown as { queryType?: string }).queryType === 'infinite' ||
+  !!(query.options as { behavior?: unknown }).behavior
 
 /**
  * Follows which queries hold data an agent mock produced, so restore can reset
@@ -32,9 +43,9 @@ const trackers = new WeakMap<QueryClient, MockedQueries & { isPinned: (hash: str
  *
  * Attribution is per request: the network layer (through mock-signal, so this
  * file never imports it) numbers each request and says which a mock answered,
- * and a query owns the requests its queryFn starts synchronously. A queryFn
- * that awaits before requesting owns none, and falls back to "a mock answered
- * something while it fetched".
+ * and a query owns the requests its queryFn starts synchronously. A mock
+ * answer to a request no fetch owns (started after an await, e.g. behind an
+ * async interceptor, or a retry) counts against every fetch in flight.
  */
 export function trackMockedQueries(
   queryClient: QueryClient,
@@ -106,6 +117,11 @@ export function trackMockedQueries(
       if (!f) inflight.set(hash, (f = newFetch()))
       if ((action as { meta?: { fetchMore?: unknown } }).meta?.fetchMore) f.fetchMore = true
     } else if (action.type === 'success') {
+      // setQueryData: not a fetch. It replaces the data, so drops the mark.
+      if ((action as { manual?: boolean }).manual) {
+        if (!inflight.has(hash)) mocked.delete(hash)
+        return
+      }
       const f = inflight.get(hash)
       inflight.delete(hash)
       if (!f) return
@@ -117,17 +133,18 @@ export function trackMockedQueries(
           mocked.delete(hash)
           reset(hash)
         } else mocked.set(hash, new Set([...(before ?? []), ...used]))
-      } else if (before && !f.fetchMore && !query.options.behavior) {
+      } else if (before && !f.fetchMore && !isInfinite(query)) {
         // A real fetch replaced the data. Not for an infinite query: a fetch
         // of one page (or a refetch) leaves the other pages, mocked ones too.
         mocked.delete(hash)
       }
-    } else if (query.state.fetchStatus !== 'fetching') {
+    } else if (query.state.fetchStatus === 'idle') {
+      // Not 'paused': a fetch waiting to go online still ends in a success.
       inflight.delete(hash)
     }
   })
 
-  const tracker: MockedQueries & { isPinned: (hash: string) => boolean } = {
+  const tracker: Tracker = {
     isPinned,
     pending: () => mocked.size > 0,
     takeCleared: () => {
@@ -153,7 +170,7 @@ export function trackMockedQueries(
   return tracker
 }
 
-const answeredBy = (f: Fetch) => (f.own.size ? f.ids : f.loose)
+const answeredBy = (f: Fetch) => new Set([...f.ids, ...f.loose])
 
 // Module level on purpose: closures made inside trackMockedQueries share a
 // scope that holds the client, and this listener must not keep it alive.
@@ -169,10 +186,9 @@ function listen(
     },
     answered: (mockId, requestId) => {
       if (!ref.deref()) return stop()
-      for (const f of inflight.values()) {
-        if (f.own.has(requestId)) f.ids.add(mockId)
-        else if (!f.own.size) f.loose.add(mockId)
-      }
+      const owner = [...inflight.values()].find((f) => f.own.has(requestId))
+      if (owner) owner.ids.add(mockId)
+      else for (const f of inflight.values()) f.loose.add(mockId)
     },
     removed: (ids) => {
       const tracker = ref.deref()
