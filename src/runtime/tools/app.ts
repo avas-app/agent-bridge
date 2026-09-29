@@ -23,7 +23,9 @@ export function appTools(reload: () => void): Tools {
         "Undo what the app's own tools changed: runs the undos they registered with onRestore, newest first, once. Returns how many ran.",
       run: async () => {
         const { ran, errors } = await runUndos()
-        if (errors.length) throw new Error(errors.join('; '))
+        // Throws so bridge.restore and flows still see a failure, with the count that did run.
+        if (errors.length)
+          throw new Error(`${errors.join('; ')} (${ran - errors.length} of ${ran} undone)`)
         return { undone: ran }
       },
     },

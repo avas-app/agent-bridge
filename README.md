@@ -135,7 +135,7 @@ tools: {
 }
 ```
 
-Call `onRestore` each time the tool changes something, so mocking twice restores both, in reverse. There is deliberately no `app.eval`: code the agent can run is a tool you wrote, and it can be undone.
+Call `onRestore` each time the tool changes something, so mocking twice restores both, in reverse. Register inside the tool's `run`: an `onRestore` called elsewhere (say at startup) counts as pending straight away and runs on the next restore, whether or not an agent touched anything. `bridge.restore` runs `*.restore` tools in area order, so app undos (`app.restore`) run before `net`, `query` and `store`, and newest first within `app`; `scenario.restore` always goes last. If an undo needs a store or mock still in place, register it from a scenario's `onUndo` instead. There is deliberately no `app.eval`: code the agent can run is a tool you wrote, and it can be undone.
 
 ### What restore will undo
 

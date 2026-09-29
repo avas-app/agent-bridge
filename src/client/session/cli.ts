@@ -159,10 +159,24 @@ async function stop(flags: SessionFlags) {
     keep: !!flags.keep,
     dryRun,
   }).catch(() => null)
+  if (dryRun && (!res || res.error)) {
+    // Never SIGTERM here: the daemon's teardown runs bridge.restore.
+    console.log(
+      `Dry run failed: ${res?.error ?? `session "${state.name}" didn't answer`}. Nothing was stopped or restored; check \`agent-bridge session list\`.`,
+    )
+    return
+  }
   if (!res || res.error) {
     // The daemon isn't answering: SIGTERM runs the same teardown.
     if (isAlive(state.pid)) process.kill(state.pid, 'SIGTERM')
     console.log(`Session "${state.name}" didn't answer; sent it SIGTERM.`)
+    return
+  }
+  if (dryRun && res.restore !== undefined) {
+    // A daemon from before --dry-run ignores it and does a real stop.
+    console.log(
+      `Stopped session "${state.name}": its daemon predates --dry-run, so it stopped and did not just list. ${describeRestore(res.restore)}`,
+    )
     return
   }
   if (dryRun) {

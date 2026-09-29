@@ -1,3 +1,4 @@
+import { toJson } from '../runtime/to-json'
 import type { Tools } from '../runtime/types'
 
 /** Anything with zustand's store shape. */
@@ -93,10 +94,17 @@ function restore(store: StoreLike, snapshot: unknown) {
 const PREVIEW = 200
 
 // A value as bridge.pending shows it: small ones as they are, big ones cut.
+// Cycles and BigInts print as toJson prints them; anything else that won't
+// serialize shows as a marker, so one odd value never hides the store.
 function preview(value: unknown): unknown {
-  const text = JSON.stringify(value)
-  if (text === undefined || text.length <= PREVIEW) return value
-  return `${text.slice(0, PREVIEW)}… (${text.length} chars)`
+  try {
+    const safe = toJson(value)
+    const text = JSON.stringify(safe)
+    if (text.length <= PREVIEW) return safe
+    return `${text.slice(0, PREVIEW)}… (${text.length} chars)`
+  } catch {
+    return '[unserializable]'
+  }
 }
 
 // What restore would change in a store: each key whose value differs from the
@@ -254,9 +262,11 @@ export function storeTools(
       maxArgs: 0,
       // Per store, its snapshot against now (secrets redacted), so an agent can
       // tell what a restore will put back before it does.
-      pending: () => {
+      pending: ({ detail }: { detail?: boolean } = {}) => {
         const changed = Object.entries(stores).filter(([, s]) => snapshots.has(s))
         if (!changed.length) return false
+        // Replies only need to know something is pending; bridge.pending asks for detail.
+        if (!detail) return true
         return Object.fromEntries(
           changed.map(([name, store]) => [
             name,

@@ -11,16 +11,21 @@ const LAST = 'scenario.restore'
  * ...). A hook that returns a value other than a boolean is showing detail;
  * `true` means "something, no detail". Areas with nothing pending are left out.
  */
-export function pendingByArea(tools: Tools): Record<string, unknown> {
+export function pendingByArea(
+  tools: Tools,
+  detail = false,
+): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [name, d] of Object.entries(tools)) {
     if (!name.endsWith(SUFFIX) || name === SELF || typeof d === 'function')
       continue
+    const area = name.slice(0, -SUFFIX.length)
     try {
-      const detail = d.pending?.()
-      if (detail) out[name.slice(0, -SUFFIX.length)] = detail
-    } catch {
-      // A broken hook must not hide the others.
+      const found = d.pending?.({ detail })
+      if (found) out[area] = found
+    } catch (error) {
+      // A hook that throws still means something may be pending: never drop the area.
+      out[area] = `pending check failed: ${error instanceof Error ? error.message : String(error)}`
     }
   }
   return out
@@ -37,7 +42,7 @@ export function restoreTools(getTools: () => Tools): Tools {
       maxArgs: 0,
       description:
         'What bridge.restore would undo right now, per area (store, query, net, app, ...): the value is true, or detail such as a store\'s snapshot against its current value. Empty when nothing is pending. Changes nothing.',
-      run: () => pendingByArea(getTools()),
+      run: () => pendingByArea(getTools(), true),
     },
     [SELF]: {
       description:

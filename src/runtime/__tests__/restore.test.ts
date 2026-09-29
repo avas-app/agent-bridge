@@ -89,6 +89,30 @@ describe('app tool undo (onRestore)', () => {
     expect(await call('bridge.restore')).toMatchObject({ 'app.restore': { undone: 0 } })
   })
 
+  test('replies list app in pending only while an undo is registered', async () => {
+    const registry = createRegistry(() => ({ ...appTools(() => {}), ...restoreTools(() => ({})) }), undefined, 'load-1')
+    const ping = () => registry.dispatch({ id: '1', tool: 'app.restore', args: [] } as never, 'd')
+    expect((await ping()).pending).toBeUndefined()
+    onRestore(() => {}, 'x')
+    const withUndo = await registry.dispatch({ id: '2', tool: 'app.reload', args: [] } as never, 'd')
+    expect(withUndo.pending).toEqual(['app'])
+  })
+
+  test('an area whose pending hook throws is still listed', async () => {
+    const all: Tools = {
+      ...restoreTools(() => all),
+      'x.restore': {
+        run: () => {},
+        pending: () => {
+          throw new Error('bad hook')
+        },
+      },
+    }
+    expect(await (all['bridge.pending'] as { run: () => unknown }).run()).toEqual({
+      x: 'pending check failed: bad hook',
+    })
+  })
+
   test('undoes newest first and reports a failing undo without skipping the others', async () => {
     const order: string[] = []
     onRestore(() => order.push('first'))
@@ -98,6 +122,6 @@ describe('app tool undo (onRestore)', () => {
     onRestore(() => order.push('third'))
     const result = await setup()('bridge.restore')
     expect(order).toEqual(['third', 'first'])
-    expect(result).toMatchObject({ 'app.restore': { error: 'second: boom' } })
+    expect(result).toMatchObject({ 'app.restore': { error: 'second: boom (2 of 3 undone)' } })
   })
 })

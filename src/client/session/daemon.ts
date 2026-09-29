@@ -380,6 +380,8 @@ export async function runSessionDaemon(
           transport: conn.transport,
         }
       case 'stop': {
+        if (req.dryRun && finishing)
+          return { id: req.id, error: `Session "${name}" is stopping` }
         // A dry run, or a stop that leaves the app as it is: say what a
         // restore would put back.
         const pending = req.dryRun || req.keep ? await readPending() : undefined
