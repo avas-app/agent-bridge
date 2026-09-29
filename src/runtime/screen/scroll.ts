@@ -1,7 +1,14 @@
 // Scrolls a ScrollView, FlatList or FlashList through its own methods, and
 // fires a RefreshControl's onRefresh, the way the gestures would.
 import { type Fiber, type Rect, measureHost } from '../find-text-core'
-import { type Found, type Scrollable, type Window, propsOf, viewportOf } from './elements'
+import {
+  type Found,
+  REFRESH_HOST,
+  type Scrollable,
+  type Window,
+  propsOf,
+  viewportOf,
+} from './elements'
 import { describe, type Target } from './targets'
 
 type Fn = (...args: unknown[]) => unknown
@@ -55,8 +62,6 @@ const method = (fiber: Fiber, name: string): Fn | null => {
 
 export const isHorizontal = (s: Scrollable) =>
   s.fibers.some((f) => propsOf(f)?.horizontal === true)
-
-const REFRESH_HOST = /refresh/i
 
 // Android wraps the ScrollView in AndroidSwipeRefreshLayout when it has a
 // RefreshControl, so the host the scroll methods belong to is one level down.
