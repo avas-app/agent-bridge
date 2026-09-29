@@ -66,6 +66,10 @@ export type Scrollable = {
   parent: Scrollable | null
   modal: ModalRef | null
   overlay: boolean
+  /** The native-stack screen it sits in, whose content area bounds it. */
+  screen: Fiber | null
+  /** Tab bars on screen (shared): the area behind one is not visible. */
+  bars: Fiber[]
 }
 
 export type Window = { width: number; height: number }
@@ -75,6 +79,7 @@ type Props = Record<string, unknown>
 type Rec = Found & {
   modal: ModalRef | null
   overlay: boolean
+  screen: Fiber | null
   parent: Rec | null
   parts: { host: Fiber; text: string }[]
 }
@@ -138,8 +143,47 @@ const OVERLAY_HOST = 'RNSFullWindowOverlay'
 const SCREEN_STACK = 'RNSScreenStack'
 const STACK_SCREENS = new Set(['RNSScreen', 'RNSModalScreen'])
 
-/** A native stack shows only its last screen; the ones beneath stay mounted. */
-function coveredScreens(stack: Fiber): Fiber[] {
+// react-native-screens presentations that leave what is beneath visible.
+const SEE_THROUGH = new Set(['transparentModal', 'containedTransparentModal', 'overFullScreen'])
+
+/** A `formSheet` whose detents leave the screen beneath undimmed (and touchable). */
+const undimmedSheet = (p: Props) => {
+  const at = p.sheetLargestUndimmedDetentIndex
+  return (
+    p.stackPresentation === 'formSheet' &&
+    at !== undefined &&
+    at !== null &&
+    at !== 'none' &&
+    at !== -1
+  )
+}
+
+function presentationOf(screen: Fiber): string | null {
+  const p = propsOf(screen)
+  if (typeof p?.stackPresentation === 'string') return p.stackPresentation
+  return screen.type === 'RNSModalScreen' ? 'modal' : null
+}
+
+const seeThrough = (screen: Fiber) => {
+  const presentation = presentationOf(screen)
+  return (
+    (presentation !== null && SEE_THROUGH.has(presentation)) ||
+    undimmedSheet(propsOf(screen) ?? {})
+  )
+}
+
+/** A native modal (`modal`, `pageSheet`, `fullScreenModal`, ...) covers the whole window. */
+const coversWindow = (screen: Fiber) => {
+  const presentation = presentationOf(screen)
+  return presentation !== null && presentation !== 'push' && !seeThrough(screen)
+}
+
+/**
+ * A native stack shows its last screen; the ones beneath stay mounted, and stay
+ * visible only under transparent presentations. `presented` are the screens
+ * on top of the first that cover everything outside them, tab bars included.
+ */
+function stackScreens(stack: Fiber): { covered: Fiber[]; presented: Fiber[] } {
   const screens: Fiber[] = []
   const todo = stack.child ? [stack.child] : []
   while (todo.length) {
@@ -149,7 +193,18 @@ function coveredScreens(stack: Fiber): Fiber[] {
       if (propsOf(f)?.activityState !== 0) screens.push(f)
     } else if (f.child) todo.push(f.child)
   }
-  return screens.slice(0, -1)
+  let base = screens.length - 1
+  while (base > 0 && seeThrough(screens[base] as Fiber)) base--
+  return {
+    covered: screens.slice(0, Math.max(0, base)),
+    presented: screens.slice(1).filter(coversWindow),
+  }
+}
+
+function hostAbove(host: Fiber): Fiber {
+  let up = host.return
+  while (up && up.tag !== HOST_COMPONENT) up = up.return
+  return up ?? host
 }
 
 const inside = (modal: ModalRef | null, top: ModalRef) => {
@@ -237,16 +292,77 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
     e.disabled = true
 }
 
-function isOnScreen(rect: Rect | null, window: Window): boolean {
-  return (
-    !!rect &&
-    rect.width > 0 &&
-    rect.height > 0 &&
-    rect.x < window.width &&
-    rect.y < window.height &&
-    rect.x + rect.width > 0 &&
-    rect.y + rect.height > 0
-  )
+const intersect = (a: Rect, b: Rect): Rect | null => {
+  const x = Math.max(a.x, b.x)
+  const y = Math.max(a.y, b.y)
+  const right = Math.min(a.x + a.width, b.x + b.width)
+  const bottom = Math.min(a.y + a.height, b.y + b.height)
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
+}
+
+const usable = (r: Rect | null): r is Rect => !!r && r.width > 0 && r.height > 0
+
+const within = (host: Fiber, ancestor: Fiber) => {
+  for (let f: Fiber | null = host; f; f = f.return) if (f === ancestor) return true
+  return false
+}
+
+/**
+ * What is left of `base` after the content area of the fiber's screen (below a
+ * native header) and the tab bars around it, for the ones that can be measured.
+ * Null when nothing is left.
+ */
+export function visibleArea(
+  base: Rect,
+  host: Fiber,
+  screen: Fiber | null,
+  bars: Fiber[],
+  window: Window,
+): Rect | null {
+  let area: Rect | null = base
+  const clip = (r: Rect) => {
+    area = area && intersect(area, r)
+  }
+  const screenRect = screen && screen !== host ? measureHost(screen) : null
+  if (usable(screenRect)) clip(screenRect)
+  for (const bar of bars) {
+    if (within(host, bar)) continue
+    const r = measureHost(bar)
+    if (!usable(r) || r.width < window.width * 0.9) continue
+    // A bottom bar hides what is behind it, a top bar the same at the top.
+    clip(
+      r.y + r.height / 2 > window.height / 2
+        ? { x: -1e9, y: -1e9, width: 2e9, height: 1e9 + r.y }
+        : { x: -1e9, y: r.y + r.height, width: 2e9, height: 1e9 },
+    )
+  }
+  return area
+}
+
+/** The visible viewport of a scrollable: its frame less the header and tab bar. */
+export const viewportOf = (s: Scrollable, view: Rect | null, window: Window): Rect | null =>
+  usable(view) ? visibleArea(view, s.host, s.screen, s.bars, window) : null
+
+/**
+ * Whether an element is on screen for touching and scrolling: inside the
+ * window, with the middle of its visible part inside the content area of its
+ * screen and the viewports of the scrollables around it.
+ */
+function isOnScreen(rec: Rec, rect: Rect | null, window: Window, bars: Fiber[]): boolean {
+  if (!usable(rect)) return false
+  const shown = intersect(rect, { x: 0, y: 0, ...window })
+  if (!shown) return false
+  const cx = shown.x + shown.width / 2
+  const cy = shown.y + shown.height / 2
+  const holds = (r: Rect | null) =>
+    !!r && cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
+  if (!holds(visibleArea(shown, rec.host, rec.screen, bars, window))) return false
+  for (let s = rec.scroller; s; s = s.parent) {
+    if (s.host === rec.host) continue
+    const view = measureHost(s.host)
+    if (usable(view) && !holds(viewportOf(s, view, window))) return false
+  }
+  return true
 }
 
 const round = (r: Rect | null): Rect | null =>
@@ -297,6 +413,8 @@ export function collectScreen(
   const order: Rec[] = []
   const scrollByHost = new Map<Fiber, Scrollable>()
   const covered = new Set<Fiber>()
+  const presented = new Set<Fiber>()
+  const bars: Fiber[] = []
   let topModal: ModalRef | null = null
 
   const recFor = (
@@ -307,6 +425,7 @@ export function collectScreen(
     scroller: Scrollable | null,
     modal: ModalRef | null,
     overlay: boolean,
+    screen: Fiber | null,
   ): Rec => {
     let rec = byHost.get(host)
     if (rec) return rec
@@ -321,6 +440,7 @@ export function collectScreen(
       scroller,
       modal,
       overlay,
+      screen,
       parent,
       parts: [],
     }
@@ -356,6 +476,7 @@ export function collectScreen(
     scroller: Scrollable | null
     modal: ModalRef | null
     overlay: boolean
+    screen: Fiber | null
   }
   const stack: Item[] = roots.map((fiber) => ({
     fiber,
@@ -364,20 +485,31 @@ export function collectScreen(
     scroller: null,
     modal: null,
     overlay: false,
+    screen: null,
   }))
   while (stack.length) {
     const item = stack.pop() as Item
     const { fiber, rec: parentRec } = item
     if (fiber.sibling) stack.push({ ...item, fiber: fiber.sibling })
     const p = propsOf(fiber)
-    let { hidden, scroller, modal, overlay } = item
+    let { hidden, scroller, modal, overlay, screen } = item
     if (fiber.tag === HOST_COMPONENT) {
       if (p && hiddenBy(p)) hidden = true
       if (covered.has(fiber)) hidden = true
-      if (fiber.type === SCREEN_STACK)
-        for (const screen of coveredScreens(fiber)) covered.add(screen)
+      if (fiber.type === SCREEN_STACK) {
+        const screens = stackScreens(fiber)
+        for (const s of screens.covered) covered.add(s)
+        for (const s of screens.presented) presented.add(s)
+      }
       if (fiber.type === OVERLAY_HOST) overlay = true
-      if (!hidden && MODAL_HOSTS.has(fiber.type as string)) {
+      if (STACK_SCREENS.has(fiber.type as string)) screen = fiber
+      if (p && !hidden && (p.accessibilityRole ?? p.role) === 'tablist') bars.push(fiber)
+      // A presented native modal covers the window like an RN Modal, tab bar
+      // of the navigator around it included.
+      if (
+        !hidden &&
+        (MODAL_HOSTS.has(fiber.type as string) || presented.has(fiber))
+      ) {
         modal = { host: fiber, up: modal }
         topModal = modal
       }
@@ -387,7 +519,7 @@ export function collectScreen(
       if (host) {
         let found = scrollByHost.get(host)
         if (!found) {
-          found = { host, fibers: [], hidden, parent: scroller, modal, overlay }
+          found = { host, fibers: [], hidden, parent: scroller, modal, overlay, screen, bars }
           scrollByHost.set(host, found)
         }
         found.fibers.push(fiber)
@@ -405,19 +537,19 @@ export function collectScreen(
         absorbChain(same, fiber, host)
         rec = same
       } else if (host) {
-        rec = recFor(fiber, host, parentRec, hidden, scroller, modal, overlay)
+        rec = recFor(fiber, host, parentRec, hidden, scroller, modal, overlay, screen)
         absorb(rec, fiber, p)
       }
     }
     const found = textOf(fiber)
     if (found?.host) {
       const host = textHost(found.host)
-      const owner = buttonOf(rec) ?? recFor(host, host, rec, hidden, scroller, modal, overlay)
+      const owner = buttonOf(rec) ?? recFor(host, host, rec, hidden, scroller, modal, overlay, screen)
       const last = owner.parts[owner.parts.length - 1]
       if (last?.host === host) last.text += found.text
       else owner.parts.push({ host, text: found.text })
     }
-    if (fiber.child) stack.push({ fiber: fiber.child, rec, hidden, scroller, modal, overlay })
+    if (fiber.child) stack.push({ fiber: fiber.child, rec, hidden, scroller, modal, overlay, screen })
   }
 
   // Under an open modal, only the top-most modal's content can be touched.
@@ -445,7 +577,11 @@ export function collectScreen(
     if (e.kind === 'input' && e.editable === undefined) e.editable = true
     const rect = measureHost(rec.host)
     e.rect = round(rect)
-    rec.onScreen = isOnScreen(rect, window)
+    // A ScrollView's own testID lands on its host, and the content container is
+    // part of it: both scroll that scrollable, not the one around it.
+    const own = scrollByHost.get(rec.host) ?? scrollByHost.get(hostAbove(rec.host))
+    if (own) rec.scroller = own
+    rec.onScreen = isOnScreen(rec, rect, window, bars)
   }
   // A text-only element whose glyphs were all icons has nothing to show.
   return {

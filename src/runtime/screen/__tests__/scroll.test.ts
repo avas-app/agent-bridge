@@ -331,3 +331,99 @@ describe('scroll arguments', () => {
     await expect(roots(list.fiber).press('Row 90', { scroll: true })).rejects.toThrow(/toEnd/)
   })
 })
+
+describe('visible area', () => {
+  const rowsUnderHeader = () => {
+    // A list whose frame runs under a native header: rows scrolled up beneath it
+    // are inside the frame but not visible. The screen's own frame starts below it.
+    const screenRect = { x: 0, y: 150, width: 400, height: 650 }
+    const view = () => ({ x: 0, y: 0, width: 400, height: 800 })
+    const list = scroller(view, 2000, [
+      { at: 340, make: field('Msg 15') },
+      { at: 700, make: field('Msg 3') },
+    ])
+    list.state.offset = 300
+    const screenHost = host({}, screenRect)
+    screenHost.type = 'RNSScreen'
+    tree(screenHost, list.fiber)
+    return { list, screenHost }
+  }
+
+  test('a row under the native header is not on screen, and scroll brings it out', async () => {
+    const { list, screenHost } = rowsUnderHeader()
+    const root = tree(host(), screenHost)
+    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
+    expect(screen.snapshot({ all: true }).elements.find((e) => e.text === 'Msg 15')?.onScreen).toBe(false)
+    expect(screen.snapshot().elements.map((e) => e.text)).toEqual(['Msg 3'])
+    const result = await screen.scroll('Msg 15')
+    expect(list.state.calls.length).toBe(1)
+    expect(result).toMatchObject({ onScreen: true })
+  })
+
+  test('a row behind a bottom tab bar is not on screen', () => {
+    const list = scroller(() => ({ x: 0, y: 0, width: 400, height: 800 }), 2000, [
+      { at: 730, make: field('Behind') },
+      { at: 300, make: field('Clear') },
+    ])
+    const bar = tree(host({ accessibilityRole: 'tablist' }, { x: 0, y: 700, width: 400, height: 100 }), rnText('Tab'))
+    const screen = roots(list.fiber, bar)
+    expect(screen.snapshot().elements.map((e) => e.text)).toEqual(['Clear', 'Tab'])
+  })
+
+  test('layout that is still moving right after a push is waited out', async () => {
+    let top = 0
+    const view = () => ({ x: 0, y: 0, width: 400, height: 800 })
+    const list = scroller(view, 2000, [{ at: 340, make: field('Msg') }])
+    list.state.offset = 300
+    const screenHost = host({}, { x: 0, y: 0, width: 400, height: 800 })
+    setTimeout(() => (top = 150), 30)
+    // The header lands late: the screen frame follows it.
+    screenHost.stateNode = { getBoundingClientRect: () => ({ x: 0, y: top, width: 400, height: 800 - top }), checkVisibility: () => true }
+    screenHost.type = 'RNSScreen'
+    const root = tree(host(), tree(screenHost, list.fiber))
+    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
+    const result = await screen.scroll('Msg')
+    // Settled at 150: the row scrolled up to y 40 sits under the header, so it scrolled.
+    expect(list.state.calls.length).toBe(1)
+    expect(result).toMatchObject({ onScreen: true })
+  })
+})
+
+describe('within a ScrollView testID', () => {
+  test('the testID on a plain ScrollView (composite or host) names that scroller, not the one around it', async () => {
+    let outer: ReturnType<typeof scroller>
+    const carouselView = () => ({ x: 0, y: 100 + 300 - outer.state.offset, width: 400, height: 100 })
+    const carousel = scroller(carouselView, 1200, [{ at: 900, make: () => rnText('Far') }], {
+      horizontal: true,
+      props: { testID: 'carousel' },
+    })
+    outer = scroller(VIEW, 2000, [{ at: 300, size: 100, make: () => carousel.fiber }], {
+      props: { testID: 'outer' },
+    })
+    const screen = roots(outer.fiber)
+    expect(await screen.scroll({ by: 300 }, { within: 'carousel' })).toMatchObject({ offset: 300, max: 800 })
+    expect(carousel.state.offset).toBe(300)
+    expect(outer.state.offset).toBe(0)
+    expect(await screen.scroll({ by: 500 }, { within: 'outer' })).toMatchObject({ offset: 500 })
+    expect(outer.state.offset).toBe(500)
+  })
+
+  test('the testID on the host of a ScrollView with no other scroller', async () => {
+    const list = scroller(VIEW, 2000, [{ at: 10, make: field('Row') }])
+    const scrollHost = list.fiber.child as Fiber
+    scrollHost.memoizedProps = { testID: 'form-scroll' }
+    expect(await roots(list.fiber).scroll({ toEnd: true }, { within: 'form-scroll' })).toMatchObject({ offset: 1400 })
+  })
+
+  test('toEnd within a scrollEnabled={false} list falls back to the one around it', async () => {
+    let outer: ReturnType<typeof scroller>
+    const innerView = () => ({ x: 0, y: 100 + 300 - outer.state.offset, width: 400, height: 400 })
+    const inner = scroller(innerView, 400, [], { props: { testID: 'inner-list', scrollEnabled: false } })
+    outer = scroller(VIEW, 2000, [{ at: 300, size: 400, make: () => inner.fiber }])
+    const screen = roots(outer.fiber)
+    expect(await screen.scroll({ toEnd: true }, { within: 'inner-list' })).toMatchObject({ offset: 1400 })
+    expect(inner.state.calls).toEqual([])
+    const alone = scroller(VIEW, 2000, [], { props: { testID: 'solo', scrollEnabled: false } })
+    await expect(roots(alone.fiber).scroll({ toEnd: true }, { within: 'solo' })).rejects.toThrow(/can't be scrolled/)
+  })
+})

@@ -116,3 +116,59 @@ describe('focused screen', () => {
     })
   })
 })
+
+describe('native modal screens', () => {
+  const pressed: string[] = []
+  const tabs = (modal: Record<string, unknown>) => {
+    const tabBar = tree(
+      host({ accessibilityRole: 'tablist' }),
+      pressable({ onPress: () => pressed.push('settings') }, rnText('Settings')),
+      rnText('Plants'),
+    )
+    const stack = tree(
+      typed(host(), 'RNSScreenStack'),
+      tree(typed(host({ activityState: 2 }), 'RNSScreen'), rnText('Plant list')),
+      tree(typed(host({ activityState: 2, ...modal }), 'RNSScreen'), rnText('Sheet content')),
+    )
+    return screenOf(tree(host(), stack), tabBar)
+  }
+
+  test('a presented modal hides the tab bar around its navigator, and press cannot reach it', async () => {
+    const screen = tabs({ stackPresentation: 'modal' })
+    expect(texts(screen)).toEqual(['Sheet content'])
+    expect(screen.findText('Sheet content')).toMatchObject({ found: 1 })
+    expect(screen.findText('Settings')).toMatchObject({ found: 0, hidden: 1 })
+    await expect(screen.press('Settings')).rejects.toThrow(/not in front/)
+    expect(pressed).toEqual([])
+  })
+
+  test.each(['formSheet', 'pageSheet', 'fullScreenModal', 'containedModal'])('%s covers everything', (p) => {
+    expect(texts(tabs({ stackPresentation: p }))).toEqual(['Sheet content'])
+  })
+
+  test('push, transparent modals and undimmed sheets leave the rest reachable', () => {
+    expect(texts(tabs({ stackPresentation: 'push' }))).toEqual(['Sheet content', 'Settings', 'Plants'])
+    for (const p of ['transparentModal', 'containedTransparentModal'])
+      expect(texts(tabs({ stackPresentation: p }))).toEqual(['Plant list', 'Sheet content', 'Settings', 'Plants'])
+    expect(
+      texts(tabs({ stackPresentation: 'formSheet', sheetLargestUndimmedDetentIndex: 0 })),
+    ).toEqual(['Plant list', 'Sheet content', 'Settings', 'Plants'])
+    expect(
+      texts(tabs({ stackPresentation: 'formSheet', sheetLargestUndimmedDetentIndex: 'none' })),
+    ).toEqual(['Sheet content'])
+  })
+
+  test('the first screen of a stack is not a presentation, and an RNSModalScreen is a modal', () => {
+    const root = tree(
+      typed(host(), 'RNSScreenStack'),
+      tree(typed(host({ stackPresentation: 'modal' }), 'RNSScreen'), rnText('Root')),
+    )
+    expect(texts(screenOf(root, rnText('Tab bar')))).toEqual(['Root', 'Tab bar'])
+    const stack = tree(
+      typed(host(), 'RNSScreenStack'),
+      tree(typed(host(), 'RNSScreen'), rnText('A')),
+      tree(typed(host(), 'RNSModalScreen'), rnText('B')),
+    )
+    expect(texts(screenOf(stack, rnText('Tab bar')))).toEqual(['B'])
+  })
+})

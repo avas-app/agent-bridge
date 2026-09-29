@@ -1,7 +1,7 @@
 // Scrolls a ScrollView, FlatList or FlashList through its own methods, and
 // fires a RefreshControl's onRefresh, the way the gestures would.
 import { type Fiber, type Rect, measureHost } from '../find-text-core'
-import { type Found, type Scrollable, type Window, propsOf } from './elements'
+import { type Found, type Scrollable, type Window, propsOf, viewportOf } from './elements'
 import { describe, type Target } from './targets'
 
 type Fn = (...args: unknown[]) => unknown
@@ -185,13 +185,15 @@ export const scrollEnabled = (s: Scrollable) =>
  * The offset that puts the element in the middle of the viewport (or starts it
  * at the top, if taller); null when it is already fully in view.
  */
-export function offsetFor(s: Scrollable, found: Found): number | null {
+export function offsetFor(s: Scrollable, found: Found, window: Window): number | null {
   const rect = found.element.rect
   const m = metricsOf(s)
   if (!rect || !m?.view) return null
+  // What a native header or tab bar covers is not part of the viewport.
+  const view = viewportOf(s, m.view, window) ?? m.view
   const [start, size, viewStart, viewSize] = isHorizontal(s)
-    ? [rect.x, rect.width, m.view.x, m.view.width]
-    : [rect.y, rect.height, m.view.y, m.view.height]
+    ? [rect.x, rect.width, view.x, view.width]
+    : [rect.y, rect.height, view.y, view.height]
   if (start >= viewStart && start + size <= viewStart + viewSize) return null
   const delta =
     size >= viewSize ? start - viewStart : start + size / 2 - (viewStart + viewSize / 2)
@@ -200,16 +202,20 @@ export function offsetFor(s: Scrollable, found: Found): number | null {
 }
 
 /** The scrollable, from the innermost out, that can move the element into view. */
-export function scrollerFor(found: Found): { scrollable: Scrollable; offset: number } | null {
+export function scrollerFor(
+  found: Found,
+  window: Window,
+): { scrollable: Scrollable; offset: number } | null {
   for (let s = found.scroller; s; s = s.parent) {
-    if (s.hidden || !scrollEnabled(s)) continue
-    const offset = offsetFor(s, found)
+    // A scrollable can't bring itself into view.
+    if (s.hidden || s.host === found.host || !scrollEnabled(s)) continue
+    const offset = offsetFor(s, found, window)
     if (offset !== null) return { scrollable: s, offset }
   }
   return null
 }
 
-const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+export const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /**
  * scrollTo runs on the UI thread and the new position comes back later, with no
@@ -249,6 +255,28 @@ export function refreshHandler(s: Scrollable): Fn | null {
   return null
 }
 
+/** `s`, or the first scrollable around it a user could drag; null when none. */
+export function draggable(s: Scrollable): Scrollable | null {
+  for (let x: Scrollable | null = s; x; x = x.parent) if (!x.hidden && scrollEnabled(x)) return x
+  return null
+}
+
+/** What the layout of the scrollables looks like now: the frames that move while a screen settles. */
+export function layoutOf(scrollables: Scrollable[], window: Window): { ready: boolean; sig: string } {
+  let ready = true
+  const parts: string[] = []
+  for (const s of scrollables) {
+    if (s.hidden) continue
+    const view = measureHost(s.host)
+    if (!view) continue
+    const m = metricsOf(s)
+    if (view.width <= 0 || view.height <= 0 || !m?.view) ready = false
+    const limit = viewportOf(s, view, window)
+    parts.push(JSON.stringify([view, m && [m.max, m.offset], limit]))
+  }
+  return { ready, sig: parts.join('|') }
+}
+
 const area = (r: Rect | null) => (r ? r.width * r.height : 0)
 
 const onWindow = (r: Rect | null, w: Window) =>
@@ -264,6 +292,8 @@ export function mainScrollable(
     .filter((s) => !s.hidden && (need === 'refresh' ? refreshHandler(s) : scrollEnabled(s)))
     .map((s) => ({ s, rect: measureHost(s.host) }))
     .filter(({ rect }) => onWindow(rect, window))
+    .map(({ s, rect }) => ({ s, rect: viewportOf(s, rect, window) }))
+    .filter(({ rect }) => !!rect)
     .sort((a, b) => area(b.rect) - area(a.rect))
   const [best] = candidates
   if (!best)

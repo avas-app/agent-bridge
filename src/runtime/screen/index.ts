@@ -13,6 +13,8 @@ import {
 import { findText, type FindTextOptions } from './find-text'
 import {
   awaitScroll,
+  draggable,
+  layoutOf,
   mainScrollable,
   type Metrics,
   metricsOf,
@@ -22,6 +24,7 @@ import {
   scrollerFor,
   scrollToEnd,
   scrollToOffset,
+  wait,
 } from './scroll'
 import { settle } from './settle'
 import { describe, resolveTarget, type Target } from './targets'
@@ -36,6 +39,21 @@ export function createScreen(env: {
 }) {
   const collectAll = () => collectScreen(env.roots(), env.window())
   const collect = () => collectAll().found
+
+  // Right after a push the layout is still moving (the native header's height
+  // arrives after the first frame): collect once the scrollables hold still.
+  const collectSettled = async () => {
+    let prev: string | null = null
+    let same = 0
+    for (let waited = 0; ; waited += 16) {
+      const all = collectAll()
+      const { ready, sig } = layoutOf(all.scrollables, env.window())
+      same = sig === prev ? same + 1 : 0
+      if (waited >= 320 || (ready ? same >= 3 : same >= 6)) return all
+      prev = sig
+      await wait(16)
+    }
+  }
 
   // The same element after a re-render: host instances outlive their fibers.
   const reread = (found: Found): Found => {
@@ -73,7 +91,7 @@ export function createScreen(env: {
     let current = found
     let metrics: Metrics | null = null
     for (let i = 0; i < 4; i++) {
-      const plan = scrollerFor(current)
+      const plan = scrollerFor(current, env.window())
       if (!plan) break
       metrics = await scrolled(plan.scrollable, () => {
         scrollToOffset(plan.scrollable, plan.offset)
@@ -159,14 +177,20 @@ export function createScreen(env: {
       options: { within?: Target; index?: number } = {},
     ): Promise<{ offset?: number; max?: number; element?: ScreenElement; onScreen?: boolean }> {
       const command = parseScroll(arg)
-      const { found: all, scrollables } = collectAll()
+      const { found: all, scrollables } = await collectSettled()
       // `index` picks among the target's matches; a `within` target carries its own.
-      const within = options.within
+      const named = options.within
         ? scrollableOf(
             resolveTarget(all, options.within, undefined, { offscreen: true }),
             'is not a scrollable or inside one',
           )
         : null
+      // A list with scrollEnabled={false} leaves the scrolling to the one around it.
+      const within = named && draggable(named)
+      if (named && !within)
+        throw new Error(
+          `${describe(resolveTarget(all, options.within as Target, undefined, { offscreen: true }).element)} can't be scrolled (scrollEnabled is false, or it is on a hidden screen) and no scrollable around it can`,
+        )
       const target =
         command.kind === 'to'
           ? resolveTarget(all, command.target, undefined, {
@@ -180,7 +204,7 @@ export function createScreen(env: {
         scrollableOf(target, 'is not inside a scrollable')
         ;({ found: again, metrics } = await bringIntoView(target))
       } else if (target && within) {
-        const offset = offsetFor(within, target)
+        const offset = offsetFor(within, target, env.window())
         metrics =
           offset === null
             ? metricsOf(within)
