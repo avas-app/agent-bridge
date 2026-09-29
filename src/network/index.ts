@@ -40,7 +40,8 @@ export function installNetwork(): void {
 
 /**
  * Answers matching requests from the app's own code, e.g. a fake backend.
- * Agent mocks (from `net.mock`) take precedence; `net.restore` keeps these.
+ * Agent mocks (from `net.mock`) are tried first, whatever their priority;
+ * `net.restore` keeps these.
  */
 export function mock(
   match: MockMatch,
@@ -146,24 +147,28 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
   return {
     'net.log': {
       description:
-        'Recent requests, newest first: method, url, startedAt (epoch ms), status, ms, bodies (~2 KB, cut with "… (+N chars)"), error, mocked. Filter by url substring, method, or since (startedAt >= since); full: true returns whole bodies; clear: true empties the log after reading. net.entry gets one request whole.',
+        'Recent requests, newest first: method, url, startedAt (epoch ms), status, ms, bodies (~2 KB, cut with "… (+N chars)"), error, mocked. Filter by url substring, method, since (epoch ms: startedAt >= since) or sinceId (id > sinceId); full: true returns whole bodies (truncated: true when one is too large or gone); clear: true empties the log after reading. net.entry gets one request whole.',
       run: (
         filter: {
           url?: string
           method?: string
           since?: number
+          sinceId?: number
           limit?: number
           full?: boolean
           clear?: boolean
         } = {},
       ) => {
         const method = filter.method?.toUpperCase()
+        if (filter.since !== undefined && !(filter.since >= 1e11))
+          throw new Error('since is an epoch time in ms (e.g. Date.now()); use sinceId for log ids')
         const entries = state.log
           .filter(
             (e) =>
               (!filter.url || e.url.includes(filter.url)) &&
               (!method || e.method === method) &&
-              (filter.since === undefined || e.startedAt >= filter.since),
+              (filter.since === undefined || e.startedAt >= filter.since) &&
+              (filter.sinceId === undefined || e.id > filter.sinceId),
           )
           .reverse()
           .slice(0, filter.limit ?? 20)
@@ -179,7 +184,7 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
     },
     'net.mock': {
       description:
-        'Answer matching requests with a canned response until unmocked. match: "/path" or { url: string | { regex }, method? }. response: { status?, json?, body?, headers? } or { offline: true }. options: { times?, delayMs?, priority? }. The newest mock is tried first, so a later broad mock shadows an earlier specific one; give the specific one a higher priority (default 0, ties newest first; negative makes a fallback). The result lists `shadows` when the new mock will be tried before an agent mock it also matches.',
+        'Answer matching requests with a canned response until unmocked. match: "/path" or { url: string | { regex }, method? }. response: { status?, json?, body?, headers? } or { offline: true }. options: { times?, delayMs?, priority? }. The newest mock is tried first, so a later broad mock shadows an earlier specific one; give the specific one a higher priority (default 0, ties newest first; negative makes a fallback); agent mocks still come before the app mocks. The result lists `shadows` when the new mock will be tried before an agent mock it also matches.',
       run: (
         match: MockMatch,
         response: MockResponse,
@@ -201,24 +206,33 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
         const entry = logged(id)
         if (entry.status === undefined)
           throw new Error(`Request ${id} has no response to copy (${entry.error ?? 'still pending'})`)
-        const { body, cut } = fullResponse(entry)
-        if (cut) throw new Error(`Request ${id}'s response body is too large to copy`)
+        const { state: kept, body, contentType } = fullResponse(entry)
+        if (kept !== 'kept' || body === undefined)
+          throw new Error(
+            `Request ${id}'s response body can't be copied: ${
+              {
+                pending: 'it is still being read, try again',
+                none: 'it was not captured (binary or unreadable)',
+                cut: 'it is too large',
+                evicted: 'it was dropped to save memory',
+                kept: 'it is missing',
+              }[kept]
+            }`,
+          )
         const response: MockResponse = { status: entry.status }
-        let json: unknown
-        let isJson = false
-        if (body !== undefined) {
+        if (patch !== undefined) {
+          let json: unknown
           try {
             json = JSON.parse(body)
-            isJson = true
           } catch {
-            response.body = body
+            throw new Error(`Request ${id}'s response is not JSON, so it can't take a patch`)
           }
+          response.json = deepMerge(json, patch)
+        } else {
+          // The text as the server sent it, not re-serialised (big ints survive).
+          response.body = body
+          if (contentType) response.headers = { 'content-type': contentType }
         }
-        if (patch !== undefined) {
-          if (!isJson) throw new Error(`Request ${id}'s response is not JSON, so it can't take a patch`)
-          json = deepMerge(json, patch)
-        }
-        if (isJson) response.json = json
         const match = { url: { regex: `^${escapeRegex(entry.url)}$` }, method: entry.method }
         return { ...addAgentMock(match, response, mockOptions), match: { url: entry.url, method: entry.method }, response }
       },

@@ -1,4 +1,4 @@
-import { compactBody, MAX_FULL_BODY, truncateBody } from './body'
+import { compactBody, FULL_BUDGET, MAX_FULL_BODY, truncateBody } from './body'
 import type {
   LogEntry,
   MockHandler,
@@ -131,35 +131,80 @@ export function deriveDevHost(): string | null {
 
 // ---- the log ----
 
+/** Where a response body stands: only 'kept' can stand in for the real one. */
+export type ResponseState = 'pending' | 'kept' | 'none' | 'cut' | 'evicted'
+
 type FullBodies = {
   requestBody?: string
   responseBody?: string
-  /** A body was cut at MAX_FULL_BODY, so it can't stand in for the real one. */
-  cut?: boolean
+  response?: ResponseState
+  contentType?: string
 }
 
 /** Untruncated bodies, kept off the entries so `net.log` stays small. */
 const FULL = new WeakMap<LogEntry, FullBodies>()
 
-function keepBody(
-  entry: LogEntry,
-  key: 'requestBody' | 'responseBody',
-  text: string | undefined,
-): void {
-  const body = compactBody(text)
-  if (body === undefined) return
-  entry[key] = truncateBody(body)
-  const full = FULL.get(entry) ?? {}
-  if (body.length > MAX_FULL_BODY) {
-    full[key] = body.slice(0, MAX_FULL_BODY)
-    full.cut = true
-  } else full[key] = body
-  FULL.set(entry, full)
+const fullOf = (entry: LogEntry): FullBodies => {
+  let full = FULL.get(entry)
+  if (!full) FULL.set(entry, (full = {}))
+  return full
 }
 
-/** Sets the response body from its raw text: compact, cut for the log, whole for `net.entry`. */
-export function setResponseBody(entry: LogEntry, text: string | undefined): void {
-  keepBody(entry, 'responseBody', text)
+/** Drops the oldest whole bodies until what is kept fits FULL_BUDGET; previews stay. */
+function enforceBudget(): void {
+  const { log } = networkState()
+  const size = (f: FullBodies | undefined) =>
+    (f?.requestBody?.length ?? 0) + (f?.responseBody?.length ?? 0)
+  let total = log.reduce((sum, e) => sum + size(FULL.get(e)), 0)
+  for (const entry of log) {
+    if (total <= FULL_BUDGET) return
+    const full = FULL.get(entry)
+    if (!full || !size(full)) continue
+    total -= size(full)
+    delete full.requestBody
+    if (full.responseBody !== undefined) {
+      delete full.responseBody
+      full.response = 'evicted'
+    }
+  }
+}
+
+function keepRequestBody(entry: LogEntry, text: string | undefined): void {
+  const body = compactBody(text)
+  if (body === undefined) return
+  entry.requestBody = truncateBody(body)
+  if (text!.length <= MAX_FULL_BODY) {
+    fullOf(entry).requestBody = text
+    enforceBudget()
+  }
+}
+
+/** Sets the response body from its raw text: a preview for the log, the text itself for `net.entry`. */
+export function setResponseBody(
+  entry: LogEntry,
+  text: string | undefined,
+  contentType?: string,
+): void {
+  const full = fullOf(entry)
+  if (contentType !== undefined) full.contentType = contentType
+  if (text === undefined) {
+    full.response = 'none'
+    return
+  }
+  const body = compactBody(text)
+  if (body !== undefined) entry.responseBody = truncateBody(body)
+  if (text.length > MAX_FULL_BODY) {
+    full.response = 'cut'
+    return
+  }
+  full.responseBody = text
+  full.response = 'kept'
+  enforceBudget()
+}
+
+/** Notes that a response has a body that is still being read, or that can't be logged. */
+export function markResponse(entry: LogEntry, response: 'pending' | 'none'): void {
+  fullOf(entry).response = response
 }
 
 export function startEntry(
@@ -174,7 +219,7 @@ export function startEntry(
     ms: 0,
     pending: true,
   }
-  keepBody(entry, 'requestBody', fields.requestBody)
+  keepRequestBody(entry, fields.requestBody)
   state.log.push(entry)
   if (state.log.length > LOG_SIZE)
     state.log.splice(0, state.log.length - LOG_SIZE)
@@ -183,14 +228,14 @@ export function startEntry(
 
 export function finishEntry(
   entry: LogEntry,
-  fields: Pick<LogEntry, 'status' | 'error' | 'responseBody'>,
+  fields: Pick<LogEntry, 'status' | 'error' | 'responseBody'> & { contentType?: string },
 ): void {
   entry.ms = Date.now() - entry.startedAt
   delete entry.pending
-  const { responseBody, ...rest } = fields
+  const { responseBody, contentType, ...rest } = fields
   for (const [key, value] of Object.entries(rest))
     if (value !== undefined) (entry as Record<string, unknown>)[key] = value
-  keepBody(entry, 'responseBody', responseBody)
+  if (responseBody !== undefined) setResponseBody(entry, responseBody, contentType)
 }
 
 /** A copy, pending ones with their time so far; `full` puts the untruncated bodies back. */
@@ -200,15 +245,23 @@ export function publicEntry(entry: LogEntry, full = false): LogEntry {
     const { requestBody, responseBody } = FULL.get(entry) ?? {}
     if (requestBody !== undefined) out.requestBody = requestBody
     if (responseBody !== undefined) out.responseBody = responseBody
+    // A preview that isn't the whole body says so instead of passing for it.
+    const cut = entry.responseBody !== undefined && responseBody === undefined
+    const cutRequest = entry.requestBody !== undefined && requestBody === undefined
+    if (cut || cutRequest) out.truncated = true
   }
   return out
 }
 
-/** The whole response body of a logged request, and whether it was cut short. */
-export const fullResponse = (entry: LogEntry) => ({
-  body: FULL.get(entry)?.responseBody,
-  cut: FULL.get(entry)?.cut === true,
-})
+/** A logged response's whole body, when it was kept, with why not otherwise. */
+export function fullResponse(entry: LogEntry): {
+  state: ResponseState
+  body?: string
+  contentType?: string
+} {
+  const full = FULL.get(entry)
+  return { state: full?.response ?? 'none', body: full?.responseBody, contentType: full?.contentType }
+}
 
 // ---- mocks ----
 
@@ -239,6 +292,8 @@ export function addMock(
 ): Mock {
   if (!response || (typeof response !== 'object' && typeof response !== 'function'))
     throw new Error('A mock needs a response: { status?, json?, body?, headers? }, { offline: true } or a handler')
+  if (options.priority !== undefined && !Number.isFinite(options.priority))
+    throw new Error('priority must be a finite number')
   const seq = state.nextSeq++
   const id = options.id ?? `${source}-${seq}`
   removeMocks(state, (m) => m.id === id)
@@ -267,24 +322,36 @@ export function removeMocks(
   return before - state.mocks.length
 }
 
-/** The order mocks get a say in: highest priority, then agent before app, then newest first. */
+/** The order mocks get a say in: agent before app, then higher priority, then newest first. */
 export const mockOrder = (a: Mock, b: Mock) =>
-  b.priority - a.priority ||
   Number(b.source === 'agent') - Number(a.source === 'agent') ||
+  b.priority - a.priority ||
   b.seq - a.seq
 
-/** Agent mocks the new one is tried before and would also answer, judged by their URL substring. */
+const substringMatch = (match: MockMatch) => {
+  const spec = typeof match === 'string' ? { url: match } : match
+  return typeof spec.url === 'string'
+    ? { url: spec.url, method: spec.method?.toUpperCase() }
+    : null
+}
+
+/**
+ * Agent mocks the new one is tried before and certainly answers instead: both
+ * match on a plain URL substring, the new one has a static response and covers
+ * the old one's method. Anything less certain isn't reported.
+ */
 export function shadowedMocks(state: NetworkState, added: Mock): Mock[] {
+  const next = substringMatch(added.match)
+  if (!next || typeof added.response === 'function') return []
   return state.mocks.filter((old) => {
     if (old === added || old.source !== 'agent' || mockOrder(added, old) >= 0)
       return false
-    const spec = typeof old.match === 'string' ? { url: old.match } : old.match
-    if (typeof spec.url !== 'string') return false
-    const method = spec.method?.toUpperCase()
-    // An old mock for any method is shadowed only by a new one for any method.
-    if (!method && typeof added.match !== 'string' && added.match.method)
-      return false
-    return added.test(method ?? 'GET', spec.url)
+    const prev = substringMatch(old.match)
+    return (
+      !!prev &&
+      prev.url.includes(next.url) &&
+      (!next.method || next.method === prev.method)
+    )
   })
 }
 
@@ -342,6 +409,10 @@ export function mockRequest(
     },
   }
 }
+
+/** The content-type in a headers record, whatever its case. */
+export const contentTypeOf = (headers: Record<string, string>): string | undefined =>
+  Object.entries(headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1]
 
 /** Status, body text and headers for a static mock response. */
 export function responseParts(response: MockResponse): {

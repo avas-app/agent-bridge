@@ -1,6 +1,8 @@
 const MAX_BODY = 2048
-/** The most of one body kept for `net.entry`; beyond it a body can't become a mock. */
+/** The longest body kept whole for `net.entry`; a longer one can't become a mock. */
 export const MAX_FULL_BODY = 1_000_000
+/** All whole bodies together; the oldest go first, their previews stay. */
+export const FULL_BUDGET = 4_000_000
 
 /** Body text for the log: JSON re-serialised compactly. */
 export function compactBody(text: string | undefined): string | undefined {

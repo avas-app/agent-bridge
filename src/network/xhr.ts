@@ -2,6 +2,8 @@ import { bodyText, errorMessage } from './body'
 import {
   answer,
   blockedResponse,
+  contentTypeOf,
+  markResponse,
   finishEntry,
   isOffline,
   isSkipped,
@@ -56,11 +58,15 @@ function track(xhr: XMLHttpRequest, entry: Entry): void {
   xhr.addEventListener('timeout', () => (error = 'timed out'))
   xhr.addEventListener('abort', () => (error = 'aborted'))
   xhr.addEventListener('loadend', () => {
+    const text = error ? undefined : responseTextOf(xhr)
     finishEntry(entry, {
       status: error ? undefined : xhr.status,
       error,
-      responseBody: error ? undefined : responseTextOf(xhr),
+      responseBody: text,
+      contentType: xhr.getResponseHeader?.('content-type') ?? undefined,
     })
+    // Blobs and array buffers aren't logged, so they can't become a mock either.
+    if (!error && text === undefined) markResponse(entry, 'none')
   })
 }
 
@@ -176,13 +182,13 @@ export function patchXhr(state: NetworkState): (() => void) | null {
         track(this, entry)
         return send.call(this, body)
       }
-      const { status, text: out } = responseParts(blocked)
+      const { status, text: out, headers } = responseParts(blocked)
       entry.blocked = true
       finishEntry(
         entry,
         isOffline(blocked)
           ? { error: `${OFFLINE_MESSAGE} (strict network)` }
-          : { status, responseBody: out },
+          : { status, responseBody: out, contentType: contentTypeOf(headers) },
       )
       // Answered after send returns, as a real response would be.
       void Promise.resolve().then(() => {
@@ -204,12 +210,12 @@ export function patchXhr(state: NetworkState): (() => void) | null {
           return
         }
         const offline = isOffline(hit.response)
-        const { status, text: out } = responseParts(hit.response)
+        const { status, text: out, headers } = responseParts(hit.response)
         finishEntry(
           entry,
           offline
             ? { error: `${OFFLINE_MESSAGE} (mocked offline)` }
-            : { status, responseBody: out },
+            : { status, responseBody: out, contentType: contentTypeOf(headers) },
         )
         respond(this, hit.response, url)
       },

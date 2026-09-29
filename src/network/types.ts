@@ -40,7 +40,7 @@ export type MockOptions = {
   times?: number
   /** Wait before answering. */
   delayMs?: number
-  /** Higher is tried first, whatever its age. Default 0; ties go to the newest. Negative makes a fallback. */
+  /** Higher is tried first among mocks from the same source (agent mocks still come before the app's). Default 0; ties go to the newest. Negative makes a fallback. */
   priority?: number
   /** Registering again with the same id replaces the mock (handy with Fast Refresh). */
   id?: string
@@ -63,6 +63,8 @@ export type LogEntry = {
   pending?: boolean
   requestBody?: string
   responseBody?: string
+  /** From net.entry: a body shown is only a preview because the whole one was too large or is gone. */
+  truncated?: boolean
   error?: string
   mocked?: boolean
   /** Failed by strict mode: no mock answered it. */
