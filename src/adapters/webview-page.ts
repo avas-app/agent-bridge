@@ -18,16 +18,30 @@ export function bootMain(
   // Kept in this closure, and JSON.stringify taken now, before the page can replace it.
   const stringify = win.JSON.stringify.bind(win.JSON)
   const queue: string[] = []
-  const send = (payload: Record<string, unknown>) => {
-    const message = stringify({ __agentBridge: 1, t: token, ...payload })
-    queue.push(message)
+  // The native bridge object can arrive after this script runs (on iOS it
+  // isn't there at document start). Messages wait for it, and it is looked for
+  // every 25 ms and at DOMContentLoaded, so the check-in doesn't wait for the
+  // load event, which waits for every subresource.
+  const flush = (): boolean => {
     try {
-      // The native bridge object can arrive after this script runs.
-      if (win.ReactNativeWebView) while (queue.length) post(queue.shift() as string)
+      if (!win.ReactNativeWebView) return false
+      while (queue.length) post(queue.shift() as string)
+      return true
     } catch {
-      // Never break the page.
+      return true // Never break the page.
     }
   }
+  const send = (payload: Record<string, unknown>) => {
+    queue.push(stringify({ __agentBridge: 1, t: token, ...payload }))
+    flush()
+  }
+  if (!flush()) {
+    let tries = 0
+    const timer = win.setInterval(() => {
+      if (flush() || ++tries > 400) win.clearInterval(timer)
+    }, 25)
+  }
+  win.document.addEventListener('DOMContentLoaded', flush)
   const where = () => ({ url: String(win.location.href), origin: String(win.location.origin) })
   const state = (name: string) => send({ kind: 'state', state: name, ...where() })
 

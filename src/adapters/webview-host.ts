@@ -36,6 +36,8 @@ export type WebViewOptions = {
   onLoadStart?: (event: NativeEvent) => void
   onLoadEnd?: (event: NativeEvent) => void
   onNavigationStateChange?: (event: NativeNavState) => void
+  /** How long a call waits for the page to load and its script to check in (default 10 000 ms). */
+  firstLoadTimeoutMs?: number
 }
 
 /** What react-native-webview tells the app, from native code, not from the page. */
@@ -294,7 +296,8 @@ function attach(entry: Entry): void {
 const originals = new WeakMap<Entry, { inject: (s: string) => void; post: (d: string) => void }>()
 
 /** Tunable for tests. */
-export const timing = { handshakeMs: 3000 }
+export const timing: { handshakeMs: number | undefined } = { handshakeMs: undefined }
+export const DEFAULT_LOAD_WAIT_MS = 10_000
 
 const PAGE_LOG_CHARS = 500
 
@@ -548,7 +551,7 @@ function awaitHandshake(entry: Entry): Promise<void> {
       if (why) return done(why)
       if (entry.handshake) return done()
     }
-    const timer = setTimeout(() => done(refusal(entry) ?? handshakeError(entry)), timing.handshakeMs)
+    const timer = setTimeout(() => done(refusal(entry) ?? handshakeError(entry)), timing.handshakeMs ?? entry.options.firstLoadTimeoutMs ?? DEFAULT_LOAD_WAIT_MS)
     const done = (error?: Error) => {
       clearTimeout(timer)
       entry.onHandshake.delete(settleNow)
@@ -628,5 +631,5 @@ export function resetWebViews(): void {
   }
   registry.clear()
   nextId = 1
-  timing.handshakeMs = 3000
+  timing.handshakeMs = undefined
 }

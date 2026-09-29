@@ -680,3 +680,32 @@ describe('the first load', () => {
     expect(host.entry.handshake).toBe(false)
   })
 })
+
+describe('check-in timing', () => {
+  test('the page checks in once the bridge object appears, without waiting for the load event', async () => {
+    const web = fakeWebView()
+    const bridge = (web.win as any).ReactNativeWebView
+    delete (web.win as any).ReactNativeWebView // iOS: not there at document start
+    const host = register({ current: web.view }, { name: 'checkout' })
+    host.mount()
+    web.connect(host.wrap() as never)
+    const props = host.props()
+    props.onLoadStart({ nativeEvent: { url: `${ORIGIN}/cart` } })
+    web.boot(props)
+    expect(host.entry.handshake).toBe(false)
+    // The subresources are still loading: no load event, but the bridge is there now.
+    const snap = run(tools, 'webview.snapshot') as Promise<any>
+    setTimeout(() => ((web.win as any).ReactNativeWebView = bridge), 60)
+    expect((await snap).elements.length).toBeGreaterThan(0)
+  })
+
+  test('firstLoadTimeoutMs sets how long a call waits', async () => {
+    const web = fakeWebView()
+    const host = register({ current: web.view }, { name: 'checkout', firstLoadTimeoutMs: 25 })
+    host.mount()
+    host.props().onLoadStart({ nativeEvent: { url: `${ORIGIN}/cart` } })
+    const t0 = Date.now()
+    await expect(run(tools, 'webview.snapshot')).rejects.toThrow('still loading')
+    expect(Date.now() - t0).toBeLessThan(500)
+  })
+})
