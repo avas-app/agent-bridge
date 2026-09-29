@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 
-import { collectElements } from '../elements'
+import { collectElements, focused } from '../elements'
 import { createScreen } from '..'
 import { WINDOW, composite, host, pressable, rnText, text, textInput, tree } from './fake-tree'
 
 const elementsOf = (...children: ReturnType<typeof host>[]) =>
-  collectElements([tree(host(), ...children)], WINDOW).map((f) => f.element)
+  focused(collectElements([tree(host(), ...children)], WINDOW)).map((f) => f.element)
 
 describe('collectElements', () => {
   test('a Pressable is one button with the text beneath it, icon glyphs dropped', () => {

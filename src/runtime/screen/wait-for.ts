@@ -47,7 +47,7 @@ export function waitForTarget(
       try {
         const found = collect()
         const matches = matchTarget(
-          found.filter((f) => f.onScreen),
+          found.filter((f) => f.onScreen && !f.hidden),
           target,
         )
         const hit = matches[indexOf(target) ?? 0]

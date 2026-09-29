@@ -19,6 +19,8 @@ export type TextMatch = {
 export type FindTextResult = {
   found: number
   onScreen: number
+  /** Matches on screens the user can't reach (unfocused tabs, under a modal); not in `matches`. */
+  hidden?: number
   matches: TextMatch[]
   /** Only when nothing matched: similar elements, so the agent sees why. */
   nearMisses?: string[]
@@ -38,6 +40,7 @@ export function nearMisses(found: Found[], text: string, max = 5): string[] {
     return !!have && (have.includes(want) || (have.length >= 3 && want.includes(have)))
   }
   return found
+    .filter((f) => !f.hidden)
     .filter((f) => close(f.element.text) || close(f.element.label))
     .slice(0, max)
     .map((f) => `${describe(f.element)}${f.onScreen ? '' : ' (off screen)'}`)
@@ -45,7 +48,7 @@ export function nearMisses(found: Found[], text: string, max = 5): string[] {
 
 /**
  * Matches the same joined text `screen.snapshot` shows (and, unless
- * `labels:false`, accessibility labels), on screen or not.
+ * `labels:false`, accessibility labels), on screen or not, but not on screens the user can't reach.
  */
 export function findText(
   found: Found[],
@@ -55,6 +58,7 @@ export function findText(
   const test = (s: string | undefined) =>
     s !== undefined && (options.exact ? s === text : s.includes(text))
   const matches: TextMatch[] = []
+  let hidden = 0
   for (const f of found) {
     const { element } = f
     const field = test(element.text)
@@ -63,6 +67,10 @@ export function findText(
         ? 'label'
         : null
     if (!field) continue
+    if (f.hidden) {
+      hidden += 1
+      continue
+    }
     matches.push({
       text: (field === 'text' ? element.text : element.label) as string,
       field,
@@ -75,6 +83,7 @@ export function findText(
     onScreen: matches.filter((m) => m.onScreen).length,
     matches,
   }
+  if (hidden) result.hidden = hidden
   if (!matches.length) result.nearMisses = nearMisses(found, text)
   return result
 }
