@@ -122,6 +122,34 @@ describe('queryTools', () => {
       expect(run(tools, 'query.get', ['todos'])).toBeUndefined()
     })
 
+    test('query.get narrows a big infinite query with pages and path', () => {
+      const { client, tools } = setup()
+      const page = (n: number) => ({ items: [`item ${n}a`, `item ${n}b`], next: n + 1 })
+      client.setQueryData(['feed'], { pages: [0, 1, 2, 3].map(page), pageParams: [0, 1, 2, 3] })
+      expect(run(tools, 'query.get', 'feed', { pages: [1, 3] })).toEqual({
+        pages: [page(1), page(2)],
+        pageParams: [1, 2],
+        totalPages: 4,
+      })
+      expect(run(tools, 'query.get', ['feed'], { pages: [-1] })).toMatchObject({ pages: [page(3)], totalPages: 4 })
+      expect(run(tools, 'query.get', ['feed'], { path: 'pages.2.items' })).toEqual(['item 2a', 'item 2b'])
+      expect(run(tools, 'query.get', ['feed'], { path: ['pages', 0, 'next'] })).toBe(1)
+      // path applies to the pages kept
+      expect(run(tools, 'query.get', ['feed'], { pages: [2, 4], path: 'pages.0.items.1' })).toBe('item 2b')
+      expect(() => run(tools, 'query.get', ['feed'], { path: 'pages.9.items' })).toThrow(
+        'No "9" in pages: it has an array of 4',
+      )
+      expect(() => run(tools, 'query.get', ['feed'], { path: 'page' })).toThrow('keys pages, pageParams')
+      expect(() => run(tools, 'query.get', 'expressInfo', 'id', { pages: [0, 1] })).toThrow('only applies to an infinite query')
+      expect(() => run(tools, 'query.get', ['feed'], { pages: ['a'] })).toThrow('pages is [from, to]')
+    })
+
+    test('query.get keeps an object key part that looks like options when that key is cached', () => {
+      const { client, tools } = setup()
+      client.setQueryData(['search', { path: 'x' }], 'cached')
+      expect(run(tools, 'query.get', 'search', { path: 'x' })).toBe('cached')
+    })
+
     test('query.refetch reports how many matched and errors on none', async () => {
       const { client, tools } = setup()
       let n = 0

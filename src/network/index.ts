@@ -1,6 +1,7 @@
 import type { Tools } from '../runtime/types'
 import { signalMocksRemoved } from '../shared/mock-signal'
 import { type ApiRoutes, apiRoutes, type MockApiOptions } from './api'
+import { truncateBody } from './body'
 import { patchFetch } from './fetch'
 import {
   addMock,
@@ -113,11 +114,43 @@ function deepMerge(base: unknown, patch: unknown): unknown {
   return out
 }
 
-const describeMock = (m: Mock) => ({
+/** A regex prints as its source, not as the {} JSON makes of it. */
+const describeMatch = (match: Mock['match']) => {
+  if (match instanceof RegExp) return String(match)
+  if (typeof match === 'object' && match.url instanceof RegExp)
+    return { ...match, url: String(match.url) }
+  return match
+}
+
+/** A mock response with json and body cut at ~2 KB like net.log, unless `full`. */
+function describeResponse(response: Mock['response'], full?: boolean) {
+  if (typeof response === 'function') return { response: '[handler]' }
+  if (full || 'offline' in response) return { response }
+  const out: Record<string, unknown> = { ...response }
+  let truncated = false
+  if (response.json !== undefined) {
+    const text = JSON.stringify(response.json) ?? ''
+    const cut = truncateBody(text)
+    if (cut !== text) {
+      out.json = cut
+      truncated = true
+    }
+  }
+  if (typeof response.body === 'string') {
+    const cut = truncateBody(response.body)
+    if (cut !== response.body) {
+      out.body = cut
+      truncated = true
+    }
+  }
+  return truncated ? { response: out, truncated } : { response }
+}
+
+const describeMock = (m: Mock, full?: boolean) => ({
   id: m.id,
   source: m.source,
-  match: m.match instanceof RegExp ? String(m.match) : m.match,
-  response: typeof m.response === 'function' ? '[handler]' : m.response,
+  match: describeMatch(m.match),
+  ...describeResponse(m.response, full),
   times: m.times,
   hits: m.hits,
   delayMs: m.delayMs || undefined,
@@ -239,9 +272,10 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
       },
     },
     'net.mocks': {
-      description: 'Active mocks, agent and app, in the order they are tried.',
-      run: () =>
-        [...state.mocks].sort(mockOrder).map(describeMock),
+      description:
+        'Active mocks, agent and app, in the order they are tried. Response json and body over ~2 KB are cut like net.log (json shown as its cut JSON text, "… (+N chars)"), with truncated: true; { full: true } returns them whole.',
+      run: (options: { full?: boolean } = {}) =>
+        [...state.mocks].sort(mockOrder).map((m) => describeMock(m, options.full)),
     },
     'net.unmock': {
       description:

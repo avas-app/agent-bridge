@@ -18,10 +18,17 @@ type Options = {
   noEvaluate?: boolean
 }
 
+/** Knobs a test can turn while the fake runs. */
+type Live = {
+  /** Hold each Runtime.evaluate reply this long, like Hermes while the JS thread is busy. */
+  evaluateDelayMs: number
+}
+
 export async function startFakeMetro(options: Options = {}) {
   const inspector = new WebSocketServer({ noServer: true })
   const broadcast = new WebSocketServer({ noServer: true })
   let port = 0
+  const live: Live = { evaluateDelayMs: 0 }
 
   const server: Server = createServer((req, res) => {
     if (req.url === '/json/list') {
@@ -60,7 +67,7 @@ export async function startFakeMetro(options: Options = {}) {
       inspector.handleUpgrade(req, socket, head, (ws) => {
         const expected = options.acceptOrigin?.(port)
         if (expected && req.headers.origin !== expected) ws.terminate()
-        else serveCdp(ws, options)
+        else serveCdp(ws, options, live)
       })
     } else if (path === '/expo-dev-plugins/broadcast' && options.expo) {
       broadcast.handleUpgrade(req, socket, head, (ws) => {
@@ -82,6 +89,7 @@ export async function startFakeMetro(options: Options = {}) {
   return {
     metro: `127.0.0.1:${port}`,
     port,
+    live,
     close: () =>
       new Promise<void>((resolve) => {
         for (const c of [...inspector.clients, ...broadcast.clients])
@@ -91,9 +99,9 @@ export async function startFakeMetro(options: Options = {}) {
   }
 }
 
-function serveCdp(ws: WebSocket, options: Options) {
+function serveCdp(ws: WebSocket, options: Options, live: Live) {
   const g = globalThis as Record<string, unknown>
-  ws.on('message', (data) => {
+  ws.on('message', async (data) => {
     const { id, method, params } = JSON.parse(String(data))
     if (method === 'Runtime.evaluate' && options.noEvaluate) {
       ws.send(JSON.stringify({ id, error: { code: -32601, message: method } }))
@@ -107,6 +115,8 @@ function serveCdp(ws: WebSocket, options: Options) {
         )
       ws.send(JSON.stringify({ id, result: {} }))
     } else if (method === 'Runtime.evaluate') {
+      if (live.evaluateDelayMs)
+        await new Promise((r) => setTimeout(r, live.evaluateDelayMs))
       try {
         const value = (0, eval)(params.expression)
         ws.send(

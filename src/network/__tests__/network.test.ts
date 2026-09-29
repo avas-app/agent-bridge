@@ -464,6 +464,30 @@ describe('mocks', () => {
     expect((run(tools, 'net.mocks') as unknown[]).length).toBe(1)
   })
 
+  test('net.mocks cuts big response bodies like net.log unless full', () => {
+    const items = Array.from({ length: 200 }, (_, i) => ({ id: i, name: `plant ${i}` }))
+    run(tools, 'net.mock', '/big-json', { json: { items } })
+    run(tools, 'net.mock', '/big-body', { body: 'x'.repeat(5000) })
+    run(tools, 'net.mock', '/small', { json: { ok: true } })
+    mock({ url: /\/app-regex$/, method: 'GET' }, { status: 204 })
+    type Listed = { match: unknown; response: Record<string, unknown>; truncated?: boolean }
+    const listed = run(tools, 'net.mocks') as Listed[]
+    const [small, body, json, app] = listed
+    expect(small).toMatchObject({ response: { json: { ok: true } } })
+    expect(small!.truncated).toBeUndefined()
+    const whole = JSON.stringify({ items })
+    expect(json!.truncated).toBe(true)
+    expect(json!.response.json).toBe(`${whole.slice(0, 2048)}… (+${whole.length - 2048} chars)`)
+    expect(body).toMatchObject({ truncated: true, response: { body: `${'x'.repeat(2048)}… (+2952 chars)` } })
+    // a regex match prints as its source instead of {}
+    expect(app!.match).toEqual({ url: '/\\/app-regex$/', method: 'GET' })
+
+    const full = run(tools, 'net.mocks', { full: true }) as Listed[]
+    expect(full[2]!.response.json).toEqual({ items })
+    expect(full[1]!.response.body).toBe('x'.repeat(5000))
+    expect(full.some((m) => m.truncated)).toBe(false)
+  })
+
   test('unmock takes one agent mock by id, or all of them', () => {
     const a = run(tools, 'net.mock', '/a', { json: 1 }) as { id: string }
     run(tools, 'net.mock', '/b', { json: 2 })
