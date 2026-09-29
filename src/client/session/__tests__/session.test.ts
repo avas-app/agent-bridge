@@ -696,8 +696,8 @@ describe('session daemon', () => {
       const gone = /app not connected|The app is gone/
       await expect(bridge.call('demo.echo', 2)).rejects.toThrow(gone)
       await expect(bridge.call('demo.echo', 3)).rejects.toThrow(gone)
-      expect(Date.now() - t0).toBeLessThan(6000)
-    }, 10_000)
+      expect(Date.now() - t0).toBeLessThan(9000)
+    }, 15_000)
 
     test('stop completes while the reconnect is stuck', async () => {
       const { daemon, bridge } = await hung('stop')
@@ -726,20 +726,32 @@ describe('session daemon', () => {
       expect(stopped).not.toBe('hung')
     }, 10_000)
 
-    test('keeps retrying and reconnects once Metro answers again', async () => {
+    test('reconnects on the health tick once the stuck attempt gives up', async () => {
       const { metro, fake } = await hung('retry', 50)
-      await new Promise((r) => setTimeout(r, 700))
+      // Wait until the daemon is stuck inside an attempt, then let Metro answer.
+      while (!fake.heldCount()) await new Promise((r) => setTimeout(r, 10))
       fake.live.hangList = false
       fake.live.hangUpgrade = false
       const reloaded = await fakeApp(metro, 'dev-2')
       cleanups.push(() => reloaded.ws.close())
-      for (let i = 0; i < 100; i++) {
-        if (listSessions()[0]?.device.deviceId === 'dev-2') break
-        await new Promise((r) => setTimeout(r, 50))
-      }
-      expect(listSessions()[0]?.device.deviceId).toBe('dev-2')
+      while (listSessions()[0]?.device.deviceId !== 'dev-2')
+        await new Promise((r) => setTimeout(r, 25))
     }, 15_000)
   })
+
+  test('stop restores through a reconnect when the app is back', async () => {
+    const { metro, app, bridge, daemon } = await session('restore-back')
+    await bridge.call('demo.set')
+    app.ws.close()
+    await expect(bridge.call('demo.echo', 1)).rejects.toThrow('The app is gone')
+    const reloaded = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => reloaded.ws.close())
+    expect(await daemon.stop()).toMatchObject({
+      ok: true,
+      value: { undone: 2 },
+    })
+    expect(reloaded.restores).toBe(1)
+  }, 15_000)
 
   test('a slow tool times out without a retry while the app still answers', async () => {
     const { metro, app } = await setup()

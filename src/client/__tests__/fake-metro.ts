@@ -106,6 +106,8 @@ export async function startFakeMetro(options: Options = {}) {
     metro: `127.0.0.1:${port}`,
     port,
     live,
+    /** How many connections are being held unanswered right now. */
+    heldCount: () => held.size,
     close: () =>
       new Promise<void>((resolve) => {
         for (const c of [...inspector.clients, ...broadcast.clients])

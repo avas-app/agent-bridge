@@ -18,6 +18,9 @@ export type Connection = {
 /** How long a socket may take to open (TCP connect plus the upgrade). */
 export const OPEN_SOCKET_MS = 5000
 
+/** An open that ran out of time or was aborted, as opposed to one that failed. */
+export class OpenGaveUp extends Error {}
+
 /**
  * Opens a socket and resolves once it is open, or rejects after `timeoutMs` or
  * when `signal` aborts (a server that accepts TCP but never finishes the
@@ -36,7 +39,7 @@ export function openSocket(
     let opened = false
     const giveUp = (why: string) => {
       if (opened) return
-      reject(new Error(`Could not open ${url}: ${why}`))
+      reject(new OpenGaveUp(`Could not open ${url}: ${why}`))
       ws.terminate()
     }
     const timer = setTimeout(

@@ -38,7 +38,7 @@ export type DaemonOptions = {
   healthMs?: number
   /** How long calls after app.reload wait for the new bridge. Default 20 s. */
   reloadWaitMs?: number
-  /** Longest one reconnect attempt may take, whatever step is stuck. Default 5 s. */
+  /** Longest each transport (Expo, then CDP) may take in one reconnect attempt. Default 12 s. */
   attemptMs?: number
 }
 
@@ -98,9 +98,12 @@ export async function runSessionDaemon(
   if (running)
     throw new Error(`Session "${name}" is already running (pid ${running.pid})`)
 
-  const attemptMs = options.attemptMs ?? 5000
-  // Aborted by teardown: it must not wait for a reconnect attempt.
+  const attemptMs = options.attemptMs ?? 12_000
+  // Teardown stops reconnect retries at once (`stopping`) and cuts an attempt
+  // still in flight after a grace period (`cutOff`); the restore gets one
+  // bounded attempt in between.
   const stopping = new AbortController()
+  const cutOff = new AbortController()
   const reach = (signal?: AbortSignal) =>
     openConnection({
       metro,
@@ -180,12 +183,9 @@ export async function runSessionDaemon(
       conn.close()
       const patient = Date.now() < reloadingUntil
       const deadline = Date.now() + (patient ? reloadWaitMs : 0)
-      let backoff = 300
       for (;;) {
         try {
-          if (stopping.signal.aborted)
-            throw new Error('the session is stopping')
-          const next = await reach(stopping.signal)
+          const next = await reach(cutOff.signal)
           if (patient && knownLoad && next.device.loadId === knownLoad) {
             next.close()
             throw new Error('the old runtime still answers')
@@ -202,8 +202,7 @@ export async function runSessionDaemon(
                 : `The app is gone (${reason}). Reconnecting failed: ${message(error)}`,
             )
           }
-          await pause(backoff, stopping.signal)
-          backoff = Math.min(backoff * 2, 2000)
+          await pause(300, stopping.signal)
         }
       }
       stale = false
@@ -222,15 +221,16 @@ export async function runSessionDaemon(
     return reconnecting
   }
 
-  // Calls wait for a reconnect, which is bounded (one attempt, or the reload
-  // window and one more attempt); the race is a backstop so that nothing a
-  // reconnect does can hold a call past that.
+  // Calls wait for a reconnect, which is bounded (one attempt: Expo then CDP,
+  // each within attemptMs; or the reload window and one more attempt); the
+  // race is a backstop so that nothing a reconnect does can hold a call
+  // past that.
   const connected = async (reason = 'app stopped answering') => {
     const attempt = reconnecting ?? reconnect(reason)
     const wait =
       Date.now() < reloadingUntil
-        ? reloadWaitMs + attemptMs + 500
-        : attemptMs + 500
+        ? reloadWaitMs + 2 * attemptMs + 500
+        : 2 * attemptMs + 500
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       await Promise.race([
@@ -351,8 +351,11 @@ export async function runSessionDaemon(
     finishing ??= (async () => {
       clearTimeout(idleTimer)
       clearInterval(health)
-      // A reconnect in flight would make the restore below wait for it.
+      // No more retries, and an attempt in flight is cut off after a grace
+      // period; the restore below still gets that one attempt if the app
+      // is back.
       stopping.abort()
+      const cut = setTimeout(() => cutOff.abort(), Math.min(attemptMs, 5000))
       let restore: ResultMessage | null = null
       if (!keep) {
         restore = await callApp('bridge.restore', [], timeoutMs).then(
@@ -366,6 +369,8 @@ export async function runSessionDaemon(
           }),
         )
       }
+      clearTimeout(cut)
+      cutOff.abort()
       conn.close()
       server.close()
       removeSessionFiles(name, dir)

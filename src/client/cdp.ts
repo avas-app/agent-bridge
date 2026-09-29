@@ -10,6 +10,7 @@ import {
 } from '../shared/protocol'
 import {
   type Connection,
+  OpenGaveUp,
   createPending,
   newCallId,
   openSocket,
@@ -48,8 +49,8 @@ export async function connectCdp(
     target.webSocketDebuggerUrl,
     { Origin: origin },
     signal,
-  ).catch(() => {
-    throw new Error(closedEarly)
+  ).catch((error) => {
+    throw error instanceof OpenGaveUp ? error : new Error(closedEarly)
   })
   // Hermes may never answer the setup commands; an abort drops the socket,
   // which rejects them (the close handler below).
