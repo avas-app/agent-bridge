@@ -178,3 +178,84 @@ describe('storeTools', () => {
     })
   })
 })
+
+describe('store.restore pending and store.commit', () => {
+  const make = () => {
+    const auth = createStore<{ user: string; token: string }>()(() => ({ user: 'ada', token: 'secret' }))
+    const tools = storeTools({ auth }, { redact: { auth: ['token'] } })
+    const hook = tools['store.restore'] as { pending: (o?: { detail?: boolean }) => unknown }
+    const pending = () => hook.pending({ detail: true })
+    return { auth, tools, pending, hook }
+  }
+
+  test('pending is false until a bridge write, then shows snapshot against current, redacted', () => {
+    const { tools, pending } = make()
+    expect(pending()).toBe(false)
+    run(tools, 'store.set', 'auth', { user: 'grace', token: 'other' })
+    expect(pending()).toEqual({
+      auth: {
+        user: { snapshot: 'ada', current: 'grace' },
+        token: { snapshot: '[redacted]', current: '[redacted]' },
+      },
+    })
+  })
+
+  test('long values are cut', () => {
+    const { tools, pending } = make()
+    run(tools, 'store.set', 'auth', { user: 'x'.repeat(500) })
+    const detail = (pending() as Record<string, Record<string, { current: string }>>).auth!.user!
+    expect(detail.current.length).toBeLessThan(300)
+    expect(detail.current).toContain('502 chars')
+  })
+
+  test('store.commit keeps the current value: restore leaves it alone, and the next write snapshots again', () => {
+    const { auth, tools, pending } = make()
+    run(tools, 'store.set', 'auth', { user: 'broken' })
+    run(tools, 'store.set', 'auth', { user: 'fixed' })
+    expect(run(tools, 'store.commit', 'auth')).toEqual({ store: 'auth', committed: true })
+    expect(pending()).toBe(false)
+    expect(run(tools, 'store.restore')).toEqual([])
+    expect(auth.getState().user).toBe('fixed')
+    expect(run(tools, 'store.commit', 'auth')).toEqual({ store: 'auth', committed: false })
+
+    run(tools, 'store.set', 'auth', { user: 'later' })
+    expect(run(tools, 'store.restore')).toEqual(['auth'])
+    expect(auth.getState().user).toBe('fixed')
+    expect(() => run(tools, 'store.commit', 'nope')).toThrow('Unknown store')
+  })
+})
+
+describe('store pending edge cases', () => {
+  type S = { data: unknown; user: { phone: string; name: string } }
+  const make = (redact: Parameters<typeof storeTools>[1]) => {
+    const app = createStore<S>()(() => ({ data: 1, user: { phone: '555', name: 'ada' } }))
+    const tools = storeTools({ app }, redact)
+    const hook = tools['store.restore'] as { pending: (o?: { detail?: boolean }) => unknown }
+    return { tools, detail: () => hook.pending({ detail: true }) as Record<string, Record<string, { current: unknown }>>, hook }
+  }
+
+  test('cyclic and BigInt values do not drop the store from pending', () => {
+    const { tools, detail, hook } = make(undefined)
+    const cyclic: Record<string, unknown> = { a: 1 }
+    cyclic.self = cyclic
+    run(tools, 'store.set', 'app', { data: cyclic })
+    expect(detail().app!.data!.current).toEqual({ a: 1, self: '[Circular]' })
+    run(tools, 'store.set', 'app', { data: 10n })
+    expect(detail().app!.data!.current).toBe('10')
+    expect(hook.pending()).toBe(true)
+  })
+
+  test('nested-path redaction applies in pending detail', () => {
+    const { tools, detail } = make({ redact: { app: ['user.phone'] } })
+    run(tools, 'store.set', 'app', { user: { phone: '999', name: 'grace' } })
+    const current = detail().app!.user!.current as { phone: string; name: string }
+    expect(current).toEqual({ phone: '[redacted]', name: 'grace' })
+  })
+
+  test('a redact function applies in pending detail', () => {
+    const { tools, detail } = make({ redact: (_s, path, v) => (path === 'user.phone' ? 'hidden' : v) })
+    run(tools, 'store.set', 'app', { user: { phone: '999', name: 'grace' } })
+    const current = detail().app!.user!.current as { phone: string }
+    expect(current.phone).toBe('hidden')
+  })
+})

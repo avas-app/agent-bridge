@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { createInterface } from 'node:readline'
 
 import WebSocket from 'ws'
 
@@ -19,6 +21,7 @@ import { bigValue } from '../../__tests__/big-value'
 import { AgentBridgeCallError } from '../../index'
 import { sessionFor } from '../cli'
 import { connectSession, sessionRequest } from '../client'
+import { sessionCommand } from '../cli'
 import { runSessionDaemon } from '../daemon'
 import {
   isAlive,
@@ -39,6 +42,8 @@ async function fakeApp(
     loadId?: string
     /** Close the socket on app.reload instead of answering it. */
     dropReload?: boolean
+    /** Leave out bridge.pending, as an older app would. */
+    pending?: boolean
   } = {},
 ) {
   let deviceId = firstId
@@ -64,6 +69,12 @@ async function fakeApp(
     'demo.set': () => {
       app.changed = true
     },
+    ...(options.pending === false
+      ? {}
+      : {
+          'bridge.pending': () =>
+            app.changed ? { demo: { key: { snapshot: 1, current: 2 } } } : {},
+        }),
     'demo.restore': {
       pending: () => app.changed,
       run: () => {
@@ -402,6 +413,139 @@ describe('session daemon', () => {
     expect(stopped.notice).toBe(LOST)
     expect(reloaded.restores).toBe(1)
   }, 15_000)
+
+  test('stop --dry-run lists what restore would undo and keeps the session; --keep reports it', async () => {
+    const { app, bridge } = await session('dry')
+    const state = listSessions()[0]!
+    await bridge.call('demo.set')
+
+    const dry = await sessionRequest(state, { op: 'stop', dryRun: true })
+    expect(dry.pending).toEqual({ demo: { key: { snapshot: 1, current: 2 } } })
+    expect(dry.restore).toBeUndefined()
+    expect(app.restores).toBe(0)
+    expect(listSessions().map((s) => s.name)).toEqual(['dry'])
+    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+
+    const kept = await sessionRequest(state, { op: 'stop', keep: true })
+    expect(kept.restore).toBeNull()
+    expect(kept.pending).toEqual({ demo: { key: { snapshot: 1, current: 2 } } })
+    expect(app.restores).toBe(0)
+  })
+
+  test('a plain stop reports no pending', async () => {
+    const { app } = await session('plain')
+    const stopped = await sessionRequest(listSessions()[0]!, { op: 'stop' })
+    expect(stopped.pending).toBeUndefined()
+    expect(app.restores).toBe(1)
+  })
+
+  test('an app without bridge.pending still stops, and a dry run has nothing to list', async () => {
+    const { app } = await session('old-app', { app: { pending: false } })
+    const state = listSessions()[0]!
+    const dry = await sessionRequest(state, { op: 'stop', dryRun: true })
+    expect(dry.pending).toBeUndefined()
+    expect(dry.restore).toBeUndefined()
+    expect(listSessions()).toHaveLength(1)
+    const stopped = await sessionRequest(state, { op: 'stop' })
+    expect(stopped.restore).toMatchObject({ ok: true })
+    expect(app.restores).toBe(1)
+  })
+
+  test('a dry run while the session is stopping reports that, not "still running"', async () => {
+    const { daemon } = await session('stopping')
+    const state = listSessions()[0]!
+    const stopping = daemon.stop()
+    const dry = await sessionRequest(state, { op: 'stop', dryRun: true }).catch(
+      (error: Error) => ({ error: error.message }),
+    )
+    await stopping
+    expect(dry).toMatchObject({ error: expect.stringMatching(/stopping|closed|isn't answering/) })
+  })
+
+  describe('session stop --dry-run in the CLI', () => {
+    const run = async (flags: Parameters<typeof sessionCommand>[1]) => {
+      const lines: string[] = []
+      const log = console.log
+      console.log = (...a: unknown[]) => void lines.push(a.join(' '))
+      const kill = process.kill
+      const signals: unknown[] = []
+      process.kill = ((pid: number, signal?: string | number) => {
+        if (signal === 0) return kill(pid, 0)
+        signals.push(signal)
+        return true
+      }) as typeof process.kill
+      try {
+        await sessionCommand('stop', flags)
+      } finally {
+        console.log = log
+        process.kill = kill
+      }
+      return { out: lines.join('\n'), signals }
+    }
+    /** A state file for a daemon that answers with `respond`, or hangs up on every request. */
+    const fakeDaemon = async (name: string, respond?: (req: { id: number }) => object) => {
+      const files = sessionFiles(name, dir)
+      writePrivate(
+        files.state,
+        JSON.stringify({
+          name,
+          pid: process.pid,
+          socket: files.socket,
+          metro: 'localhost:8081',
+          device: { name: 'Old', deviceId: 'd', platform: 'ios' },
+          transport: 'cdp',
+          startedAt: 1,
+          lastCallAt: 1,
+          idleMs: 0,
+        }),
+      )
+      const server = createServer((socket) => {
+        socket.on('error', () => {})
+        if (!respond) return void socket.end()
+        createInterface({ input: socket }).on('line', (line) =>
+          socket.write(`${JSON.stringify(respond(JSON.parse(line)))}\n`),
+        )
+      })
+      await new Promise<void>((r) => server.listen(files.socket, r))
+      cleanups.push(() => server.close())
+    }
+
+    test('lists pending and says the session is still running', async () => {
+      const { app } = await session('cli-dry')
+      await sessionRequest(listSessions()[0]!, { op: 'call', tool: 'demo.set' })
+      const { out, signals } = await run({ name: 'cli-dry', 'dry-run': true })
+      expect(out).toContain('still running')
+      expect(out).toContain('demo: {"key":{"snapshot":1,"current":2}}')
+      expect(signals).toEqual([])
+      expect(app.restores).toBe(0)
+    })
+
+    test('never sends SIGTERM when the daemon does not answer', async () => {
+      await fakeDaemon('mute')
+      const { out, signals } = await run({ name: 'mute', 'dry-run': true })
+      expect(signals).toEqual([])
+      expect(out).toContain('Dry run failed')
+      expect(out).toContain('Nothing was stopped or restored')
+    })
+
+    test('says so when an older daemon ignored the dry run and stopped', async () => {
+      await fakeDaemon('older', (req) => ({
+        id: req.id,
+        restore: { id: 'r', from: 'd', ok: true, value: { undone: 2 }, ms: 1 },
+      }))
+      const { out, signals } = await run({ name: 'older', 'dry-run': true })
+      expect(signals).toEqual([])
+      expect(out).toContain('predates --dry-run')
+      expect(out).toContain('bridge.restore: {"undone":2}')
+      expect(out).not.toContain('still running')
+    })
+
+    test('a plain stop that gets no answer still sends SIGTERM', async () => {
+      await fakeDaemon('plain-mute')
+      const { signals } = await run({ name: 'plain-mute' })
+      expect(signals).toEqual(['SIGTERM'])
+    })
+  })
 
   test('a failing call after a reload still carries the notice', async () => {
     const { app, bridge } = await session('fails')

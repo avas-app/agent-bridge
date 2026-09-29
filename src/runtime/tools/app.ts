@@ -1,3 +1,4 @@
+import { pendingUndos, runUndos } from '../undo'
 import type { Tools } from '../types'
 
 export function appTools(reload: () => void): Tools {
@@ -9,6 +10,23 @@ export function appTools(reload: () => void): Tools {
         // Later, so this reply gets out first.
         setTimeout(reload, 50)
         return { reloading: true }
+      },
+    },
+    'app.restore': {
+      maxArgs: 0,
+      // The labels, so bridge.pending shows what the app's own tools changed.
+      pending: () => {
+        const labels = pendingUndos()
+        return labels.length ? labels : false
+      },
+      description:
+        "Undo what the app's own tools changed: runs the undos they registered with onRestore, newest first, once. Returns how many ran.",
+      run: async () => {
+        const { ran, errors } = await runUndos()
+        // Throws so bridge.restore and flows still see a failure, with the count that did run.
+        if (errors.length)
+          throw new Error(`${errors.join('; ')} (${ran - errors.length} of ${ran} undone)`)
+        return { undone: ran }
       },
     },
   }

@@ -30,6 +30,7 @@ export type SessionFlags = {
   name?: string
   idle?: string
   keep?: boolean
+  'dry-run'?: boolean
   session?: string
   'no-session'?: boolean
 }
@@ -142,21 +143,60 @@ async function start(flags: SessionFlags) {
   )
 }
 
+/** One line per area: the area, then the detail bridge.pending gave. */
+const describePending = (pending: Record<string, unknown>) =>
+  Object.entries(pending)
+    .map(([area, detail]) =>
+      detail === true ? `  ${area}` : `  ${area}: ${JSON.stringify(detail)}`,
+    )
+    .join('\n')
+
 async function stop(flags: SessionFlags) {
   const state = chosen(flags)
+  const dryRun = !!flags['dry-run']
   const res = await sessionRequest(state, {
     op: 'stop',
     keep: !!flags.keep,
+    dryRun,
   }).catch(() => null)
+  if (dryRun && (!res || res.error)) {
+    // Never SIGTERM here: the daemon's teardown runs bridge.restore.
+    console.log(
+      `Dry run failed: ${res?.error ?? `session "${state.name}" didn't answer`}. Nothing was stopped or restored; check \`agent-bridge session list\`.`,
+    )
+    return
+  }
   if (!res || res.error) {
     // The daemon isn't answering: SIGTERM runs the same teardown.
     if (isAlive(state.pid)) process.kill(state.pid, 'SIGTERM')
     console.log(`Session "${state.name}" didn't answer; sent it SIGTERM.`)
     return
   }
+  if (dryRun && res.restore !== undefined) {
+    // A daemon from before --dry-run ignores it and does a real stop.
+    console.log(
+      `Stopped session "${state.name}": its daemon predates --dry-run, so it stopped and did not just list. ${describeRestore(res.restore)}`,
+    )
+    return
+  }
+  if (dryRun) {
+    const areas = Object.keys(res.pending ?? {})
+    console.log(
+      !res.pending
+        ? `Session "${state.name}" is still running. The app has no bridge.pending, so nothing can be listed.`
+        : areas.length
+          ? `Session "${state.name}" is still running. bridge.restore would undo:\n${describePending(res.pending)}`
+          : `Session "${state.name}" is still running. Nothing is pending; bridge.restore would undo nothing.`,
+    )
+    return
+  }
   console.log(
     `Stopped session "${state.name}". ${describeRestore(res.restore)}`,
   )
+  if (res.pending && Object.keys(res.pending).length)
+    console.log(
+      `Warning: still pending, and a later bridge.restore will undo it (run store.commit to keep a store as it is):\n${describePending(res.pending)}`,
+    )
   if (res.notice) console.log(`Warning: ${res.notice}`)
 }
 

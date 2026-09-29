@@ -1,6 +1,7 @@
 import type { CallMessage, ResultMessage, ToolInfo } from '../shared/protocol'
 import type { LogCapture } from './logs'
 import { toJson } from './to-json'
+import { pendingByArea } from './tools/restore'
 import type { ToolDefinition, ToolFn, Tools } from './types'
 
 function unwrap(definition: ToolDefinition): {
@@ -38,16 +39,7 @@ export function createRegistry(
 
   // After the tool ran, so a reply shows the state it left behind.
   function pending(): { pending?: string[] } {
-    const areas = Object.entries(getTools())
-      .filter(([name, d]) => {
-        if (!name.endsWith('.restore') || name === 'bridge.restore') return false
-        try {
-          return typeof d !== 'function' && Boolean(d.pending?.())
-        } catch {
-          return false
-        }
-      })
-      .map(([name]) => name.slice(0, -'.restore'.length))
+    const areas = Object.keys(pendingByArea(getTools()))
     return areas.length ? { pending: areas } : {}
   }
 

@@ -17,8 +17,12 @@ export type ToolDefinition =
       /**
        * On a `*.restore` tool: whether the agent has changed something it
        * would undo. A session reports these areas if the app reloads.
+       * Return a falsy value for nothing; a truthy one is shown by
+       * `bridge.pending` as the detail (`true` for none), e.g. what it will
+       * put back. Only `bridge.pending` passes `{ detail: true }`; replies
+       * call it bare, so build the detail only when asked.
        */
-      pending?: () => unknown
+      pending?: (options?: { detail?: boolean }) => unknown
     }
 
 /** Tools by name. Namespace them with a dot, e.g. `query.pin`. */

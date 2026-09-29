@@ -13,6 +13,8 @@ export type SessionRequest = {
   timeoutMs?: number
   /** stop: skip bridge.restore and leave the app as it is. */
   keep?: boolean
+  /** stop: report what bridge.restore would undo (bridge.pending) and keep the session running. */
+  dryRun?: boolean
 }
 
 export type SessionResponse = {
@@ -34,6 +36,8 @@ export type SessionResponse = {
   state?: SessionState
   /** stop: what bridge.restore returned; null with keep. */
   restore?: ResultMessage | null
+  /** stop with dryRun or keep: bridge.pending, per area. Absent if the app can't say. */
+  pending?: Record<string, unknown>
 }
 
 /**

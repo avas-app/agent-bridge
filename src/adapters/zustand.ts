@@ -1,3 +1,4 @@
+import { toJson } from '../runtime/to-json'
 import type { Tools } from '../runtime/types'
 
 /** Anything with zustand's store shape. */
@@ -90,6 +91,41 @@ function restore(store: StoreLike, snapshot: unknown) {
   store.setState({ ...snapshot, ...actions }, true)
 }
 
+const PREVIEW = 200
+
+// A value as bridge.pending shows it: small ones as they are, big ones cut.
+// Cycles and BigInts print as toJson prints them; anything else that won't
+// serialize shows as a marker, so one odd value never hides the store.
+function preview(value: unknown): unknown {
+  try {
+    const safe = toJson(value)
+    const text = JSON.stringify(safe)
+    if (text.length <= PREVIEW) return safe
+    return `${text.slice(0, PREVIEW)}… (${text.length} chars)`
+  } catch {
+    return '[unserializable]'
+  }
+}
+
+// What restore would change in a store: each key whose value differs from the
+// snapshot, with both (redacted). Actions are left out; restore keeps the current ones.
+function differences(
+  snapshot: unknown,
+  current: unknown,
+  show: (key: string, value: unknown) => unknown,
+): Record<string, { snapshot: unknown; current: unknown }> {
+  if (!isObject(snapshot) || !isObject(current)) return {}
+  const out: Record<string, { snapshot: unknown; current: unknown }> = {}
+  for (const k of new Set([...Object.keys(snapshot), ...Object.keys(current)])) {
+    const a = snapshot[k]
+    const b = current[k]
+    if (typeof a === 'function' || typeof b === 'function') continue
+    if (!Object.is(a, b))
+      out[k] = { snapshot: preview(show(k, a)), current: preview(show(k, b)) }
+  }
+  return out
+}
+
 /**
  * Keeps secrets out of what store.* prints. Either dotted paths per store
  * (`{ auth: ['accessToken', 'user.phone'] }`), or a hook called for the store
@@ -171,7 +207,7 @@ export function storeTools(
     },
     'store.set': {
       description:
-        'Shallow-merge a partial into a store. Returns only the keys you set, with their new values, not the whole store.',
+        'Shallow-merge a partial into a store. Returns only the keys you set, with their new values, not the whole store. A store is snapshotted on its first store.set or store.call since the last restore (or store.commit); bridge.restore puts that snapshot back. Changes made before that, e.g. by tapping the UI, are not in it: run store.set <store> {} first to snapshot early, and see bridge.pending.',
       run: (name: string, partial: Record<string, unknown>) => {
         const store = get(name)
         beforeChange(store)
@@ -185,7 +221,7 @@ export function storeTools(
     },
     'store.call': {
       description:
-        'Call an action on a store, e.g. ("settings", "setColorScheme", "dark"). Returns the action\'s return value, or { changed: [keys] } when it returns nothing or the store state.',
+        'Call an action on a store, e.g. ("settings", "setColorScheme", "dark"). Returns the action\'s return value, or { changed: [keys] } when it returns nothing or the store state. Snapshots the store first, like store.set: the first store.set or store.call since the last restore is the state bridge.restore returns to.',
       run: async (name: string, action: string, ...args: unknown[]) => {
         const store = get(name)
         const fn = (store.getState() as Record<string, unknown>)[action]
@@ -213,11 +249,35 @@ export function storeTools(
         }
       },
     },
+    'store.commit': {
+      maxArgs: 1,
+      description:
+        'Keep a store as it is now: drops its pending snapshot, so bridge.restore leaves it alone and the next store.set or store.call snapshots again from this state. Use it after repairing a value that was already wrong when the snapshot was taken. Returns { store, committed } (committed: false when nothing was pending).',
+      run: (name: string) => {
+        const store = get(name)
+        return { store: name, committed: snapshots.delete(store) }
+      },
+    },
     'store.restore': {
       maxArgs: 0,
-      pending: () => Object.values(stores).some((s) => snapshots.has(s)),
+      // Per store, its snapshot against now (secrets redacted), so an agent can
+      // tell what a restore will put back before it does.
+      pending: ({ detail }: { detail?: boolean } = {}) => {
+        const changed = Object.entries(stores).filter(([, s]) => snapshots.has(s))
+        if (!changed.length) return false
+        // Replies only need to know something is pending; bridge.pending asks for detail.
+        if (!detail) return true
+        return Object.fromEntries(
+          changed.map(([name, store]) => [
+            name,
+            differences(snapshots.get(store), store.getState(), (key, value) =>
+              out(name, value, key),
+            ),
+          ]),
+        )
+      },
       description:
-        'Undo the agent: put back each store changed with store.set or store.call. Returns their names.',
+        'Undo the agent: put back each store changed with store.set or store.call, to its state at the first of those (store.commit drops a snapshot). Returns their names.',
       run: () =>
         Object.entries(stores).flatMap(([name, store]) => {
           if (!snapshots.has(store)) return []
