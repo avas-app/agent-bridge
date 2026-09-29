@@ -165,6 +165,35 @@ describe('CDP transport', () => {
     await expect(failure).rejects.toThrow('--transport expo')
   })
 
+  test('a call that times out while the debugger is busy fails, not crashes', async () => {
+    const metro = await startFakeMetro({
+      acceptOrigin: (port) => `http://localhost:${port}`,
+    })
+    cleanups.push(
+      metro.close,
+      cdpTransport().start(appContext('Fake Phone', 'dev-cdp')),
+    )
+    const bridge = await connect({
+      metro: metro.metro,
+      transport: 'cdp',
+      timeoutMs: 50,
+    })
+    cleanups.push(bridge.close)
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    cleanups.push(() => process.off('unhandledRejection', onUnhandled))
+
+    // Hermes answers Runtime.evaluate only once the JS thread is free, so
+    // the reply's timeout can fire while the evaluate is still pending.
+    metro.live.evaluateDelayMs = 150
+    await expect(bridge.call('demo.echo', 1)).rejects.toThrow(
+      'No reply to "demo.echo" within 50 ms',
+    )
+    await new Promise((r) => setTimeout(r, 200))
+    expect(unhandled).toEqual([])
+  })
+
   test('auto falls back to CDP when Metro has no Expo socket', async () => {
     const metro = await startFakeMetro({
       acceptOrigin: (port) => `http://localhost:${port}`,

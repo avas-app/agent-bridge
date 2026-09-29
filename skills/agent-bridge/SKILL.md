@@ -156,6 +156,17 @@ it: `step('s', 'cart.setItems', [[a, b]])`.
 file, its size and the top-level shape), or `--full` to print it anyway. Flows
 and `connect()` always get the full value.
 
+Narrow the call before reaching for `--out`:
+
+```sh
+npx agent-bridge call query.get '["feed", {"pages": [0, 2]}]'          # first two pages of an infinite query, plus totalPages
+npx agent-bridge call query.get '["feed", {"path": "pages.0.items"}]'  # just that value
+npx agent-bridge call net.mocks '[{"full": true}]'   # net.mocks cuts bodies over ~2 KB unless full
+```
+
+`pages` is `[from, to]` with `to` exclusive, like `Array.slice`; `path` applies
+after `pages` when both are given.
+
 ## Realtime messages
 
 If the app has `realtime.*` tools, you can see its realtime messages and fake
