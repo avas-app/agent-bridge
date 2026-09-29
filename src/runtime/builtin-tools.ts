@@ -1,4 +1,5 @@
 import type { LogCapture } from './logs'
+import { appTools } from './tools/app'
 import { bridgeTools } from './tools/bridge'
 import { logTools } from './tools/logs'
 import { restoreTools } from './tools/restore'
@@ -13,9 +14,11 @@ export function builtinTools(
   getTools: () => Tools,
   logs: LogCapture,
   getScenarios?: () => Scenarios,
+  deviceId?: string,
 ): Tools {
   return {
-    ...bridgeTools(listTools),
+    ...bridgeTools(listTools, deviceId),
+    ...appTools(),
     ...logTools(logs),
     ...restoreTools(getTools),
     ...screenTools(),

@@ -119,7 +119,14 @@ export async function connectSession(
     if (!result.ok) throw new AgentBridgeCallError(tool, result.error, logs)
     // Other extra fields on the result pass through as they are.
     const { id: _id, from: _from, ok: _ok, ms: appMs, value, ...extra } = result
-    return { ...extra, value: value as T, ms: res.ms ?? 0, appMs, logs }
+    return {
+      ...extra,
+      value: value as T,
+      ms: res.ms ?? 0,
+      appMs,
+      logs,
+      ...(res.notice && { notice: res.notice }),
+    }
   }
 
   return {

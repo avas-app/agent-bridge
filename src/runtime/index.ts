@@ -29,7 +29,7 @@ export function startAgentBridge(options: AgentBridgeOptions = {}): () => void {
     : undefined
   const logs = startLogCapture()
   const allTools = (): Tools => ({
-    ...builtinTools(() => registry.list(), allTools, logs.capture, getScenarios),
+    ...builtinTools(() => registry.list(), allTools, logs.capture, getScenarios, deviceId),
     ...userTools(),
   })
   const registry = createRegistry(allTools, logs.capture)

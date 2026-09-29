@@ -15,7 +15,7 @@ import {
   PROTOCOL_VERSION,
 } from '../../../shared/protocol'
 import { startFakeMetro } from '../../__tests__/fake-metro'
-import { connectSession } from '../client'
+import { connectSession, sessionRequest } from '../client'
 import { runSessionDaemon } from '../daemon'
 import {
   isAlive,
@@ -28,12 +28,22 @@ import {
 /** An app on Expo's broadcast socket. `restores` counts bridge.restore calls. */
 async function fakeApp(
   metro: string,
-  deviceId: string,
+  firstId: string,
   options: { restore?: boolean } = {},
 ) {
-  const app = { restores: 0, slow: 0, ws: undefined as unknown as WebSocket }
+  let deviceId = firstId
+  const app = {
+    restores: 0,
+    slow: 0,
+    ws: undefined as unknown as WebSocket,
+    /** A JS reload that keeps the socket: the runtime comes back with a new id. */
+    reload: (id: string) => {
+      deviceId = id
+    },
+  }
   const tools: Tools = {
     'demo.echo': (...args: unknown[]) => args,
+    'demo.restore': () => ({ undone: 1 }),
     'demo.slow': async () => {
       app.slow++
       await new Promise((r) => setTimeout(r, 400))
@@ -48,7 +58,7 @@ async function fakeApp(
         }),
   }
   const registry = createRegistry(() => ({
-    ...bridgeTools(() => registry.list()),
+    ...bridgeTools(() => registry.list(), deviceId),
     ...tools,
   }))
   const info = (): DeviceInfo => ({
@@ -227,6 +237,73 @@ describe('session daemon', () => {
 
     reloaded.ws.close()
     await expect(bridge.call('demo.echo', 3)).rejects.toThrow('The app is gone')
+  }, 15_000)
+
+  test('reports the restores a reload lost, once in the next call and again on stop', async () => {
+    const { metro, app } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'lost',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'lost', timeoutMs: 300 })
+    cleanups.push(bridge.close)
+    expect((await bridge.timed('demo.echo', 1)).notice).toBeUndefined()
+
+    app.ws.close()
+    const reloaded = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => reloaded.ws.close())
+    const next = await bridge.timed('demo.echo', 2)
+    expect(next.value).toEqual([2])
+    expect(next.notice).toBe('app reloaded; 1 pending restore lost: demo')
+    expect((await bridge.timed('demo.echo', 3)).notice).toBeUndefined()
+    expect(readFileSync(sessionFiles('lost', dir).log, 'utf8')).toContain(
+      'warning: app reloaded; 1 pending restore lost: demo',
+    )
+
+    const stopped = await sessionRequest(listSessions()[0]!, { op: 'stop' })
+    expect(stopped.notice).toBe('app reloaded; 1 pending restore lost: demo')
+    expect(reloaded.restores).toBe(1)
+  }, 15_000)
+
+  test('notices a reload on a socket that survived it', async () => {
+    const { metro, app } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'same',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'same', timeoutMs: 300 })
+    cleanups.push(bridge.close)
+    await bridge.call('demo.echo', 1)
+    // Same connection, new runtime: the id the app answers with changes.
+    app.reload('dev-3')
+    const next = await bridge.timed('demo.echo', 2)
+    expect(next.notice).toBe('app reloaded; 1 pending restore lost: demo')
+    expect(listSessions()[0]?.device.deviceId).toBe('dev-3')
+  }, 15_000)
+
+  test('says nothing when no reload happened, and 0 when nothing was pending', async () => {
+    const { metro, app } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'none',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'none', timeoutMs: 300 })
+    cleanups.push(bridge.close)
+    await bridge.call('bridge.ping')
+    app.reload('dev-4')
+    const next = await bridge.timed('bridge.ping')
+    expect(next.notice).toBe('app reloaded; 0 pending restores lost')
+    const stopped = await daemon.stop(true)
+    expect(stopped).toBeNull()
   }, 15_000)
 
   test('a slow tool times out without a retry while the app still answers', async () => {

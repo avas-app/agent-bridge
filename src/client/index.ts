@@ -33,6 +33,8 @@ export type Timed<T> = {
   ms: number
   appMs: number
   logs: LogEntry[]
+  /** Through a session: the app reloaded since the previous call, so its restores are lost. */
+  notice?: string
 }
 
 export type AgentBridge = {

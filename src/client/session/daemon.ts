@@ -110,12 +110,41 @@ export async function runSessionDaemon(
     if (!finishing) writePrivate(files.state, JSON.stringify(state, null, 2))
   }
 
+  // What a reload throws away: the namespaces this session called that have a
+  // `.restore`. Their undo state lived in the old runtime, so a new one has none.
+  const touched = new Set<string>()
+  const reloads: string[] = []
+  let unseen: string[] = []
+  const noteReload = () => {
+    const lost = [...touched]
+    touched.clear()
+    const note = `app reloaded; ${lost.length} pending restore${lost.length === 1 ? '' : 's'} lost${lost.length ? `: ${lost.join(', ')}` : ''}`
+    reloads.push(note)
+    unseen.push(note)
+    log(`warning: ${note}`)
+  }
+  const track = (tool: string) => {
+    const ns = tool.split('.')[0] ?? ''
+    if (tool === 'bridge.restore') touched.clear()
+    else if (
+      ns !== 'bridge' &&
+      conn.device.tools.some((t) => t.name === `${ns}.restore`)
+    )
+      touched.add(ns)
+  }
+  const takeNotice = () => {
+    const notice = unseen.join('; ')
+    unseen = []
+    return notice ? { notice } : {}
+  }
+
   // Reconnecting is shared, so concurrent calls wait for one re-discovery.
   let stale = false
   let reconnecting: Promise<void> | null = null
   const reconnect = (reason: string) => {
     reconnecting ??= (async () => {
       log(`reconnecting: ${reason}`)
+      const before = conn.device.deviceId
       conn.close()
       try {
         conn = await reach()
@@ -127,6 +156,8 @@ export async function runSessionDaemon(
         )
       }
       stale = false
+      // The runtime picks a new id each time the bridge installs, i.e. on reload.
+      if (conn.device.deviceId !== before) noteReload()
       state.device = deviceOf(conn)
       state.transport = conn.transport
       save()
@@ -137,11 +168,19 @@ export async function runSessionDaemon(
     return reconnecting
   }
 
-  const ping = (ms = 1500) =>
+  // `id` is the runtime's install id; an app without it in bridge.ping leaves it undefined.
+  const probe = (ms = 1500) =>
     conn.call('bridge.ping', [], Math.min(ms, 1500)).then(
-      (r) => r.ok,
-      () => false,
+      (r) => ({
+        ok: r.ok,
+        id: r.ok ? (r.value as { deviceId?: string } | null)?.deviceId : undefined,
+      }),
+      () => ({ ok: false, id: undefined }),
     )
+  const ping = async (ms = 1500) => (await probe(ms)).ok
+  // The app answers but as a new runtime (the socket survived the reload).
+  const reloaded = (id: string | undefined) =>
+    id !== undefined && id !== conn.device.deviceId
 
   // One attempt; `lost` says the connection broke rather than the tool.
   const attempt = async (tool: string, args: unknown[], ms: number) => {
@@ -158,10 +197,14 @@ export async function runSessionDaemon(
   const callApp = async (tool: string, args: unknown[], ms: number) => {
     if (stale || reconnecting)
       await (reconnecting ?? reconnect('app stopped answering'))
+    const seen = await probe(ms)
+    if (reloaded(seen.id)) await reconnect('app reloaded')
     let t0 = performance.now()
     const first = await attempt(tool, args, ms)
-    if (first.result)
+    if (first.result) {
+      if (first.result.ok) track(tool)
       return { result: first.result, ms: performance.now() - t0 }
+    }
     await reconnect(first.lost)
     t0 = performance.now()
     const second = await attempt(tool, args, ms)
@@ -169,6 +212,7 @@ export async function runSessionDaemon(
       throw new Error(
         `The app stopped answering after a reconnect: ${second.lost}`,
       )
+    if (second.result.ok) track(tool)
     return {
       result: second.result,
       ms: performance.now() - t0,
@@ -198,8 +242,11 @@ export async function runSessionDaemon(
       ? undefined
       : setInterval(async () => {
           if (inflight || reconnecting || finishing) return
-          if (stale || !(await ping()))
-            await reconnect('no answer to bridge.ping').catch(() => {})
+          const seen = stale ? { ok: false, id: undefined } : await probe()
+          if (!seen.ok || reloaded(seen.id))
+            await reconnect(
+              seen.ok ? 'app reloaded' : 'no answer to bridge.ping',
+            ).catch(() => {})
         }, options.healthMs ?? 5000)
   // The ping alone mustn't keep the process alive (Node timers have unref).
   const timer = health as { unref?: () => void } | undefined
@@ -257,14 +304,12 @@ export async function runSessionDaemon(
         inflight++
         touch()
         try {
-          return {
-            id: req.id,
-            ...(await callApp(
-              req.tool,
-              req.args ?? [],
-              req.timeoutMs ?? timeoutMs,
-            )),
-          }
+          const answer = await callApp(
+            req.tool,
+            req.args ?? [],
+            req.timeoutMs ?? timeoutMs,
+          )
+          return { id: req.id, ...answer, ...takeNotice() }
         } finally {
           inflight--
           touch()
@@ -283,7 +328,11 @@ export async function runSessionDaemon(
           transport: conn.transport,
         }
       case 'stop':
-        return { id: req.id, restore: await teardown('stop', !!req.keep) }
+        return {
+          id: req.id,
+          restore: await teardown('stop', !!req.keep),
+          ...(reloads.length && { notice: reloads.join('; ') }),
+        }
       default:
         return { id: req.id, error: `Unknown op "${String(req.op)}"` }
     }

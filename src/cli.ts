@@ -138,7 +138,7 @@ async function main() {
       const [tool, raw] = rest
       if (!tool) throw new Error('Usage: agent-bridge call <tool> [args]')
       return withBridge(async (bridge) => {
-        const { value, ms, appMs, logs } = await bridge
+        const { value, ms, appMs, logs, notice } = await bridge
           .timed(tool, ...parseCallArgs(raw))
           .catch((error: unknown) => {
             for (const e of failedLogs(error)) console.error(logLine(e))
@@ -146,6 +146,7 @@ async function main() {
           })
         console.log(JSON.stringify(value, null, 2))
         for (const e of logs) console.error(logLine(e))
+        if (notice) console.error(`Warning: ${notice}`)
         console.error(
           `${tool} via ${bridge.transport}: ${ms.toFixed(1)} ms round trip, ${appMs} ms in the app`,
         )

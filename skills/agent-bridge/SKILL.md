@@ -34,6 +34,12 @@ npx agent-bridge tools                    # what this app exposes
 A session holds one connection for all your calls. It stops itself after 15
 minutes without calls and runs `bridge.restore` when it does.
 
+A JS reload (an error screen's Retry, or `app.reload`) throws away every pending
+restore. The session notices the app is a new runtime and reports
+`app reloaded; N pending restores lost: store, query` (the areas you had
+called) as a warning on the next call and again in `session stop`. When you see
+it, redo your setup: nothing you changed before the reload will be undone.
+
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.
 

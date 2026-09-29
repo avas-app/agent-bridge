@@ -157,6 +157,7 @@ async function stop(flags: SessionFlags) {
   console.log(
     `Stopped session "${state.name}". ${describeRestore(res.restore)}`,
   )
+  if (res.notice) console.log(`Warning: ${res.notice}`)
 }
 
 function list() {
