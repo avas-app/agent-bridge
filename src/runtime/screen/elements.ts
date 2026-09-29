@@ -7,8 +7,9 @@ import {
   measureHost,
   textOf,
 } from '../find-text-core'
+import { webViewNameOf } from './webview-mark'
 
-export type ElementKind = 'button' | 'input' | 'text' | 'view'
+export type ElementKind = 'button' | 'input' | 'text' | 'view' | 'webview'
 
 export type ScreenElement = {
   kind: ElementKind
@@ -24,6 +25,8 @@ export type ScreenElement = {
   checked?: boolean | 'mixed'
   selected?: boolean
   expanded?: boolean
+  /** A WebView registered with the react-native-webview adapter: drive it with `webview.*`. */
+  webview?: string
   rect: Rect | null
   /** Only in `screen.snapshot({ all: true })`. */
   onScreen?: boolean
@@ -245,7 +248,8 @@ const interesting = (p: Props) =>
   isFn(p.onValueChange) ||
   isInputProps(p) ||
   typeof p.testID === 'string' ||
-  typeof labelOf(p) === 'string'
+  typeof labelOf(p) === 'string' ||
+  webViewNameOf(p) !== undefined
 
 // Icon fonts (Ionicons and friends) render glyphs from the private use area.
 const ICON_GLYPHS = /[\uE000-\uF8FF]/g
@@ -273,6 +277,8 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
   fill('label', labelOf(p))
   fill('role', p.accessibilityRole ?? p.role)
   fill('placeholder', p.placeholder)
+  const webview = webViewNameOf(p)
+  if (e.webview === undefined && webview !== undefined) e.webview = webview
   // A Switch's boolean value is its checked state, not a value to read.
   const isSwitch =
     SWITCH_HOSTS.has(fiber.type as string) ||
@@ -581,7 +587,9 @@ export function collectScreen(
       .filter(Boolean)
       .join(' ')
     if (text) e.text = text
-    e.kind = rec.input
+    e.kind = e.webview !== undefined
+      ? 'webview'
+      : rec.input
       ? 'input'
       : rec.press
         ? 'button'

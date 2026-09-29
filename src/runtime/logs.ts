@@ -240,3 +240,17 @@ export function startLogCapture(env: LogEnv = globalThis as unknown as LogEnv): 
     },
   }
 }
+
+/**
+ * Records an entry in the running bridge's log, for code that lives in another
+ * bundle (adapters) and has an error of its own to report, such as a WebView's.
+ * Does nothing when no bridge is running.
+ */
+export function logToBridge(
+  level: Level,
+  message: string,
+  env: object = globalThis,
+): void {
+  const state = (env as Record<symbol, State | undefined>)[STATE]
+  state?.capture.record(level, [message])
+}

@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { collectElements, focused } from '../elements'
+import { webViewMark } from '../webview-mark'
+import { describe as describeElement } from '../targets'
 import { createScreen } from '..'
 import { WINDOW, composite, host, pressable, rnText, text, textInput, tree } from './fake-tree'
 
@@ -8,6 +10,18 @@ const elementsOf = (...children: ReturnType<typeof host>[]) =>
   focused(collectElements([tree(host(), ...children)], WINDOW)).map((f) => f.element)
 
 describe('collectElements', () => {
+  test('a registered WebView is one webview element carrying its name', () => {
+    const props = { injectedJavaScriptBeforeDocumentLoaded: `${webViewMark('check*/out "1"')}(function(){})();true;` }
+    // The prop reaches the component and the native host under it.
+    const view = tree(composite(props), host({ ...props, testID: undefined }))
+    const [element, ...rest] = elementsOf(view)
+    expect(rest).toEqual([])
+    expect(element).toMatchObject({ kind: 'webview', webview: 'check*/out "1"' })
+    expect(describeElement(element!)).toBe('webview "check*/out \\"1\\""')
+    // Someone else's script is not a WebView of ours.
+    expect(elementsOf(host({ injectedJavaScriptBeforeDocumentLoaded: 'true;' }))).toEqual([])
+  })
+
   test('a Pressable is one button with the text beneath it, icon glyphs dropped', () => {
     const button = pressable(
       { onPress: () => {}, testID: 'add-plant', accessibilityLabel: 'Add plant', accessibilityRole: 'button' },

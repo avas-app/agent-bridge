@@ -47,6 +47,10 @@
       "types": "./dist/adapters/expo-router.d.cts",
       "default": "./entries/expo-router.cjs"
     },
+    "./react-native-webview": {
+      "types": "./dist/adapters/react-native-webview.d.cts",
+      "default": "./entries/react-native-webview.cjs"
+    },
     "./network": {
       "types": "./dist/network/index.d.cts",
       "default": "./entries/network.cjs"
@@ -92,7 +96,8 @@
     "mmkv",
     "realtime",
     "ably",
-    "socket.io"
+    "socket.io",
+    "webview"
   ],
   "scripts": {
     "build": "rm -rf dist && tsup",
@@ -108,13 +113,17 @@
     "@tanstack/query-core": ">=5",
     "expo": ">=52",
     "react": ">=18",
-    "react-native": ">=0.76"
+    "react-native": ">=0.76",
+    "react-native-webview": ">=13"
   },
   "peerDependenciesMeta": {
     "@tanstack/query-core": {
       "optional": true
     },
     "expo": {
+      "optional": true
+    },
+    "react-native-webview": {
       "optional": true
     }
   },
@@ -130,6 +139,7 @@
     "@types/react": "^19.3.0",
     "@types/ws": "^8.18.1",
     "ably": "^2.29.0",
+    "happy-dom": "^20.14.5",
     "socket.io-client": "^4.8.4",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",
