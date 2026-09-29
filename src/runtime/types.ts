@@ -17,6 +17,9 @@ export type ToolDefinition =
       /**
        * On a `*.restore` tool: whether the agent has changed something it
        * would undo. A session reports these areas if the app reloads.
+       * Return a falsy value for nothing; a truthy one is shown by
+       * `bridge.pending` as the detail (`true` for none), e.g. what it will
+       * put back.
        */
       pending?: () => unknown
     }

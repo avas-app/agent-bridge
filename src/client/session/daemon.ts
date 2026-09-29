@@ -334,6 +334,16 @@ export async function runSessionDaemon(
     return finishing
   }
 
+  // bridge.pending, or undefined from an app without it (or one that can't answer).
+  const readPending = async () => {
+    try {
+      const { result } = await callApp('bridge.pending', [], timeoutMs)
+      return result.ok ? (result.value as Record<string, unknown>) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   const handle = async (req: SessionRequest): Promise<SessionResponse> => {
     if (finishing && req.op !== 'stop')
       return { id: req.id, error: `Session "${name}" is stopping` }
@@ -369,12 +379,18 @@ export async function runSessionDaemon(
           device: conn.device,
           transport: conn.transport,
         }
-      case 'stop':
+      case 'stop': {
+        // A dry run, or a stop that leaves the app as it is: say what a
+        // restore would put back.
+        const pending = req.dryRun || req.keep ? await readPending() : undefined
+        if (req.dryRun) return { id: req.id, pending }
         return {
           id: req.id,
           restore: await teardown('stop', !!req.keep),
+          ...(pending && { pending }),
           ...(reloads.length && { notice: reloads.join('; ') }),
         }
+      }
       default:
         return { id: req.id, error: `Unknown op "${String(req.op)}"` }
     }
@@ -400,7 +416,7 @@ export async function runSessionDaemon(
         error: message(error),
       }))
       if (!socket.writableEnded) socket.write(encodeLine(res))
-      if (req.op === 'stop') closeClients()
+      if (req.op === 'stop' && !req.dryRun) closeClients()
     })
   })
 

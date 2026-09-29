@@ -44,6 +44,7 @@ Usage
 Sessions: one connection for all of an agent's calls
   agent-bridge session start [--name n] [--idle 15m]   Connect once in the background
   agent-bridge session stop [--name n] [--keep]        bridge.restore (unless --keep), then end
+  agent-bridge session stop --dry-run                  List what bridge.restore would undo; keep running
   agent-bridge session list | status [--name n]
   call, tools and run use this project's running session (the only one, or the one
   matching --metro/--device), and print its name. With several, pass --session <name>.
@@ -92,6 +93,7 @@ async function main() {
       name: { type: 'string' },
       idle: { type: 'string' },
       keep: { type: 'boolean' },
+      'dry-run': { type: 'boolean' },
       session: { type: 'string' },
       'no-session': { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },

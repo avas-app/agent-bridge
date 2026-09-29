@@ -64,6 +64,7 @@ async function fakeApp(
     'demo.set': () => {
       app.changed = true
     },
+    'bridge.pending': () => (app.changed ? { demo: { key: { snapshot: 1, current: 2 } } } : {}),
     'demo.restore': {
       pending: () => app.changed,
       run: () => {
@@ -402,6 +403,31 @@ describe('session daemon', () => {
     expect(stopped.notice).toBe(LOST)
     expect(reloaded.restores).toBe(1)
   }, 15_000)
+
+  test('stop --dry-run lists what restore would undo and keeps the session; --keep reports it', async () => {
+    const { app, bridge } = await session('dry')
+    const state = listSessions()[0]!
+    await bridge.call('demo.set')
+
+    const dry = await sessionRequest(state, { op: 'stop', dryRun: true })
+    expect(dry.pending).toEqual({ demo: { key: { snapshot: 1, current: 2 } } })
+    expect(dry.restore).toBeUndefined()
+    expect(app.restores).toBe(0)
+    expect(listSessions().map((s) => s.name)).toEqual(['dry'])
+    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+
+    const kept = await sessionRequest(state, { op: 'stop', keep: true })
+    expect(kept.restore).toBeNull()
+    expect(kept.pending).toEqual({ demo: { key: { snapshot: 1, current: 2 } } })
+    expect(app.restores).toBe(0)
+  })
+
+  test('a plain stop reports no pending and an app without bridge.pending still stops', async () => {
+    const { app } = await session('plain')
+    const stopped = await sessionRequest(listSessions()[0]!, { op: 'stop' })
+    expect(stopped.pending).toBeUndefined()
+    expect(app.restores).toBe(1)
+  })
 
   test('a failing call after a reload still carries the notice', async () => {
     const { app, bridge } = await session('fails')

@@ -214,6 +214,21 @@ retry) can't be tied to a query, so every query fetching at that moment is
 marked; on restore those reset even if real, and an observed one refetches
 once. Infinite queries stay marked until reset.
 
+Before you stop, `npx agent-bridge call bridge.pending` (or
+`session stop --dry-run`, which also keeps the session) lists what restore will
+put back, per area. A store is snapshotted on its first `store.set` or
+`store.call` since the last restore, so a UI tap before that is not in the
+snapshot, and repairing a value with `store.set` snapshots the broken one.
+If a value looks wrong: read `bridge.pending`, then `store.commit '"<store>"'`
+keeps the current value and drops the snapshot. `store.set <store> {}` arms the
+snapshot before you drive the UI. `session stop --keep` warns about anything
+still pending; a later restore will apply it.
+
+The app may expose its own tools for hooks the bridge has no tool for
+(`queue.flush`, `realtime.reconnect`); `tools` lists them. Whatever they change
+through `onRestore` is undone by `bridge.restore` and listed under `app` in
+`bridge.pending`. There is no `app.eval`: if the app has no tool for it, say so.
+
 ## Traps
 
 - Run next to the simulator. From another machine every call pays the network.

@@ -13,6 +13,7 @@ import { loadId } from './load-id'
 import { startLogCapture } from './logs'
 import { createRegistry } from './registry'
 import { settle } from './screen/settle'
+import { onRestore } from './undo'
 import type { AgentBridgeOptions, Tools, TransportContext } from './types'
 
 const randomId = () => Math.random().toString(36).slice(2, 10)
@@ -93,6 +94,9 @@ export type { OptionsSchema } from './options-schema'
 // For custom tools that change what's on screen: await settle() before
 // returning so the agent's next check sees the render.
 export { settle }
+// For custom tools that change something bridge.restore doesn't know about:
+// register how to put it back.
+export { onRestore }
 export type { SettleResult } from './screen/settle'
 export type { ScreenElement, Target } from './screen'
 export type {

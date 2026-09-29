@@ -178,3 +178,48 @@ describe('storeTools', () => {
     })
   })
 })
+
+describe('store.restore pending and store.commit', () => {
+  const make = () => {
+    const auth = createStore<{ user: string; token: string }>()(() => ({ user: 'ada', token: 'secret' }))
+    const tools = storeTools({ auth }, { redact: { auth: ['token'] } })
+    const pending = () => (tools['store.restore'] as { pending: () => unknown }).pending()
+    return { auth, tools, pending }
+  }
+
+  test('pending is false until a bridge write, then shows snapshot against current, redacted', () => {
+    const { tools, pending } = make()
+    expect(pending()).toBe(false)
+    run(tools, 'store.set', 'auth', { user: 'grace', token: 'other' })
+    expect(pending()).toEqual({
+      auth: {
+        user: { snapshot: 'ada', current: 'grace' },
+        token: { snapshot: '[redacted]', current: '[redacted]' },
+      },
+    })
+  })
+
+  test('long values are cut', () => {
+    const { tools, pending } = make()
+    run(tools, 'store.set', 'auth', { user: 'x'.repeat(500) })
+    const detail = (pending() as Record<string, Record<string, { current: string }>>).auth!.user!
+    expect(detail.current.length).toBeLessThan(300)
+    expect(detail.current).toContain('502 chars')
+  })
+
+  test('store.commit keeps the current value: restore leaves it alone, and the next write snapshots again', () => {
+    const { auth, tools, pending } = make()
+    run(tools, 'store.set', 'auth', { user: 'broken' })
+    run(tools, 'store.set', 'auth', { user: 'fixed' })
+    expect(run(tools, 'store.commit', 'auth')).toEqual({ store: 'auth', committed: true })
+    expect(pending()).toBe(false)
+    expect(run(tools, 'store.restore')).toEqual([])
+    expect(auth.getState().user).toBe('fixed')
+    expect(run(tools, 'store.commit', 'auth')).toEqual({ store: 'auth', committed: false })
+
+    run(tools, 'store.set', 'auth', { user: 'later' })
+    expect(run(tools, 'store.restore')).toEqual(['auth'])
+    expect(auth.getState().user).toBe('fixed')
+    expect(() => run(tools, 'store.commit', 'nope')).toThrow('Unknown store')
+  })
+})
