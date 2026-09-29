@@ -91,10 +91,25 @@ describe('ablyTools', () => {
       extras: real.extras,
       clientId: 'c',
       connectionId: 'k',
-      version: { timestamp: expect.any(Number) },
+      id: 'agent-bridge-1',
+      serial: 's',
+      timestamp: expect.any(Number),
+      version: { serial: 's', timestamp: injected.timestamp },
     })
-    expect(typeof injected.id).toBe('string')
-    expect(typeof injected.timestamp).toBe('number')
+  })
+
+  test('version follows the passed serial and timestamp; serial defaults per message', async () => {
+    const { tools, channel } = setup()
+    const a = mock()
+    await channel('chat').subscribe(a)
+    run(tools, 'realtime.emit', 'chat', { name: 'x', timestamp: 5, serial: 's' })
+    run(tools, 'realtime.emit', 'chat', { name: 'x' })
+    run(tools, 'realtime.emit', 'chat', { name: 'x', event: 'y' })
+    const [first, second, third] = a.mock.calls.map((c) => c[0] as Record<string, unknown>)
+    expect(first!.version).toEqual({ serial: 's', timestamp: 5 })
+    expect(second!.serial).toBe('agent-bridge-2')
+    expect(second!.version).toEqual({ serial: second!.serial, timestamp: second!.timestamp })
+    expect(third).not.toHaveProperty('event')
   })
 
   test('rejects "event", which Ably messages do not have', async () => {

@@ -72,15 +72,21 @@ function toMessage(values: unknown[], { id }: { id: string }): AblyMessageLike {
   const given = input as AblyMessageLike & { event?: unknown }
   if (given.name === undefined && given.event !== undefined)
     throw new Error(`Ably messages have "name", not "event". ${USAGE}`)
-  const timestamp = Date.now()
-  return {
+  const { event: _event, ...fields } = given
+  const message: AblyMessageLike = {
     id,
-    timestamp,
+    timestamp: Date.now(),
     action: 'message.create',
-    version: { timestamp },
+    serial: id,
     annotations: { summary: {} },
-    ...given,
+    ...fields,
   }
+  // As ably-js's expandFields does: version falls back to the message's serial and timestamp.
+  const version = { ...(message.version as object) } as { serial?: string; timestamp?: number }
+  if (!version.serial && message.serial) version.serial = message.serial
+  if (!version.timestamp && message.timestamp) version.timestamp = message.timestamp
+  message.version = version
+  return message
 }
 
 /**
