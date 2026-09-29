@@ -13,6 +13,7 @@ import {
   PROTOCOL_VERSION,
 } from '../../shared/protocol'
 import { AgentBridgeCallError, connect } from '../index'
+import { openConnection } from '../open'
 import { startFakeMetro } from './fake-metro'
 
 const tools: Tools = {
@@ -207,6 +208,52 @@ describe('CDP transport', () => {
     expect(bridge.transport).toBe('cdp')
     expect(await bridge.call('demo.echo', 1)).toEqual([1])
   })
+})
+
+describe('opening a connection never hangs', () => {
+  const started = async (options: Parameters<typeof startFakeMetro>[0]) => {
+    const metro = await startFakeMetro(options)
+    cleanups.push(metro.close)
+    return metro
+  }
+
+  test('Metro accepts TCP but never answers /json/list', async () => {
+    const metro = await started({})
+    metro.live.hangList = true
+    const t0 = Date.now()
+    await expect(
+      openConnection({ metro: metro.metro, transport: 'cdp', timeoutMs: 300 }),
+    ).rejects.toThrow('Timed out after 300 ms')
+    expect(Date.now() - t0).toBeLessThan(2000)
+  }, 5000)
+
+  test('Metro never completes the websocket upgrade (Expo and CDP)', async () => {
+    const metro = await started({ expo: true })
+    metro.live.hangUpgrade = true
+    for (const transport of ['auto', 'expo', 'cdp'] as const) {
+      await expect(
+        openConnection({ metro: metro.metro, transport, timeoutMs: 300 }),
+      ).rejects.toThrow(/Timed out after 300 ms|Could not open|closed/)
+    }
+  }, 5000)
+
+  test('an abort stops the attempt', async () => {
+    const metro = await started({ expo: true })
+    metro.live.hangUpgrade = true
+    const abort = new AbortController()
+    setTimeout(() => abort.abort(), 100)
+    await expect(
+      openConnection({ metro: metro.metro, signal: abort.signal }),
+    ).rejects.toThrow('aborted')
+  }, 5000)
+
+  test('the inspector never answers Runtime.enable', async () => {
+    const metro = await started({})
+    metro.live.hangCommands = true
+    await expect(
+      openConnection({ metro: metro.metro, transport: 'cdp', timeoutMs: 300 }),
+    ).rejects.toThrow('Timed out after 300 ms')
+  }, 5000)
 })
 
 describe('Expo transport', () => {

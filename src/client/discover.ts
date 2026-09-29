@@ -1,3 +1,9 @@
+/** A signal that fires after `ms`, or when `signal` does. Covers the body read too. */
+const within = (ms: number, signal?: AbortSignal) =>
+  signal
+    ? AbortSignal.any([AbortSignal.timeout(ms), signal])
+    : AbortSignal.timeout(ms)
+
 export const DEFAULT_METRO = 'localhost:8081'
 
 const stripScheme = (metro: string) =>
@@ -18,14 +24,17 @@ export function metroHost(metro?: string): string {
  * debugger socket whose Origin doesn't match it exactly, silently. Returns null
  * for bare React Native.
  */
-export async function expoHostUri(metro: string): Promise<string | null> {
+export async function expoHostUri(
+  metro: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
   try {
     const res = await fetch(`http://${metro}/`, {
       headers: {
         'expo-platform': 'ios',
         accept: 'application/expo+json,application/json',
       },
-      signal: AbortSignal.timeout(3000),
+      signal: within(3000, signal),
     })
     if (!res.ok) return null
     const manifest = (await res.json()) as {
@@ -54,9 +63,12 @@ export type CdpTarget = {
   webSocketDebuggerUrl: string
 }
 
-export async function listCdpTargets(metro: string): Promise<CdpTarget[]> {
+export async function listCdpTargets(
+  metro: string,
+  signal?: AbortSignal,
+): Promise<CdpTarget[]> {
   const res = await fetch(`http://${metro}/json/list`, {
-    signal: AbortSignal.timeout(3000),
+    signal: within(3000, signal),
   })
   if (!res.ok)
     throw new Error(

@@ -21,8 +21,16 @@ const deviceLabel = (d: DeviceInfo) =>
   `${d.name} (${d.platform}, ${d.deviceId})`
 
 /** Opens Expo's broadcast socket and asks every app with the bridge to say hello. */
-async function openBroadcast(metro: string, discoveryMs: number) {
-  const ws = await openSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
+async function openBroadcast(
+  metro: string,
+  discoveryMs: number,
+  signal?: AbortSignal,
+) {
+  const ws = await openSocket(
+    `ws://${metro}/expo-dev-plugins/broadcast`,
+    undefined,
+    signal,
+  )
   const devices = new Map<string, DeviceInfo>()
   const pending = createPending()
   const announced: Array<(info: DeviceInfo) => void> = []
@@ -55,7 +63,19 @@ async function openBroadcast(metro: string, discoveryMs: number) {
     )
 
   send('hello', {})
-  await new Promise((r) => setTimeout(r, discoveryMs))
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      ws.terminate()
+      reject(new Error('aborted while waiting for hello replies'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, discoveryMs)
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
+  })
   return { ws, devices, pending, send, announced }
 }
 
@@ -72,10 +92,12 @@ export async function connectExpo(
   metro: string,
   device?: string,
   discoveryMs = 600,
+  signal?: AbortSignal,
 ): Promise<Connection> {
   const { ws, devices, pending, send, announced } = await openBroadcast(
     metro,
     discoveryMs,
+    signal,
   )
   let info: DeviceInfo
   try {

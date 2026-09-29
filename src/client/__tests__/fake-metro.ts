@@ -22,16 +22,31 @@ type Options = {
 type Live = {
   /** Hold each Runtime.evaluate reply this long, like Hermes while the JS thread is busy. */
   evaluateDelayMs: number
+  /** Accept TCP for /json/list and never answer. */
+  hangList: boolean
+  /** Accept a websocket connection and never finish the upgrade. */
+  hangUpgrade: boolean
+  /** Open the inspector socket but never answer a command. */
+  hangCommands: boolean
 }
 
 export async function startFakeMetro(options: Options = {}) {
   const inspector = new WebSocketServer({ noServer: true })
   const broadcast = new WebSocketServer({ noServer: true })
   let port = 0
-  const live: Live = { evaluateDelayMs: 0 }
+  const live: Live = {
+    evaluateDelayMs: 0,
+    hangList: false,
+    hangUpgrade: false,
+    hangCommands: false,
+  }
+  // Sockets held open on purpose; closing the fake must let go of them.
+  const held = new Set<{ destroy: () => void }>()
 
   const server: Server = createServer((req, res) => {
-    if (req.url === '/json/list') {
+    if (req.url === '/json/list' && live.hangList) {
+      held.add(req.socket)
+    } else if (req.url === '/json/list') {
       res.setHeader('content-type', 'application/json')
       res.end(
         JSON.stringify([
@@ -63,7 +78,8 @@ export async function startFakeMetro(options: Options = {}) {
 
   server.on('upgrade', (req, socket, head) => {
     const path = (req.url ?? '').split('?')[0]
-    if (path === '/inspector/debug') {
+    if (live.hangUpgrade) held.add(socket)
+    else if (path === '/inspector/debug') {
       inspector.handleUpgrade(req, socket, head, (ws) => {
         const expected = options.acceptOrigin?.(port)
         if (expected && req.headers.origin !== expected) ws.terminate()
@@ -94,6 +110,7 @@ export async function startFakeMetro(options: Options = {}) {
       new Promise<void>((resolve) => {
         for (const c of [...inspector.clients, ...broadcast.clients])
           c.terminate()
+        for (const socket of held) socket.destroy()
         server.close(() => resolve())
       }),
   }
@@ -102,6 +119,7 @@ export async function startFakeMetro(options: Options = {}) {
 function serveCdp(ws: WebSocket, options: Options, live: Live) {
   const g = globalThis as Record<string, unknown>
   ws.on('message', async (data) => {
+    if (live.hangCommands) return
     const { id, method, params } = JSON.parse(String(data))
     if (method === 'Runtime.evaluate' && options.noEvaluate) {
       ws.send(JSON.stringify({ id, error: { code: -32601, message: method } }))
