@@ -194,4 +194,20 @@ describe('routerTools', () => {
     expect(await run(tools, 'router.dismissAll')).toBe(true)
     expect(run(tools, 'router.current')).toMatchObject({ pathname: '/', canGoBack: false })
   })
+
+  test('router.dismiss and router.dismissAll throw when the router has no dismiss', () => {
+    const { router } = fakeApp({ '/': tabs('index') }, '/')
+    const { dismiss: _d, dismissAll: _a, canDismiss: _c, ...old } = router
+    const tools = routerTools(old)
+    expect(() => run(tools, 'router.dismiss')).toThrow('this router has no dismiss')
+    expect(() => run(tools, 'router.dismissAll')).toThrow('update expo-router')
+  })
+
+  test('router.dismiss still works when only canDismiss is missing', () => {
+    const { router } = fakeApp({ '/': tabs('index') }, '/')
+    let called = 0
+    const tools = routerTools({ ...router, canDismiss: undefined, dismiss: () => void called++ })
+    expect(run(tools, 'router.dismiss')).toBe(true)
+    expect(called).toBe(1)
+  })
 })
