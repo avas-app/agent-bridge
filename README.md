@@ -72,7 +72,14 @@ export function AgentBridge() {
     transports: [expoTransport(), cdpTransport()],
     tools: {
       ...queryTools(queryClient),
-      ...storeTools({ settings: useSettingsStore, auth: useAuthStore }),
+      ...storeTools(
+        { settings: useSettingsStore, auth: useAuthStore },
+        // Masks these paths in every store.* output; `store.set` and
+        // `store.call` never echo the whole store. An action's return value
+        // is matched by store path only if it is a piece of the state itself,
+        // not a copy; use a hook function for those.
+        { redact: { auth: ['accessToken', 'refreshToken', 'user.phone'] } },
+      ),
       ...mmkvTools({ storage }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...networkTools(),

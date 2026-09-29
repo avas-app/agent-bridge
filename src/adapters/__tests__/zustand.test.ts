@@ -104,4 +104,77 @@ describe('storeTools', () => {
       expect(() => run(t, 'store.get', 'app', { picks: [] })).toThrow('Unknown store.get option "picks"')
     })
   })
+
+  describe('write output and redaction', () => {
+    type Auth = { accessToken: string; user: { name: string; phone: string }; isLoggedIn: boolean; logout: () => void; whoami: () => unknown; refresh: () => Promise<unknown> }
+    const makeAuth = () =>
+      createStore<Auth>()((set, get) => ({
+        accessToken: 'secret-token',
+        user: { name: 'Ada', phone: '555-0100' },
+        isLoggedIn: true,
+        logout: () => set({ isLoggedIn: false }),
+        whoami: () => get().user,
+        refresh: async () => {
+          await Promise.resolve()
+          set({ accessToken: 'refreshed' })
+        },
+      }))
+
+    test('store.set returns only the changed keys', () => {
+      const auth = makeAuth()
+      const result = run(storeTools({ auth }), 'store.set', 'auth', { isLoggedIn: false })
+      expect(result).toEqual({ isLoggedIn: false })
+      expect(JSON.stringify(result)).not.toContain('secret-token')
+    })
+
+    test('store.call reports changed keys instead of the state', async () => {
+      const auth = makeAuth()
+      const result = await run(storeTools({ auth }), 'store.call', 'auth', 'logout')
+      expect(result).toEqual({ changed: ['isLoggedIn'] })
+      expect(JSON.stringify(result)).not.toContain('secret-token')
+      expect(await run(storeTools({ auth }), 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '555-0100' })
+    })
+
+    test('redact paths apply to get, set and call output', async () => {
+      const auth = makeAuth()
+      const tools = storeTools({ auth }, { redact: { auth: ['accessToken', 'user.phone'] } })
+      expect(run(tools, 'store.get', 'auth')).toMatchObject({ accessToken: '[redacted]', user: { name: 'Ada', phone: '[redacted]' } })
+      expect(run(tools, 'store.get', 'auth', 'accessToken')).toBe('[redacted]')
+      expect(run(tools, 'store.get', 'auth', 'user.phone')).toBe('[redacted]')
+      expect(run(tools, 'store.get', 'auth', 'user.name')).toBe('Ada')
+      expect(run(tools, 'store.set', 'auth', { accessToken: 'new-secret' })).toEqual({ accessToken: '[redacted]' })
+      expect(auth.getState().accessToken).toBe('new-secret')
+      expect(await run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
+    })
+
+    test('store.call awaits async actions, with and without redact', async () => {
+      const auth = makeAuth()
+      expect(await run(storeTools({ auth }), 'store.call', 'auth', 'refresh')).toEqual({ changed: ['accessToken'] })
+      expect(auth.getState().accessToken).toBe('refreshed')
+
+      const tools = storeTools({ auth }, { redact: { auth: ['accessToken', 'user.phone'] } })
+      auth.setState({ accessToken: 'again' })
+      expect(await run(tools, 'store.call', 'auth', 'refresh')).toEqual({ changed: ['accessToken'] })
+      auth.setState({ whoami: async () => auth.getState().user })
+      expect(await run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
+    })
+
+    test('redaction also covers split paths and pick', () => {
+      const auth = makeAuth()
+      const tools = storeTools({ auth }, { redact: { auth: ['accessToken', 'user.phone'] } })
+      expect(run(tools, 'store.get', 'auth', 'user', 'phone')).toBe('[redacted]')
+      expect(run(tools, 'store.get', 'auth', ['user', 'phone'])).toBe('[redacted]')
+      expect(run(tools, 'store.get', 'auth', { pick: ['accessToken', 'user.name'] })).toEqual({
+        accessToken: '[redacted]',
+        'user.name': 'Ada',
+      })
+      expect(run(tools, 'store.get', 'auth', 'user', { pick: ['phone'] })).toEqual({ phone: '[redacted]' })
+    })
+
+    test('a redact hook sees each store, path and value', () => {
+      const auth = makeAuth()
+      const tools = storeTools({ auth }, { redact: (_s, path, value) => (path.endsWith('Token') ? 'x' : value) })
+      expect(run(tools, 'store.get', 'auth')).toMatchObject({ accessToken: 'x', isLoggedIn: true })
+    })
+  })
 })
