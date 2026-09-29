@@ -58,6 +58,8 @@ const propsOf = (fiber: Fiber): Props | null =>
     ? (fiber.memoizedProps as Props)
     : null
 
+const SWITCH_HOSTS = new Set(['RCTSwitch', 'AndroidSwitch'])
+
 const isFn = (v: unknown) => typeof v === 'function'
 
 export const isInputProps = (p: Props) =>
@@ -103,10 +105,17 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
   fill('role', p.accessibilityRole ?? p.role)
   fill('placeholder', p.placeholder)
   // A Switch's boolean value is its checked state, not a value to read.
-  if (typeof p.value === 'boolean') {
+  const isSwitch =
+    SWITCH_HOSTS.has(fiber.type as string) ||
+    (p.accessibilityRole ?? p.role ?? e.role) === 'switch'
+  if (isSwitch && typeof p.value === 'boolean') {
     if (e.checked === undefined) e.checked = p.value
-    if (e.role === undefined && isFn(p.onValueChange)) e.role = 'switch'
-  } else if (e.value === undefined && ('value' in p || 'defaultValue' in p)) {
+    if (e.role === undefined) e.role = 'switch'
+  } else if (
+    e.value === undefined &&
+    !(typeof p.value === 'boolean' && isFn(p.onValueChange)) &&
+    ('value' in p || 'defaultValue' in p)
+  ) {
     const v = p.value ?? p.defaultValue
     if (v != null) e.value = String(v)
   }
@@ -217,7 +226,7 @@ export function collectElements(roots: Fiber[], window: Window): Found[] {
       let up = h.return
       while (up && up.tag !== HOST_COMPONENT) up = up.return
       if (!up) return h
-      if (h.type !== 'RCTVirtualText' && !byHost.get(up)?.parts.length) return h
+      if (h.type !== 'RCTVirtualText') return h
       h = up
     }
   }

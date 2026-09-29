@@ -73,3 +73,20 @@ describe('describe', () => {
     expect(show({ kind: 'button', text: 'Tab', selected: true, expanded: false, rect })).toBe('button "Tab" selected collapsed')
   })
 })
+
+describe('label-only views', () => {
+  test('do not shadow a button that shows the same words', () => {
+    let pressed = 0
+    const tr = tree(
+      host(),
+      host({ accessibilityLabel: 'Profile' }),
+      pressable({ onPress: () => pressed++ }, rnText('Profile')),
+    )
+    const found = collectElements([tr], WINDOW)
+    const hit = resolveTarget(found, 'Profile', (f) => !!f.press)
+    expect(hit.element.kind).toBe('button')
+    expect(pressed).toBe(0)
+    // With nothing else named that, the label-only view is still a match.
+    expect(resolveTarget(collectElements([tree(host(), host({ accessibilityLabel: 'Card' }))], WINDOW), 'Card').element.label).toBe('Card')
+  })
+})

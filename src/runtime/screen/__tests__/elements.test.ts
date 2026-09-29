@@ -111,7 +111,7 @@ describe('collectElements', () => {
   })
 
   test("a Switch's boolean value is its checked state", () => {
-    const toggle = tree(composite({ value: true, onValueChange: () => {}, testID: 'notify' }), host({ value: true }))
+    const toggle = tree(composite({ value: true, onValueChange: () => {}, testID: 'notify' }), Object.assign(host({ value: true }), { type: 'RCTSwitch' }))
     const [e] = elementsOf(toggle)
     expect(e).toMatchObject({ testID: 'notify', role: 'switch', checked: true })
     expect(e?.value).toBeUndefined()
@@ -121,5 +121,10 @@ describe('collectElements', () => {
     expect(elementsOf(host({ accessibilityLabel: 'Payment method' }))).toMatchObject([
       { kind: 'view', label: 'Payment method' },
     ])
+  })
+
+  test('a boolean value on a non-switch element is not a checked state', () => {
+    const [e] = elementsOf(host({ testID: 'flag', value: true }))
+    expect(e?.checked).toBeUndefined()
   })
 })

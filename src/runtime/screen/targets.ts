@@ -75,14 +75,24 @@ function tiers(target: Target): Test[] {
   ]
 }
 
-/** Matches from the first tier that has any. */
+// A view that is only an accessibility label: visible in the snapshot, but it
+// must not shadow a button or text that shows the same words.
+const labelOnly = ({ element: e, press, input }: Found) =>
+  e.kind === 'view' && !e.testID && !e.text && !e.placeholder && !press && !input
+
+/**
+ * Matches from the first tier that has any. Label-only views match only when
+ * nothing else does.
+ */
 export function matchTarget(found: Found[], target: Target): Found[] {
   checkTarget(target)
-  for (const test of tiers(target)) {
-    const matches = found.filter((f) => test(f.element))
-    // Innermost first, so a point on an icon means the icon, not its screen.
-    if (matches.length)
-      return isAt(target) ? matches.sort((a, b) => area(a) - area(b)) : matches
+  for (const pool of [found.filter((f) => !labelOnly(f)), found.filter(labelOnly)]) {
+    for (const test of tiers(target)) {
+      const matches = pool.filter((f) => test(f.element))
+      // Innermost first, so a point on an icon means the icon, not its screen.
+      if (matches.length)
+        return isAt(target) ? matches.sort((a, b) => area(a) - area(b)) : matches
+    }
   }
   return []
 }

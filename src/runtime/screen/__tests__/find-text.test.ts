@@ -78,13 +78,17 @@ describe('screen.findText', () => {
     expect(s.findText('route...').found).toBe(1)
   })
 
-  test('agrees with the snapshot for animated text', () => {
-    // Animated.Text: opacity lives in style; the host still has a rect.
-    const fading = rnText('Finding the best route', { style: { opacity: 0.2 } })
-    const s = screenOf(fading)
-    const shown = s.snapshot().elements.some((e) => e.text === 'Finding the best route')
-    expect(shown).toBe(true)
-    expect(s.findText('Finding the best route')).toMatchObject({ found: 1, onScreen: 1 })
+  test('joins text split across several nested Text, as the snapshot does', () => {
+    const virtual = (content: string) => {
+      const h = host({}, RECT)
+      h.type = 'RCTVirtualText'
+      return tree(composite(), tree(h, text(content)))
+    }
+    const outer = host({}, RECT)
+    outer.type = 'RCTText'
+    const s = screenOf(tree(composite(), tree(outer, text('Finding '), virtual('the best '), virtual('route'))))
+    expect(s.snapshot().elements.map((e) => e.text)).toEqual(['Finding the best route'])
+    expect(s.findText('Finding the best route', { exact: true })).toMatchObject({ found: 1, onScreen: 1 })
   })
 
   test('reports text the snapshot hides as off screen, with near misses', () => {
@@ -115,5 +119,16 @@ describe('screen.findText', () => {
   test('prefers the rendered text when text and label both match', () => {
     const s = screenOf(pressable({ onPress() {}, accessibilityLabel: 'Save' }, rnText('Save')))
     expect(s.findText('Save')).toMatchObject({ found: 1, matches: [{ field: 'text' }] })
+  })
+
+  test('keeps sibling Text in a button space-separated', () => {
+    const texts = ['Pay', '$10', 'now'].map((t) => {
+      const r = rnText(t)
+      ;(r.child as ReturnType<typeof host>).type = 'RCTText'
+      return r
+    })
+    const s = screenOf(pressable({ onPress() {} }, ...texts))
+    expect(s.snapshot().elements.map((e) => e.text)).toEqual(['Pay $10 now'])
+    expect(s.findText('$10 now').found).toBe(1)
   })
 })
