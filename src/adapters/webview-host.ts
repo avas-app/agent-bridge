@@ -3,7 +3,7 @@
 // (react-native-webview.ts) are thin over this.
 import { logToBridge } from '../runtime/logs'
 import { webViewMark } from '../runtime/screen/webview-mark'
-import { bootMain, pageMain } from './webview-page'
+import { PAGE_BUNDLE } from './webview-page.generated'
 
 /** What the adapter needs from a react-native-webview instance. */
 export type WebViewLike = {
@@ -16,7 +16,8 @@ export type WebViewLike = {
  * Keeps secrets out of the message log. Either dotted paths into JSON message
  * bodies (`['token', 'user.phone']`), or a hook called for the whole body
  * (`path` is `''`) and every nested value of a JSON body with its dotted path;
- * what it returns is logged instead. A body that isn't JSON (a script from
+ * what it returns is logged instead. Redaction is by key: a secret inside a
+ * string value is not found by a path list; scrub values in the hook. A body that isn't JSON (a script from
  * `injectJavaScript`, plain text) can only be redacted by the hook.
  */
 export type WebViewRedact =
@@ -73,6 +74,10 @@ export type Entry = {
   /** Native reported the current document finished loading. */
   nativeLoaded: boolean
   warnedDuplicate: boolean
+  /** A check-in for this url arrived before native said the load started (the two race). */
+  orphanLoading: string | undefined
+  /** Native reported a load start whose check-in hasn't come yet. */
+  startPending: boolean
   /** Secret shared with the main-frame script; every adapter message must carry it. */
   token: string
   /** Called when the token changes, so the hook renders the new props. */
@@ -239,12 +244,12 @@ const randomNonce = (): string => {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-// The page-side functions, as source: the fixed scripts.
-// The token is a literal inside this script and never reaches `window`. The
+// The page-side code is built into a string at build time
+// (scripts/generate-webview-page.mjs): Hermes can't give a function's source.
+// The token is a literal inside the boot script and never reaches `window`. The
 // native postMessage is captured now, before the page's own scripts run.
 const bootScript = (token: string) =>
-  `(function(){var rn=window.ReactNativeWebView,p=rn&&rn.postMessage&&rn.postMessage.bind(rn);(${bootMain.toString()})(window,function(s){(p||window.ReactNativeWebView.postMessage.bind(window.ReactNativeWebView))(s)},${JSON.stringify(token)})})();true;`
-const PAGE = pageMain.toString()
+  `(function(){var rn=window.ReactNativeWebView,p=rn&&rn.postMessage&&rn.postMessage.bind(rn);${PAGE_BUNDLE}.bootMain(window,function(s){(p||window.ReactNativeWebView.postMessage.bind(window.ReactNativeWebView))(s)},${JSON.stringify(token)})})();true;`
 
 /** JSON as a JS string literal, safe in any engine (U+2028/2029 escaped). */
 const literal = (value: string): string =>
@@ -252,7 +257,7 @@ const literal = (value: string): string =>
 
 /** The script for one call: fixed source, arguments as a JSON string. */
 export const callScript = (argsJson: string): string =>
-  `(${PAGE})(window,${literal(argsJson)},function(s){window.ReactNativeWebView.postMessage(s)});true;`
+  `${PAGE_BUNDLE}.pageMain(window,${literal(argsJson)},function(s){window.ReactNativeWebView.postMessage(s)});true;`
 
 
 // Puts the adapter's hooks on the WebView instance so the app's own
@@ -344,7 +349,16 @@ function seeNative(
   if (info?.isTopFrame === false || typeof info?.url !== 'string') return false
   const origin = originOf(info.url)
   entry.initialOrigin ??= origin
-  if (kind === 'start' || origin !== entry.origin) navigated(entry, info.url)
+  const orphan = kind === 'start' && entry.orphanLoading === info.url
+  if (kind === 'start') entry.orphanLoading = undefined
+  if (orphan) {
+    // The page's check-in came first: it belongs to this load.
+    entry.url = info.url
+    entry.origin = origin
+  } else if (kind === 'start' || origin !== entry.origin) {
+    navigated(entry, info.url)
+    if (kind === 'start') entry.startPending = true
+  }
   // A page that isn't allowed ran the script that carries the token, so it
   // may have seen it: the next pages get a new one.
   if (!isAllowed(entry, origin) && kind !== 'message') rotateToken(entry)
@@ -370,7 +384,14 @@ function onOwnMessage(
   if (!isAllowed(entry, entry.origin)) return
   const url = event.nativeEvent?.url as string
   if (message.kind === 'state') {
-    if (message.state === 'loading') navigated(entry, url)
+    if (message.state === 'loading') {
+      // With native's start already seen this is that load's check-in; without
+      // it, the start may still come (they race).
+      const started = entry.startPending
+      entry.startPending = false
+      navigated(entry, url)
+      entry.orphanLoading = started ? undefined : url
+    }
     if (message.state === 'loaded') {
       entry.loaded = true
       for (const listener of [...entry.onLoaded]) listener()
@@ -408,6 +429,8 @@ export function register(ref: Ref, options: WebViewOptions) {
     handshake: false,
     nativeLoaded: false,
     warnedDuplicate: false,
+    orphanLoading: undefined,
+    startPending: false,
     token: randomNonce(),
     onRotate: undefined,
     onHandshake: new Set(),
@@ -520,7 +543,8 @@ export const isCurrentAllowed = (entry: Entry): boolean | undefined =>
 function awaitHandshake(entry: Entry): Promise<void> {
   return new Promise((resolve, reject) => {
     const settleNow = () => {
-      const why = refusal(entry)
+      // Before the first native load event there is nothing to refuse yet.
+      const why = entry.origin === undefined ? null : refusal(entry)
       if (why) return done(why)
       if (entry.handshake) return done()
     }

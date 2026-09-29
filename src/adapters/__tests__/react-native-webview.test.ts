@@ -636,3 +636,47 @@ describe('token', () => {
     expect(host.entry.token).toBe(now)
   })
 })
+
+describe('the first load', () => {
+  test('a call right after mount waits for the first load and check-in instead of failing', async () => {
+    const web = fakeWebView('<button data-testid="pay">Pay</button>')
+    const host = register({ current: web.view }, { name: 'checkout' })
+    host.mount()
+    web.connect(host.wrap() as never)
+    const snap = run(tools, 'webview.snapshot') as Promise<any>
+    await tick()
+    expect(web.injected).toHaveLength(0)
+    const props = host.props()
+    const url = { nativeEvent: { url: `${ORIGIN}/cart` } }
+    props.onLoadStart(url)
+    web.boot(props)
+    props.onLoadEnd(url)
+    expect((await snap).elements.some((e: any) => e.testID === 'pay')).toBe(true)
+    expect(((await run(tools, 'webview.list')) as any[])[0]).toMatchObject({ ready: true, loaded: true })
+  })
+
+  test('with no load at all it says so after the wait', async () => {
+    const web = fakeWebView()
+    const host = register({ current: web.view }, { name: 'checkout' })
+    host.mount()
+    timing.handshakeMs = 20
+    await expect(run(tools, 'webview.snapshot')).rejects.toThrow('has not loaded a page yet')
+  })
+
+  test('the page checking in before native reports the load start still counts as ready', async () => {
+    const web = fakeWebView()
+    const host = register({ current: web.view }, { name: 'checkout' })
+    host.mount()
+    web.connect(host.wrap() as never)
+    const props = host.props()
+    const url = { nativeEvent: { url: `${ORIGIN}/cart` } }
+    web.boot(props) // the two events race: the script's check-in first
+    expect(host.entry.handshake).toBe(true)
+    props.onLoadStart(url)
+    expect(host.entry.handshake).toBe(true)
+    expect(((await run(tools, 'webview.list')) as any[])[0]).toMatchObject({ ready: true })
+    // A reload is a new document again.
+    props.onLoadStart(url)
+    expect(host.entry.handshake).toBe(false)
+  })
+})

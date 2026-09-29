@@ -100,9 +100,10 @@
     "webview"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsup",
-    "test": "bun test src/",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "generate": "node scripts/generate-webview-page.mjs",
+    "build": "bun run generate && rm -rf dist && tsup",
+    "test": "bun run generate && bun test src/",
+    "typecheck": "bun run generate && tsc -p tsconfig.json --noEmit",
     "check": "bun run typecheck && bun run test && bun run build && bun run check:gates",
     "check:gates": "node scripts/check-gates.mjs",
     "changeset": "changeset",

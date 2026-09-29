@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { Window } from 'happy-dom'
 
-import { bootMain, pageMain } from '../webview-page'
+import { bundle, render } from '../../../scripts/generate-webview-page.mjs'
+import { PAGE_BUNDLE } from '../webview-page.generated'
+
+// The string the WebView runs, not the functions it was built from.
+const { bootMain, pageMain } = new Function(`return ${PAGE_BUNDLE}`)() as {
+  bootMain: (win: unknown, post: (s: string) => void, token: string) => void
+  pageMain: (win: unknown, args: string, post: (s: string) => void) => void
+}
 
 const ORIGIN = 'https://shop.example.com'
 
@@ -13,11 +20,9 @@ function page(html: string, url = `${ORIGIN}/cart`) {
 
 // Runs the injected source itself, as the WebView would.
 async function call(win: Window, args: Record<string, unknown>, allowed = [ORIGIN]) {
-  const src = pageMain.toString()
   const posted: string[] = []
   const done = new Promise<Record<string, unknown>>((resolve) => {
-    const fn = new Function(`return (${src})`)()
-    fn(win, JSON.stringify({ nonce: 'n1', token: 'tok', allowed, ...args }), (s: string) => {
+    pageMain(win, JSON.stringify({ nonce: 'n1', token: 'tok', allowed, ...args }), (s: string) => {
       posted.push(s)
       resolve(JSON.parse(s))
     })
@@ -35,6 +40,21 @@ const make = (html: string, url?: string) => {
 }
 afterEach(async () => {
   await Promise.all(open.splice(0).map((w) => w.happyDOM.close()))
+})
+
+describe('the injected code', () => {
+  test('is real source: Hermes returns "[bytecode]" for Function.prototype.toString', () => {
+    expect(PAGE_BUNDLE).not.toContain('[bytecode]')
+    expect(PAGE_BUNDLE.length).toBeGreaterThan(8000)
+    expect(PAGE_BUNDLE).toContain('bootMain')
+    expect(PAGE_BUNDLE).toContain('pageMain')
+    expect(typeof bootMain).toBe('function')
+  })
+
+  test('the committed generated file is up to date (run `bun run generate`)', async () => {
+    expect(PAGE_BUNDLE).toBe(await bundle())
+    expect(render(PAGE_BUNDLE)).toContain('Do not edit')
+  })
 })
 
 describe('snapshot', () => {
@@ -236,6 +256,60 @@ describe('fill', () => {
   })
 })
 
+describe('errors from the page', () => {
+  test('a thrown Error keeps its message when the stack lacks it (WebKit)', () => {
+    const win = make('')
+    const sent: any[] = []
+    ;(win as any).ReactNativeWebView = {}
+    bootMain(win, (s: string) => sent.push(JSON.parse(s)), 'tok')
+    const webkit = new Error('button boom')
+    webkit.stack = 'onclick@http://x/a.js:1:2\nlisten@http://x/a.js:5:6'
+    win.dispatchEvent(new (win as any).ErrorEvent('error', { error: webkit, message: 'button boom' }))
+    const rejection = new (win as any).Event('unhandledrejection')
+    rejection.reason = Object.assign(new Error('nope'), { stack: 'later@http://x/b.js:1:1' })
+    win.dispatchEvent(rejection)
+    const chrome = new Error('v8 style')
+    chrome.stack = 'Error: v8 style\n    at f (http://x)'
+    win.console.error(chrome)
+    const messages = sent.filter((m) => m.kind === 'log').map((m) => m.message)
+    expect(messages[0]).toContain('Uncaught Error: button boom')
+    expect(messages[0]).toContain('onclick@')
+    expect(messages[1]).toContain('Unhandled promise rejection: Error: nope')
+    expect(messages[2]).toBe('Error: v8 style\n    at f (http://x)')
+  })
+})
+
+describe('select', () => {
+  const html = '<select data-testid="color"><option value="r">Red</option><option value="g" selected>Green</option></select><p>after</p>'
+
+  test('options are folded into the select, not listed as text', async () => {
+    const win = make(html)
+    const { result } = await call(win, { op: 'snapshot' })
+    const select = result.elements.find((e: any) => e.testID === 'color')
+    expect(select).toMatchObject({ kind: 'input', value: 'g' })
+    expect(select.options).toEqual([{ value: 'r', label: 'Red' }, { value: 'g', label: 'Green', selected: true }])
+    expect(result.elements.some((e: any) => e.text === 'Red' || e.text === 'Green')).toBe(false)
+    expect(result.elements.some((e: any) => e.text === 'after')).toBe(true)
+  })
+
+  test('fills by value, then by label, and refuses anything else with the options', async () => {
+    const win = make(html)
+    const select = win.document.querySelector('select') as unknown as HTMLSelectElement
+    expect((await call(win, { op: 'fill', target: 'color', text: 'r' })).result.filled).toBe('r')
+    expect(select.value).toBe('r')
+    expect((await call(win, { op: 'fill', target: 'color', text: 'Green' })).result.filled).toBe('g')
+    expect(select.value).toBe('g')
+    let changes = 0
+    select.addEventListener('change', () => changes++)
+    const bad = await call(win, { op: 'fill', target: 'color', text: 'purple' })
+    expect(bad.ok).toBe(false)
+    expect(bad.error).toContain('"purple" is not an option')
+    expect(bad.error).toContain('"r" ("Red")')
+    expect(select.value).toBe('g')
+    expect(changes).toBe(0)
+  })
+})
+
 describe('fill secrets', () => {
   test('a password fill is not echoed back', async () => {
     const win = make('<input type="password" data-testid="pw"><input data-testid="user">')
@@ -292,9 +366,8 @@ describe('bootMain', () => {
     const win = make('')
     const sent: any[] = []
     ;(win as any).ReactNativeWebView = {}
-    const fn = new Function(`return (${bootMain.toString()})`)()
-    fn(win, (s: string) => sent.push(JSON.parse(s)), 'tok')
-    fn(win, () => sent.push('twice'), 'tok') // idempotent
+    bootMain(win, (s: string) => sent.push(JSON.parse(s)), 'tok')
+    bootMain(win, () => sent.push('twice'), 'tok') // idempotent
     expect(sent[0]).toMatchObject({ kind: 'state', state: 'loading', origin: ORIGIN, t: 'tok' })
     expect((win as any).__agentBridgeBoot).toBe(true) // a flag only; the token is not on window
     expect(JSON.stringify(Object.keys(win))).not.toContain('tok')

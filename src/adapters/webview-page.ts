@@ -35,7 +35,9 @@ export function bootMain(
     if (typeof value === 'string') return value
     if (value && typeof value === 'object' && 'message' in value) {
       const error = value as { name?: string; message?: string; stack?: string }
-      return error.stack || `${error.name || 'Error'}: ${error.message}`
+      const head = `${error.name || 'Error'}: ${error.message}`
+      // WebKit's stack has no message line ("onclick@http://…"): keep both.
+      return error.stack && error.stack.startsWith(head) ? error.stack : error.stack ? `${head}\n${error.stack}` : head
     }
     try {
       const json = stringify(value)
@@ -94,6 +96,7 @@ export function pageMain(
     expanded?: boolean
     frame?: string
     note?: string
+    options?: Array<{ value: string; label: string; selected?: boolean }>
     rect: { x: number; y: number; width: number; height: number } | null
   }
   type Found = { info: Info; el: any; hasText: boolean } // oxlint-disable-line no-explicit-any
@@ -135,7 +138,7 @@ export function pageMain(
 
   const doc = win.document
   const TEST_ID = ['data-testid', 'data-test-id', 'data-cy']
-  const SKIP = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'META', 'LINK']
+  const SKIP = ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'HEAD', 'META', 'LINK', 'DATALIST']
   const INLINE = ['SPAN', 'B', 'I', 'EM', 'STRONG', 'SMALL', 'CODE', 'MARK', 'SUB', 'SUP', 'U', 'S', 'ABBR', 'CITE', 'Q', 'TIME']
   const BUTTON_ROLES = ['button', 'link', 'menuitem', 'tab', 'checkbox', 'switch', 'radio', 'option', 'menuitemcheckbox', 'menuitemradio']
   const INPUT_ROLES = ['textbox', 'searchbox', 'combobox']
@@ -257,6 +260,16 @@ export function pageMain(
     if (role) info.role = role
     const tag = el.tagName as string
     const type = String(el.type || '').toLowerCase()
+    if (tag === 'SELECT') {
+      info.options = Array.from(el.options as ArrayLike<any>).map((o) => { // oxlint-disable-line no-explicit-any
+        const option: { value: string; label: string; selected?: boolean } = {
+          value: String(o.value),
+          label: norm(o.label || o.textContent),
+        }
+        if (o.selected) option.selected = true
+        return option
+      })
+    }
     if (kind === 'input') {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
         // Passwords are not echoed back.
@@ -340,6 +353,8 @@ export function pageMain(
         if (!pushed && !consumedInline && (testIdOf(el) || attr(el, 'aria-label'))) {
           out.push({ info: describeEl(el, 'view', undefined, frame), el, hasText: false })
         }
+        // A select's options are part of it, not text of their own.
+        if (tag === 'SELECT') continue
         const below = inButton || kind === 'button'
         if (el.shadowRoot) visit(el.shadowRoot, below, frame)
         visit(el, below, frame)
@@ -541,8 +556,19 @@ export function pageMain(
       if (found.info.kind !== 'input')
         throw new Error(`${describe(found.info)} is not an input; webview.press it instead`)
       if (found.info.editable === false) throw new Error(`${describe(found.info)} is not editable`)
-      const text = String(args.text)
+      let text = String(args.text)
       const el = found.el
+      if (el.tagName === 'SELECT') {
+        const options = Array.from(el.options as ArrayLike<any>) // oxlint-disable-line no-explicit-any
+        const pick =
+          options.find((o) => String(o.value) === text) ||
+          options.find((o) => norm(o.label || o.textContent) === text)
+        if (!pick)
+          throw new Error(
+            `${JSON.stringify(text)} is not an option of ${describe(found.info)}. Options: ${options.map((o) => `${JSON.stringify(String(o.value))} (${JSON.stringify(norm(o.label || o.textContent))})`).join(', ')}`,
+          )
+        text = String(pick.value)
+      }
       const secret = el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'password'
       if (typeof el.focus === 'function') el.focus()
       setValue(el, text)

@@ -606,9 +606,20 @@ export function collectScreen(
     rec.onScreen = isOnScreen(rec, rect, window, bars)
   }
   // A text-only element whose glyphs were all icons has nothing to show.
+  // A WebView's props reach a wrapper component and the native host under it,
+  // which are two hosts for one element: keep the outermost.
+  const named = new Set<string>()
+  const single = (rec: Rec) => {
+    const name = rec.element.webview
+    if (name === undefined) return true
+    if (named.has(name)) return false
+    named.add(name)
+    return true
+  }
   return {
     found: order.filter(
-      (rec) => rec.element.kind !== 'text' || rec.element.text !== undefined,
+      (rec) =>
+        (rec.element.kind !== 'text' || rec.element.text !== undefined) && single(rec),
     ),
     scrollables: [...scrollByHost.values()],
   }

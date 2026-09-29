@@ -18,6 +18,9 @@ describe('collectElements', () => {
     expect(rest).toEqual([])
     expect(element).toMatchObject({ kind: 'webview', webview: 'check*/out "1"' })
     expect(describeElement(element!)).toBe('webview "check*/out \\"1\\""')
+    // A wrapper (forwardRef over a container View) and the native host both carry the name: one element.
+    const wrapped = tree(composite(props), tree(host({ style: {} }), host({ ...props })))
+    expect(elementsOf(wrapped).filter((e) => e.kind === 'webview')).toHaveLength(1)
     // Someone else's script is not a WebView of ours.
     expect(elementsOf(host({ injectedJavaScriptBeforeContentLoaded: 'true;' }))).toEqual([])
   })
