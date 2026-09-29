@@ -536,4 +536,15 @@ describe('review fixes', () => {
     expect(stderr).not.toContain('EPIPE')
     expect(code).toBe(0)
   })
+
+  test('CLI: a real crash prints the error and exits 1, not 7', async () => {
+    const flow = join(dir, 'crash.mjs')
+    writeFileSync(flow, "setTimeout(() => { throw new Error('flow crashed') }, 0)\nexport default async () => {}\n")
+    const child = cli(['run', flow, '--metro', 'localhost:1', '--no-session'])
+    let stderr = ''
+    child.stderr.on('data', (d) => (stderr += d))
+    const code = await new Promise((r) => child.on('close', r))
+    expect(stderr).toContain('flow crashed')
+    expect(code).toBe(1)
+  })
 })

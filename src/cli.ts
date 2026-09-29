@@ -79,7 +79,9 @@ async function main() {
   // 'error' listener: under bun that truncates large output.
   process.on('uncaughtException', (error: NodeJS.ErrnoException) => {
     if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0)
-    throw error
+    // Rethrowing here would exit 7, not the 1 a crash normally gives.
+    console.error(error)
+    process.exit(1)
   })
   const { values, positionals } = parseArgs({
     allowPositionals: true,
