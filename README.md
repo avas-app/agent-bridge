@@ -115,6 +115,7 @@ npx agent-bridge call query.pin '[["features"], {"beta": false}]'
 npx agent-bridge call screen.press '"add-plant"'
 npx agent-bridge call screen.fill '["plant-name", "Fiddle leaf fig"]'
 npx agent-bridge call screen.waitFor '"Name is required"'
+npx agent-bridge call query.get '["feed"]' --out feed.json   # big result to a file; prints size and shape
 npx agent-bridge run flows/add-plant.mjs --strict   # fail if the app logged an error
 npx agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
@@ -135,6 +136,8 @@ export default async ({ step }) => {
 ```sh
 ./node_modules/.bin/agent-bridge run flows/back-nav.mjs   # one line per step: number, label, time
 ```
+
+`call` prints a result over 32 KB as a summary (`resultTooLarge`, size, shape, a hint) instead of flooding the terminal: pass `--out <file>` to write it to a file, or `--full` to print it. Flows and `connect()` always get the full value.
 
 A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas that had something to undo) in the next call's output, failed or not, and in `session stop`, because the old runtime's undo state is gone.
 

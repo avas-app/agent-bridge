@@ -4,7 +4,11 @@ import { createInterface } from 'node:readline'
 import type { TransportName } from '../connection'
 import { explicitMetro } from '../discover'
 import { type AgentBridge, AgentBridgeCallError, type Timed } from '../index'
-import type { SessionRequest, SessionResponse } from './protocol'
+import {
+  type SessionRequest,
+  type SessionResponse,
+  encodeLine,
+} from './protocol'
 import { type SessionState, pickSession } from './state'
 
 type Link = {
@@ -31,7 +35,7 @@ export function openSessionLink(state: SessionState): Promise<Link> {
             }
             const id = ++seq
             waiting.set(id, done)
-            socket.write(`${JSON.stringify({ ...req, id })}\n`)
+            socket.write(encodeLine({ ...req, id }))
           }),
         close: () => socket.end(),
       })

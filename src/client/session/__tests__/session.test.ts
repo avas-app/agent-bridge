@@ -15,6 +15,7 @@ import {
   PROTOCOL_VERSION,
 } from '../../../shared/protocol'
 import { startFakeMetro } from '../../__tests__/fake-metro'
+import { bigValue } from '../../__tests__/big-value'
 import { AgentBridgeCallError } from '../../index'
 import { sessionFor } from '../cli'
 import { connectSession, sessionRequest } from '../client'
@@ -59,6 +60,7 @@ async function fakeApp(
   }
   const tools: Tools = {
     'demo.echo': (...args: unknown[]) => args,
+    'demo.big': (bytes: number) => bigValue(bytes),
     'demo.set': () => {
       app.changed = true
     },
@@ -243,6 +245,22 @@ describe('session daemon', () => {
     // An explicit filter that matches nothing is still an error, not a guess.
     await expect(connectSession({ device: 'nope' })).rejects.toThrow(
       'No single session matches',
+    )
+  })
+
+  test('passes a 2 MB result through the socket whole', async () => {
+    const { metro } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'big',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ metro, timeoutMs: 30_000 })
+    cleanups.push(bridge.close)
+    expect(await bridge.call('demo.big', 2_000_000)).toEqual(
+      bigValue(2_000_000),
     )
   })
 
