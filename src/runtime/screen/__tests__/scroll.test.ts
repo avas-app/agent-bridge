@@ -333,31 +333,29 @@ describe('scroll arguments', () => {
 })
 
 describe('visible area', () => {
-  const rowsUnderHeader = () => {
-    // A list whose frame runs under a native header: rows scrolled up beneath it
-    // are inside the frame but not visible. The screen's own frame starts below it.
-    const screenRect = { x: 0, y: 150, width: 400, height: 650 }
-    const view = () => ({ x: 0, y: 0, width: 400, height: 800 })
+  test('a screen frame with an offset origin (native header) does not clip rows', () => {
+    // Fabric measures the screen at y=0 with the header taken off its height;
+    // the list inside is measured at its real place below the header.
+    const view = () => ({ x: 0, y: 116, width: 400, height: 675 })
     const list = scroller(view, 2000, [
-      { at: 340, make: field('Msg 15') },
-      { at: 700, make: field('Msg 3') },
+      { at: 529, make: field('Row 10') },
+      { at: 579, make: field('Row 11') },
+      { at: 620, make: field('Row 12') },
     ])
-    list.state.offset = 300
-    const screenHost = host({}, screenRect)
+    const screenHost = host({}, { x: 0, y: 0, width: 400, height: 675 })
     screenHost.type = 'RNSScreen'
-    tree(screenHost, list.fiber)
-    return { list, screenHost }
-  }
-
-  test('a row under the native header is not on screen, and scroll brings it out', async () => {
-    const { list, screenHost } = rowsUnderHeader()
-    const root = tree(host(), screenHost)
+    const root = tree(host(), tree(screenHost, list.fiber))
     const screen = createScreen({ roots: () => [root], window: () => WINDOW })
-    expect(screen.snapshot({ all: true }).elements.find((e) => e.text === 'Msg 15')?.onScreen).toBe(false)
-    expect(screen.snapshot().elements.map((e) => e.text)).toEqual(['Msg 3'])
-    const result = await screen.scroll('Msg 15')
-    expect(list.state.calls.length).toBe(1)
-    expect(result).toMatchObject({ onScreen: true })
+    expect(screen.snapshot().elements.map((e) => e.text)).toEqual(['Row 10', 'Row 11', 'Row 12'])
+  })
+
+  test('a row past the list frame is off screen, up to its bottom edge (y + height)', () => {
+    const view = () => ({ x: 0, y: 116, width: 400, height: 400 })
+    const list = scroller(view, 2000, [
+      { at: 300, make: field('Inside') },
+      { at: 450, make: field('Outside') },
+    ])
+    expect(roots(list.fiber).snapshot().elements.map((e) => e.text)).toEqual(['Inside'])
   })
 
   test('a row behind a bottom tab bar is not on screen', () => {
@@ -372,20 +370,13 @@ describe('visible area', () => {
 
   test('layout that is still moving right after a push is waited out', async () => {
     let top = 0
-    const view = () => ({ x: 0, y: 0, width: 400, height: 800 })
-    const list = scroller(view, 2000, [{ at: 340, make: field('Msg') }])
-    list.state.offset = 300
-    const screenHost = host({}, { x: 0, y: 0, width: 400, height: 800 })
+    // The list's frame lands 150 points lower a moment after the push.
+    const view = () => ({ x: 0, y: top, width: 400, height: 800 - top })
+    const list = scroller(view, 2000, [{ at: 400, make: field('Msg') }])
     setTimeout(() => (top = 150), 30)
-    // The header lands late: the screen frame follows it.
-    screenHost.stateNode = { getBoundingClientRect: () => ({ x: 0, y: top, width: 400, height: 800 - top }), checkVisibility: () => true }
-    screenHost.type = 'RNSScreen'
-    const root = tree(host(), tree(screenHost, list.fiber))
-    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
-    const result = await screen.scroll('Msg')
-    // Settled at 150: the row scrolled up to y 40 sits under the header, so it scrolled.
-    expect(list.state.calls.length).toBe(1)
+    const result = await roots(list.fiber).scroll('Msg')
     expect(result).toMatchObject({ onScreen: true })
+    expect(list.state.calls.length).toBe(0)
   })
 })
 

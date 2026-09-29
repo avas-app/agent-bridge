@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { createScreen } from '..'
 import type { Fiber } from '../../find-text-core'
-import { WINDOW, host, pressable, rnText, tree } from './fake-tree'
+import { WINDOW, composite, host, pressable, rnText, tree } from './fake-tree'
 
 const typed = (fiber: Fiber, type: string): Fiber => {
   fiber.type = type
@@ -146,16 +146,36 @@ describe('native modal screens', () => {
     expect(texts(tabs({ stackPresentation: p }))).toEqual(['Sheet content'])
   })
 
-  test('push, transparent modals and undimmed sheets leave the rest reachable', () => {
+  test('push and undimmed sheets leave the rest reachable', () => {
     expect(texts(tabs({ stackPresentation: 'push' }))).toEqual(['Sheet content', 'Settings', 'Plants'])
-    for (const p of ['transparentModal', 'containedTransparentModal'])
-      expect(texts(tabs({ stackPresentation: p }))).toEqual(['Plant list', 'Sheet content', 'Settings', 'Plants'])
     expect(
       texts(tabs({ stackPresentation: 'formSheet', sheetLargestUndimmedDetentIndex: 0 })),
     ).toEqual(['Plant list', 'Sheet content', 'Settings', 'Plants'])
     expect(
       texts(tabs({ stackPresentation: 'formSheet', sheetLargestUndimmedDetentIndex: 'none' })),
     ).toEqual(['Sheet content'])
+  })
+
+  test.each(['transparentModal', 'containedTransparentModal'])(
+    '%s blocks touches outside it too, tab bar included',
+    async (p) => {
+      const screen = tabs({ stackPresentation: p })
+      expect(texts(screen)).toEqual(['Sheet content'])
+      await expect(screen.press('Settings')).rejects.toThrow(/not in front/)
+    },
+  )
+
+  test('RN Modal content is not clipped by the scroller or tab bar it is declared under', () => {
+    const modal = tree(typed(host({}, { x: 20, y: 60, width: 300, height: 40 }), 'RCTModalHostView'), rnText('Marker', {}))
+    // A scroller frame and a tab bar that would clip the marker away.
+    const view = { x: 0, y: 300, width: 400, height: 200 }
+    const scrollView = tree(
+      { ...composite(), tag: 1, stateNode: { scrollTo: () => {} } },
+      tree(host({}, view), modal),
+    )
+    const bar = tree(host({ accessibilityRole: 'tablist' }, { x: 0, y: 0, width: 400, height: 100 }), rnText('Tab'))
+    const screen = screenOf(scrollView, bar)
+    expect(texts(screen)).toEqual(['Marker'])
   })
 
   test('the first screen of a stack is not a presentation, and an RNSModalScreen is a modal', () => {
