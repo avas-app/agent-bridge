@@ -127,15 +127,15 @@ describe('storeTools', () => {
       expect(JSON.stringify(result)).not.toContain('secret-token')
     })
 
-    test('store.call reports changed keys instead of the state', () => {
+    test('store.call reports changed keys instead of the state', async () => {
       const auth = makeAuth()
-      const result = run(storeTools({ auth }), 'store.call', 'auth', 'logout')
+      const result = await run(storeTools({ auth }), 'store.call', 'auth', 'logout')
       expect(result).toEqual({ changed: ['isLoggedIn'] })
       expect(JSON.stringify(result)).not.toContain('secret-token')
-      expect(run(storeTools({ auth }), 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '555-0100' })
+      expect(await run(storeTools({ auth }), 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '555-0100' })
     })
 
-    test('redact paths apply to get, set and call output', () => {
+    test('redact paths apply to get, set and call output', async () => {
       const auth = makeAuth()
       const tools = storeTools({ auth }, { redact: { auth: ['accessToken', 'user.phone'] } })
       expect(run(tools, 'store.get', 'auth')).toMatchObject({ accessToken: '[redacted]', user: { name: 'Ada', phone: '[redacted]' } })
@@ -144,7 +144,7 @@ describe('storeTools', () => {
       expect(run(tools, 'store.get', 'auth', 'user.name')).toBe('Ada')
       expect(run(tools, 'store.set', 'auth', { accessToken: 'new-secret' })).toEqual({ accessToken: '[redacted]' })
       expect(auth.getState().accessToken).toBe('new-secret')
-      expect(run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
+      expect(await run(tools, 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '[redacted]' })
     })
 
     test('store.call awaits async actions, with and without redact', async () => {
