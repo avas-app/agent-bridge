@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { QueryClient, QueryObserver } from '@tanstack/query-core'
+import { InfiniteQueryObserver, QueryClient, QueryObserver } from '@tanstack/query-core'
 
 import { networkTools } from '../../network'
+import { mockSignalListeners } from '../../shared/mock-signal'
 import { resetNetworkState } from '../../network/state'
 import { nativeFetch, server } from '../../network/__tests__/fakes'
 import { restoreTools } from '../../runtime/tools/restore'
@@ -75,14 +76,20 @@ describe('data that came from a mock', () => {
       retry: false,
       queryFn: async () => (await fetch(`${API}/plants`)).json(),
     })
-    const stop = observer.subscribe(() => {})
+    const real = { real: `${API}/plants` }
+    const refetched = new Promise<void>((resolve) => {
+      const stop = observer.subscribe((result) => {
+        if (JSON.stringify(result.data) === JSON.stringify(real)) {
+          stop()
+          resolve()
+        }
+      })
+    })
     await observer.refetch()
     expect(observer.getCurrentResult().data).toEqual({ fake: true })
 
     run(tools, 'net.restore')
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(observer.getCurrentResult().data).toEqual({ real: `${API}/plants` })
-    stop()
+    await refetched
   })
 
   test('leaves queries no mock touched alone', async () => {
@@ -129,6 +136,92 @@ describe('data that came from a mock', () => {
   })
 })
 
+describe('attribution', () => {
+  test('a real request in parallel with a mocked one is left alone', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await Promise.all([load('plants'), load('user')])
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+    expect(data('user')).toEqual({ real: `${API}/user` })
+    expect(await run(tools, 'query.restore')).toMatchObject({ mockedCleared: 1 })
+  })
+
+  test('a query function that awaits before requesting is still caught', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await client
+      .fetchQuery({
+        queryKey: ['plants'],
+        queryFn: async () => {
+          await Promise.resolve()
+          return (await fetch(`${API}/plants`)).json()
+        },
+      })
+      .catch(() => undefined)
+    expect(data('plants')).toEqual({ fake: true })
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+  })
+
+  test('an infinite query keeps no fake page when a later page came from the network', async () => {
+    run(tools, 'net.mock', '/pages', { json: { page: 'fake' } }, { times: 1 })
+    const observer = new InfiniteQueryObserver(client, {
+      queryKey: ['pages'],
+      retry: false,
+      initialPageParam: 1,
+      getNextPageParam: (_l: unknown, all: unknown[]) => all.length + 1,
+      queryFn: async ({ pageParam }: { pageParam: number }) =>
+        (await fetch(`${API}/pages?page=${pageParam}`)).json(),
+    })
+    const stop = observer.subscribe(() => {})
+    await observer.refetch()
+    await observer.fetchNextPage()
+    stop()
+    expect(JSON.stringify(data('pages'))).toContain('fake')
+
+    failRealEndpoint()
+    run(tools, 'net.restore')
+    expect(data('pages')).toBeUndefined()
+  })
+
+  test('a response that lands after the mock was removed is cleared on arrival', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } }, { delayMs: 20 })
+    const loading = load('plants')
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    run(tools, 'net.restore')
+    await loading
+    await Promise.resolve()
+    expect(data('plants')).toBeUndefined()
+    expect(await run(tools, 'query.restore')).toMatchObject({ mockedCleared: 1 })
+  })
+
+  test('a pinned key is not reset', async () => {
+    await run(tools, 'query.pin', ['plants'], { pinned: true })
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await load('plants')
+    run(tools, 'net.restore')
+    expect(data('plants')).toEqual({ pinned: true })
+    const { mockedCleared } = (await run(tools, 'query.restore')) as { mockedCleared: number }
+    expect(mockedCleared).toBe(0)
+  })
+
+  test('each client tracks its own queries, and rebuilding tools adds no listener', async () => {
+    const other = new QueryClient()
+    const otherTools = queryTools(other)
+    const listeners = mockSignalListeners()
+    for (let i = 0; i < 5; i++) queryTools(client)
+    expect(mockSignalListeners()).toBe(listeners)
+
+    run(tools, 'net.mock', '/plants', { json: { fake: true } })
+    await load('plants')
+    await other
+      .fetchQuery({ queryKey: ['plants'], queryFn: async () => (await fetch(`${API}/plants`)).json() })
+    run(tools, 'net.restore')
+    expect(data('plants')).toBeUndefined()
+    expect(other.getQueryData(['plants'])).toBeUndefined()
+    expect(await run(otherTools, 'query.restore')).toMatchObject({ mockedCleared: 1 })
+  })
+})
+
 describe('bridge.restore', () => {
   const bridge = () => restoreTools(() => tools)
 
@@ -151,6 +244,15 @@ describe('bridge.restore', () => {
     expect(await run(tools, 'query.restore')).toMatchObject({ mockedCleared: 1 })
     expect(data('plants')).toBeUndefined()
     expect(pending()).toBe(false)
+  })
+
+  test('after a times mock expired, still clears it', async () => {
+    run(tools, 'net.mock', '/plants', { json: { fake: true } }, { times: 1 })
+    await load('plants')
+    failRealEndpoint()
+    const results = (await run(bridge(), 'bridge.restore')) as Record<string, unknown>
+    expect(results['query.restore']).toMatchObject({ mockedCleared: 1 })
+    expect(data('plants')).toBeUndefined()
   })
 
   test('net.restore first still shows in the query.restore report', async () => {

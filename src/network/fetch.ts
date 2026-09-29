@@ -1,3 +1,4 @@
+import { signalMockAnswered } from '../shared/mock-signal'
 import { bodyText, errorMessage, isTextual } from './body'
 import type { MockResponse } from './types'
 import {
@@ -176,6 +177,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     return answered.then(async (hit) => {
       if (!hit) return passOn()
       entry.mocked = true
+      if (hit.mock.source === 'agent') signalMockAnswered(hit.mock.id, entry.id)
       await sleep(hit.mock.delayMs)
       if (init?.signal?.aborted) {
         finishEntry(entry, { error: 'aborted' })

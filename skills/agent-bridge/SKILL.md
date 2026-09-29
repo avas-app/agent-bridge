@@ -205,6 +205,12 @@ npx agent-bridge session stop             # runs bridge.restore; --keep leaves t
 `bridge.restore` unpins queries, puts back store and MMKV values, removes
 network mocks, unmutes realtime channels and ends a faked connection state,
 then undoes active scenarios, so the next run starts from the real state.
+It also resets queries that hold data a `net.mock` produced (`query.restore`
+reports `mockedCleared`), so fake data can't survive a failing real refetch.
+Only agent mocks are tracked, not app or scenario mocks. A query counts as
+mocked when a request its queryFn made synchronously was answered by a mock; a
+queryFn that awaits before requesting is marked if any mock answered while it
+fetched. Infinite queries stay marked until reset.
 
 ## Traps
 
