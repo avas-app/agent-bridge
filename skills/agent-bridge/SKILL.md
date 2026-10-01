@@ -131,9 +131,8 @@ The app may expose its own tools for hooks the bridge has no tool for
 (`queue.flush`, `realtime.reconnect`); `tools` lists them. There is no
 `app.eval`: if the app has no tool for it, say so.
 
-## Traps
+## Caveats
 
-- Run next to the simulator. From another machine every call pays the network.
 - It can't see native UI (system alerts, permission prompts, native sheets) or
   overlap. Finish a flow with one real UI check or screenshot from agent-device.
 - `fill` skips the keyboard: autocorrect and native-only input behaviour need
