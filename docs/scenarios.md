@@ -1,5 +1,7 @@
 # Scenarios
 
+<!-- skills/agent-bridge/references/writing-scenarios.md mirrors this page for agents. Keep the two in sync. -->
+
 Most flows need the app in a known state first, above all a signed-in user. A scenario is a named setup the app defines once, for example a user who is signed in **locally**: a fake token, a fake user, and every request answered in the app, never by the real server.
 
 ```ts
