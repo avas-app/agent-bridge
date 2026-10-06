@@ -13,6 +13,19 @@ const themes: { value: Theme; label: string; icon: 'sunny' | 'moon' | 'phone-por
   { value: 'system', label: 'System', icon: 'phone-portrait' },
 ]
 
+const tips = [
+  'Water when the top inch is dry',
+  'Rotate pots a quarter turn weekly',
+  'Wipe dust off broad leaves',
+  'Feed monthly in spring and summer',
+  'Hold off on feeding in winter',
+  'Repot when roots circle the pot',
+  'Group humidity lovers together',
+  'Check under leaves for pests',
+  'Use pots with drainage holes',
+  'Move sun lovers closer to the window',
+]
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   const c = useColors()
   return (
@@ -75,6 +88,13 @@ export default function SettingsScreen() {
             trackColor={{ true: c.accent }}
           />
         </Row>
+      </Section>
+      <Section title="Care tips">
+        {tips.map((tip) => (
+          <Row key={tip} label={tip}>
+            <Ionicons name="leaf-outline" size={18} color={c.muted} />
+          </Row>
+        ))}
       </Section>
       <Section title="About">
         <Row label="Version">

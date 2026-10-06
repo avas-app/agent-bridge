@@ -44,6 +44,13 @@ describe('waitFor', () => {
     expect(result.element).toBeUndefined()
   })
 
+  test('gone and scroll together are refused', async () => {
+    const { screen } = setup(rnText('Saving…'))
+    await expect(screen.waitFor('Saving…', { gone: true, scroll: true })).rejects.toThrow(
+      /\{gone:true\} and \{scroll:true\} can't be combined/,
+    )
+  })
+
   test('times out with what is on screen', async () => {
     const { screen } = setup(rnText('My plants'))
     expect(screen.waitFor('Monstera', { timeoutMs: 80 })).rejects.toThrow(

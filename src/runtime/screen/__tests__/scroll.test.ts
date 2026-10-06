@@ -99,6 +99,17 @@ describe('scroll', () => {
     expect(state.calls.map((c) => c[0])).toEqual(['scrollTo', 'press', 'scrollTo', 'fill'])
   })
 
+  test('waitFor with scroll:true brings an off-screen match into view', async () => {
+    const { screen, state } = setup()
+    await expect(screen.waitFor('Later', { timeoutMs: 80 })).rejects.toThrow(
+      /to appear.*Near misses: .*"Later" \(off screen\).*\{scroll:true\}/,
+    )
+    const result = await screen.waitFor('Later', { scroll: true })
+    expect(state.calls).toEqual([['scrollTo', expect.objectContaining({ y: 620 })]])
+    expect(result.element).toMatchObject({ text: 'Later' })
+    expect(screen.snapshot().elements.map((e) => e.text)).toContain('Later')
+  })
+
   test('errors: unknown shapes, no scrollable, elements outside one', async () => {
     const { screen } = setup()
     await expect(screen.scroll({ by: 'x' } as never)).rejects.toThrow(/number of points/)
