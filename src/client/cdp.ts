@@ -159,28 +159,23 @@ export async function connectCdp(
       target: targetLabel(target),
     },
     device: { ...info, name: `${info.name} (${targetLabel(target)})` },
-    async call(tool, args, timeoutMs) {
+    call(tool, args, timeoutMs) {
       const call: CallMessage = { id: newCallId(), tool, args }
       const reply = pending.wait(call.id, tool, timeoutMs)
-      // Hermes answers Runtime.evaluate only when the JS thread is free, so
-      // the timeout can reject `reply` before we return it. Unobserved, that
-      // rejection is unhandled and kills the process (a session daemon's
-      // health ping during a slow call did). The caller still gets it.
-      reply.catch(() => {})
-      try {
-        // The payload travels as ASCII-only JSON inside a string literal.
-        await evaluate(
-          `${CDP_GLOBAL}.dispatch(${JSON.stringify(toAsciiJson(call))})`,
-        )
-      } catch (error) {
+      // Not awaited: Hermes answers Runtime.evaluate only when the JS thread
+      // is free, and never after a reload, but the reply's timeout must
+      // still end the call. The payload is ASCII-only JSON in a string literal.
+      evaluate(
+        `${CDP_GLOBAL}.dispatch(${JSON.stringify(toAsciiJson(call))})`,
+      ).catch((error) =>
         pending.settle({
           id: call.id,
           from: info.deviceId,
           ok: false,
           error: String(error),
           ms: 0,
-        })
-      }
+        }),
+      )
       return reply
     },
     close: () => ws.close(),
