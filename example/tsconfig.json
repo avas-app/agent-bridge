@@ -3,16 +3,9 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./src/*"
-      ],
-      "@tanstack/query-core": [
-        "./node_modules/@tanstack/query-core"
-      ]
+      "@/*": ["./src/*"],
+      "@tanstack/query-core": ["./node_modules/@tanstack/query-core"]
     }
   },
-  "include": [
-    "**/*.ts",
-    "**/*.tsx"
-  ]
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
 }
