@@ -4,9 +4,21 @@ import type { DeviceInfo, ResultMessage } from '../shared/protocol'
 
 export type TransportName = 'expo' | 'cdp'
 
+/**
+ * What stays the same when an app reloads: its deviceId is new on every
+ * bridge start, but the name it gives, its platform and (over CDP) the
+ * debugger target don't change.
+ */
+export type AppPin = { name: string; platform: string; target?: string }
+
+export const describePin = (pin: AppPin) =>
+  `${pin.name} (${pin.platform}${pin.target ? `, ${pin.target}` : ''})`
+
 export type Connection = {
   transport: TransportName
   device: DeviceInfo
+  /** Identifies this app across reloads; pass it back to reconnect to it alone. */
+  pin: AppPin
   call: (
     tool: string,
     args: unknown[],

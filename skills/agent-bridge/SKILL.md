@@ -52,7 +52,8 @@ before the reload will be undone.
 If a call fails with `app not connected; reconnecting` or `The app is gone`, the
 session lost the app (Metro or the app is down, or mid-reload). It retries on
 its 5 s health check and on your next call: wait a few seconds and call again.
-`session stop` still works.
+`session stop` still works. A session never moves to another app: `<app> is
+not connected; connected: …` means its app is gone and something else is there.
 
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.

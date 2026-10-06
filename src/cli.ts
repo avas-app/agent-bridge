@@ -128,7 +128,10 @@ async function main() {
   }
   const withBridge = async (fn: (bridge: AgentBridge) => Promise<void>) => {
     const session = sessionFor(values)
-    if (session) console.error(`Using session "${session.name}"`)
+    if (session)
+      console.error(
+        `Using session "${session.name}" (${session.device.name} on ${session.metro})`,
+      )
     const bridge = session
       ? await connectSession({
           name: session.name,

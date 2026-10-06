@@ -3,7 +3,7 @@ import { type Server, type Socket, createServer } from 'node:net'
 import { createInterface } from 'node:readline'
 
 import type { ResultMessage } from '../../shared/protocol'
-import type { Connection, TransportName } from '../connection'
+import type { AppPin, Connection, TransportName } from '../connection'
 import { metroHost } from '../discover'
 import { openConnection } from '../open'
 import {
@@ -104,23 +104,32 @@ export async function runSessionDaemon(
   // bounded attempt in between.
   const stopping = new AbortController()
   const cutOff = new AbortController()
-  const reach = (signal?: AbortSignal) =>
+  const reach = (signal?: AbortSignal, pin?: AppPin) =>
     openConnection({
       metro,
       device: options.device,
+      pin,
       transport: options.transport,
       ...(signal && { signal, timeoutMs: attemptMs }),
     })
-  let conn: Connection = await reach()
-  const owner = listSessions(dir).find(
-    (s) => s.metro === metro && s.device.deviceId === conn.device.deviceId,
-  )
-  if (owner) {
-    conn.close()
+  const claim = (c: Connection) => {
+    const owner = listSessions(dir).find(
+      (s) =>
+        s.name !== name &&
+        s.metro === metro &&
+        s.device.deviceId === c.device.deviceId,
+    )
+    if (!owner) return
+    c.close()
     throw new Error(
-      `${conn.device.name} already belongs to session "${owner.name}". Use --session ${owner.name}, or stop it first.`,
+      `${c.device.name} already belongs to session "${owner.name}". Use --session ${owner.name}, or stop it first.`,
     )
   }
+  let conn: Connection = await reach()
+  claim(conn)
+  // Reconnects go to this app only: after a reload it has a new deviceId,
+  // and anything else connected by then is someone else's app.
+  const pin = conn.pin
 
   const deviceOf = (c: Connection) => ({
     name: c.device.name,
@@ -185,7 +194,8 @@ export async function runSessionDaemon(
       const deadline = Date.now() + (patient ? reloadWaitMs : 0)
       for (;;) {
         try {
-          const next = await reach(cutOff.signal)
+          const next = await reach(cutOff.signal, pin)
+          claim(next)
           if (patient && knownLoad && next.device.loadId === knownLoad) {
             next.close()
             throw new Error('the old runtime still answers')

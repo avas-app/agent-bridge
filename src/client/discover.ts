@@ -101,5 +101,14 @@ export function pickOne<T>(
       `${matching.length} apps are connected; pick one with --device. Connected: ${connected}`,
     )
   }
+  if (matching.length > 1) {
+    const exact = matching.filter(
+      (item) => label(item).toLowerCase() === filter?.toLowerCase(),
+    )
+    if (exact.length === 1) return exact[0] as T
+    throw new Error(
+      `${matching.length} apps match "${filter}"; narrow --device. Matching: ${matching.map(label).join('; ')}`,
+    )
+  }
   return matching[0] as T
 }

@@ -1,11 +1,18 @@
 import { connectCdp } from './cdp'
-import { type Connection, OpenGaveUp, type TransportName } from './connection'
+import {
+  type AppPin,
+  type Connection,
+  OpenGaveUp,
+  type TransportName,
+} from './connection'
 import { metroHost } from './discover'
 import { connectExpo } from './expo'
 
 export type OpenOptions = {
   metro?: string
   device?: string
+  /** Only this app (a previous connection's `pin`), whatever else is connected. */
+  pin?: AppPin
   transport?: 'auto' | TransportName
   /**
    * Give up on each transport (Expo's socket, then CDP) after this long,
@@ -70,7 +77,7 @@ export async function openConnection(
   if (want !== 'cdp') {
     try {
       return await phase(options, (signal) =>
-        connectExpo(metro, options.device, undefined, signal),
+        connectExpo(metro, options.device, undefined, signal, options.pin),
       )
     } catch (error) {
       if (want === 'expo' || options.signal?.aborted) throw error
@@ -79,7 +86,7 @@ export async function openConnection(
   }
   try {
     return await phase(options, (signal) =>
-      connectCdp(metro, options.device, signal),
+      connectCdp(metro, options.device, signal, options.pin),
     )
   } catch (error) {
     const expoNote = expoError ? ` (Expo socket: ${String(expoError)})` : ''
