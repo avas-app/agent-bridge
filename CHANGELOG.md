@@ -1,5 +1,14 @@
 # @avasapp/agent-bridge
 
+## 0.4.2
+
+### Patch Changes
+
+- 577fd6a: A session no longer switches to another app when it reconnects. It used to re-run discovery and attach to whatever single app was connected, so after the app went away its calls could land in a different app on the same Metro. Reconnects now only accept the app the session started on (same name and platform, and the same debugger target over CDP; its deviceId changes on every reload), skip an app another session owns, and otherwise fail with `<app> is not connected; connected: …` until it comes back. `--device` matching several apps is now an error that lists them instead of picking the first (an exact match still wins). `Using session "<name>"` on stderr now names the app and Metro too. Closes #69.
+  
+  A call over CDP now ends at its timeout even when the debugger never answers the evaluate, as the old runtime's socket does after a JS reload; a session on CDP used to hang there for good instead of reconnecting.
+- 6c7afa4: `screen.waitFor` takes `{scroll:true}`, like `press` and `fill`: a match that is rendered but off screen (below the fold of a `ScrollView`) is scrolled into view and returned, instead of timing out as an off-screen near miss. Without it, waitFor still matches on-screen elements only, and a timeout with an off-screen near miss now points at `{scroll:true}`. `{gone:true}` with `{scroll:true}` is refused. Closes #68.
+
 ## 0.4.1
 
 ### Patch Changes
