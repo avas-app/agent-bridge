@@ -5,8 +5,10 @@ import {
   type ResultMessage,
 } from '../shared/protocol'
 import {
+  type AppPin,
   type Connection,
   createPending,
+  describePin,
   newCallId,
   openSocket,
 } from './connection'
@@ -93,6 +95,7 @@ export async function connectExpo(
   device?: string,
   discoveryMs = 600,
   signal?: AbortSignal,
+  pin?: AppPin,
 ): Promise<Connection> {
   const { ws, devices, pending, send, announced } = await openBroadcast(
     metro,
@@ -101,7 +104,15 @@ export async function connectExpo(
   )
   let info: DeviceInfo
   try {
-    info = pickOne([...devices.values()], device, deviceLabel)
+    const all = [...devices.values()]
+    const candidates = pin
+      ? all.filter((d) => d.name === pin.name && d.platform === pin.platform)
+      : all
+    if (pin && !candidates.length)
+      throw new Error(
+        `${describePin(pin)} is not connected; connected: ${all.map(deviceLabel).join('; ') || 'none'}`,
+      )
+    info = pickOne(candidates, device, deviceLabel)
   } catch (error) {
     ws.close()
     throw error
@@ -122,6 +133,7 @@ export async function connectExpo(
   return {
     transport: 'expo',
     device: info,
+    pin: { name: info.name, platform: info.platform },
     call(tool, args, timeoutMs) {
       if (superseded)
         return Promise.resolve<ResultMessage>({

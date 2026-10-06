@@ -9,9 +9,11 @@ import {
   toAsciiJson,
 } from '../shared/protocol'
 import {
+  type AppPin,
   type Connection,
   OpenGaveUp,
   createPending,
+  describePin,
   newCallId,
   openSocket,
 } from './connection'
@@ -31,12 +33,17 @@ export async function connectCdp(
   metro: string,
   device?: string,
   signal?: AbortSignal,
+  pin?: AppPin,
 ): Promise<Connection> {
-  const target = pickOne(
-    await listCdpTargets(metro, signal),
-    device,
-    targetLabel,
-  )
+  const targets = await listCdpTargets(metro, signal)
+  const candidates = pin?.target
+    ? targets.filter((t) => targetLabel(t) === pin.target)
+    : targets
+  if (pin && !candidates.length)
+    throw new Error(
+      `${describePin(pin)} is not connected; connected: ${targets.map(targetLabel).join('; ') || 'none'}`,
+    )
+  const target = pickOne(candidates, device, targetLabel)
   const hostUri = await expoHostUri(metro, signal)
   const port = metro.split(':')[1] ?? '8081'
   // Expo wants its advertised host exactly; bare RN accepts any localhost origin.
@@ -138,31 +145,37 @@ export async function connectCdp(
   }
 
   signal?.removeEventListener('abort', dropOnAbort)
+  if (pin && (info.name !== pin.name || info.platform !== pin.platform)) {
+    ws.terminate()
+    throw new Error(
+      `${describePin(pin)} is not connected; connected: ${targetLabel(target)} runs ${info.name} (${info.platform})`,
+    )
+  }
   return {
     transport: 'cdp',
+    pin: {
+      name: info.name,
+      platform: info.platform,
+      target: targetLabel(target),
+    },
     device: { ...info, name: `${info.name} (${targetLabel(target)})` },
-    async call(tool, args, timeoutMs) {
+    call(tool, args, timeoutMs) {
       const call: CallMessage = { id: newCallId(), tool, args }
       const reply = pending.wait(call.id, tool, timeoutMs)
-      // Hermes answers Runtime.evaluate only when the JS thread is free, so
-      // the timeout can reject `reply` before we return it. Unobserved, that
-      // rejection is unhandled and kills the process (a session daemon's
-      // health ping during a slow call did). The caller still gets it.
-      reply.catch(() => {})
-      try {
-        // The payload travels as ASCII-only JSON inside a string literal.
-        await evaluate(
-          `${CDP_GLOBAL}.dispatch(${JSON.stringify(toAsciiJson(call))})`,
-        )
-      } catch (error) {
+      // Not awaited: Hermes answers Runtime.evaluate only when the JS thread
+      // is free, and never after a reload, but the reply's timeout must
+      // still end the call. The payload is ASCII-only JSON in a string literal.
+      evaluate(
+        `${CDP_GLOBAL}.dispatch(${JSON.stringify(toAsciiJson(call))})`,
+      ).catch((error) =>
         pending.settle({
           id: call.id,
           from: info.deviceId,
           ok: false,
           error: String(error),
           ms: 0,
-        })
-      }
+        }),
+      )
       return reply
     },
     close: () => ws.close(),

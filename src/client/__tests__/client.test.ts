@@ -195,6 +195,31 @@ describe('CDP transport', () => {
     expect(unhandled).toEqual([])
   })
 
+  test('a call times out when the debugger never answers, as after a reload', async () => {
+    const metro = await startFakeMetro({
+      acceptOrigin: (port) => `http://localhost:${port}`,
+    })
+    cleanups.push(
+      metro.close,
+      cdpTransport().start(appContext('Fake Phone', 'dev-cdp')),
+    )
+    const bridge = await connect({
+      metro: metro.metro,
+      transport: 'cdp',
+      timeoutMs: 50,
+    })
+    cleanups.push(bridge.close)
+    metro.live.hangCommands = true
+    const outcome = await Promise.race([
+      bridge.call('demo.echo', 1).then(
+        () => 'answered',
+        (error: Error) => error.message,
+      ),
+      new Promise((r) => setTimeout(() => r('still waiting'), 1000)),
+    ])
+    expect(outcome).toBe('No reply to "demo.echo" within 50 ms')
+  })
+
   test('auto falls back to CDP when Metro has no Expo socket', async () => {
     const metro = await startFakeMetro({
       acceptOrigin: (port) => `http://localhost:${port}`,

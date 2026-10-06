@@ -44,6 +44,8 @@ async function fakeApp(
     dropReload?: boolean
     /** Leave out bridge.pending, as an older app would. */
     pending?: boolean
+    /** The name the app gives the bridge. Default "Fake App". */
+    name?: string
   } = {},
 ) {
   let deviceId = firstId
@@ -111,7 +113,7 @@ async function fakeApp(
   registry = make()
   const info = (): DeviceInfo => ({
     deviceId,
-    name: 'Fake App',
+    name: options.name ?? 'Fake App',
     platform: 'ios',
     protocol: PROTOCOL_VERSION,
     loadId,
@@ -364,6 +366,120 @@ describe('session daemon', () => {
     reloaded.ws.close()
     await expect(bridge.call('demo.echo', 3)).rejects.toThrow('The app is gone')
   }, 15_000)
+
+  test('never reconnects to another app; waits for the one it started on', async () => {
+    const { metro, app } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'pinned',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'pinned', timeoutMs: 300 })
+    cleanups.push(bridge.close)
+    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+
+    // The app goes; another app on the same Metro is all that is left.
+    app.ws.close()
+    const other = await fakeApp(metro, 'dev-9', { name: 'Other App' })
+    cleanups.push(() => other.ws.close())
+    await expect(bridge.call('demo.set')).rejects.toThrow(
+      'Fake App (ios) is not connected; connected: Other App (ios, dev-9)',
+    )
+    expect(other.changed).toBe(false)
+    expect(listSessions()[0]?.device).toMatchObject({
+      name: 'Fake App',
+      deviceId: 'dev-1',
+    })
+
+    // The same app coming back (reloaded, so a new id) is picked up again.
+    const back = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => back.ws.close())
+    expect(await bridge.call('demo.echo', 2)).toEqual([2])
+    expect(listSessions()[0]?.device.deviceId).toBe('dev-2')
+  }, 15_000)
+
+  test('the health ping does not move a session to another app either', async () => {
+    const { metro, app } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'pinned-health',
+      metro,
+      idleMs: 0,
+      healthMs: 50,
+    })
+    cleanups.push(() => daemon.stop(true))
+    app.ws.close()
+    const other = await fakeApp(metro, 'dev-9', { name: 'Other App' })
+    cleanups.push(() => other.ws.close())
+    const log = () =>
+      readFileSync(sessionFiles('pinned-health', dir).log, 'utf8')
+    for (let i = 0; i < 100 && !/reconnect(ed|.*failed)/.test(log()); i++)
+      await new Promise((r) => setTimeout(r, 50))
+    expect(log()).toContain('Fake App (ios) is not connected')
+    expect(listSessions()[0]?.device.deviceId).toBe('dev-1')
+  }, 10_000)
+
+  test('a reconnect skips an app that belongs to another session', async () => {
+    const { metro, app } = await setup()
+    const first = await runSessionDaemon({
+      name: 'first',
+      metro,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => first.stop(true))
+    // The same app on a second device, driven by its own session.
+    const twin = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => twin.ws.close())
+    const second = await runSessionDaemon({
+      name: 'second',
+      metro,
+      device: 'dev-2',
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => second.stop(true))
+
+    app.ws.close()
+    const bridge = await connectSession({ name: 'first', timeoutMs: 300 })
+    cleanups.push(bridge.close)
+    await expect(bridge.call('demo.set')).rejects.toThrow(
+      'belongs to session "second"',
+    )
+    expect(twin.changed).toBe(false)
+    expect(
+      listSessions().find((s) => s.name === 'first')?.device.deviceId,
+    ).toBe('dev-1')
+  }, 15_000)
+
+  test('--device matching several apps is an error that lists them', async () => {
+    const { metro } = await setup()
+    const twin = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => twin.ws.close())
+    await expect(
+      runSessionDaemon({
+        name: 'loose',
+        metro,
+        device: 'fake',
+        transport: 'expo',
+        idleMs: 0,
+        healthMs: 0,
+      }),
+    ).rejects.toThrow(
+      '2 apps match "fake"; narrow --device. Matching: Fake App (ios, dev-1); Fake App (ios, dev-2)',
+    )
+    const exact = await runSessionDaemon({
+      name: 'exact',
+      metro,
+      device: 'dev-2',
+      transport: 'expo',
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => exact.stop(true))
+    expect(exact.state.device.deviceId).toBe('dev-2')
+  })
 
   /** A session on a fresh fake app plus a client for it. */
   async function session(
@@ -854,7 +970,9 @@ describe('session CLI', () => {
       metro,
     )
     expect(viaSession.stdout).toContain('"y"')
-    expect(viaSession.stderr).toContain('Using session "cli"')
+    expect(viaSession.stderr).toContain(
+      `Using session "cli" (Fake App on ${metro})`,
+    )
     // No --metro at all: this project's one session is used, and named.
     const plain = await runAsync('call', 'demo.echo', '"z"')
     expect(plain.stdout).toContain('"z"')
