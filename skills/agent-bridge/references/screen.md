@@ -10,6 +10,7 @@ npx agent-bridge call screen.scroll '"Notes"'                   # bring a target
 npx agent-bridge call screen.refresh                            # pull to refresh (the RefreshControl's onRefresh); then screen.waitFor the data
 npx agent-bridge call screen.fill '["plant-name", "Fern"]'     # runs the input's handlers
 npx agent-bridge call screen.waitFor '"Name is required"'      # {"gone": true} waits for it to go
+npx agent-bridge call screen.waitFor '["Section title", {"scroll":true}]'   # also below the fold: scrolls it into view (not with gone)
 ```
 
 `press` and `fill` return once the app has rendered the result, so the next

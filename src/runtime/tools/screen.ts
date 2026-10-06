@@ -61,8 +61,8 @@ export function screenTools(): Tools {
     },
     'screen.waitFor': {
       description:
-        'Wait until a target is on screen, or gone with {gone:true}. Matches testID, label, placeholder, then the same joined text screen.snapshot shows. Default timeout 5000 ms; a timeout lists near misses.',
-      run: (target: Target, options?: { gone?: boolean; timeoutMs?: number }) =>
+        'Wait until a target is on screen, or gone with {gone:true}. Matches testID, label, placeholder, then the same joined text screen.snapshot shows. {scroll:true} also accepts a match rendered off screen and scrolls it into view (not with gone). Default timeout 5000 ms; a timeout lists near misses.',
+      run: (target: Target, options?: { gone?: boolean; timeoutMs?: number; scroll?: boolean }) =>
         screen.waitFor(target, options),
     },
   }

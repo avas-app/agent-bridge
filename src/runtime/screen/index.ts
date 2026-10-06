@@ -103,6 +103,15 @@ export function createScreen(env: {
     return { found: current, metrics }
   }
 
+  const reveal = async (found: Found): Promise<Found> => {
+    const shown = (await bringIntoView(found)).found
+    if (!shown.onScreen)
+      throw new Error(
+        `${describe(shown.element)} is not on screen and no scrollable around it can bring it into view`,
+      )
+    return shown
+  }
+
   // The element a target means, scrolled into view first when it is off
   // screen and `scroll` is set.
   const resolve = async (
@@ -110,17 +119,11 @@ export function createScreen(env: {
     prefer: (f: Found) => boolean,
     options: { index?: number; afterText?: boolean; scroll?: boolean },
   ): Promise<Found> => {
-    let found = resolveTarget(collect(), target, prefer, {
+    const found = resolveTarget(collect(), target, prefer, {
       ...options,
       offscreen: options.scroll,
     })
-    if (found.onScreen) return found
-    found = (await bringIntoView(found)).found
-    if (!found.onScreen)
-      throw new Error(
-        `${describe(found.element)} is not on screen and no scrollable around it can bring it into view`,
-      )
-    return found
+    return found.onScreen ? found : reveal(found)
   }
 
   return {
@@ -272,6 +275,6 @@ export function createScreen(env: {
     },
 
     waitFor: (target: Target, options?: WaitForOptions) =>
-      waitForTarget(collect, target, options),
+      waitForTarget(collect, target, options, reveal),
   }
 }
