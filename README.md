@@ -1,12 +1,12 @@
 # @avasapp/agent-bridge
 
-Let coding agents drive a running React Native app directly. Seed data, flip flags, fake realtime messages, navigate and check the screen in **milliseconds**, without tapping through the app. It works alongside [agent-device](https://github.com/callstack/agent-device): agent-device opens the app and handles native UI, and agent-bridge handles everything inside the app.
+Let coding agents drive any running Expo or React Native app directly. Seed data, flip flags, fake realtime messages, navigate and check the screen in **milliseconds**, without tapping through the app. It works alongside [agent-device](https://github.com/callstack/agent-device): agent-device opens the app and handles native UI, and agent-bridge handles everything inside the app.
 
 ![The same checks with agent-device alone (22.4 s) and with agent-bridge (1.4 s): hide a tab, turn on dark mode, fill in a form, seed data, fake a live message and undo it all](example/media/demo.gif)
 
 The same 19 checks on [the example app](example), at real speed: 22.4 s with agent-device alone, 1.4 s with agent-bridge. Most calls take a few milliseconds ([benchmarks](docs/benchmarks.md)).
 
-Works on Expo (dev-tools socket) and on bare React Native (CDP over Metro). Dev builds only: release builds get empty stubs.
+Works on Expo (dev-tools socket) and on bare React Native (CDP over Metro). Nothing ships to users: every entry point compiles to an empty stub in release builds, and `agent-bridge assert-absent` checks a bundle in CI ([security](docs/security.md)).
 
 ## Install
 
