@@ -2,7 +2,7 @@
 
 ```sh
 bun install
-bun run check   # typecheck, tests, build, and the release-gate check
+bun run check   # typecheck, tests, build, release gates, and a consumer typecheck
 ```
 
 - Tests live next to the code in `__tests__`. Client changes need a test against the fake Metro in `src/client/__tests__/fake-metro.ts`.

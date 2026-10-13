@@ -3,6 +3,20 @@ import { hashKey, type QueryClient, type QueryKey } from '@tanstack/query-core'
 import type { Tools } from '../runtime/types'
 import { trackMockedQueries } from './query-mocked'
 
+// Structural, not query-core's class: an app's client resolves query-core's ESM
+// types and this package's .d.cts the CJS ones, and the class's #private
+// members make those two declarations incompatible.
+/** A TanStack Query `QueryClient`, e.g. from `useQueryClient()`. */
+export type QueryClientLike = {
+  getQueryCache(): object
+  getQueryData(queryKey: readonly unknown[]): unknown
+  setQueryData(queryKey: readonly unknown[], updater: unknown): unknown
+  invalidateQueries(filters?: object): Promise<void>
+  refetchQueries(filters?: object): Promise<void>
+  resetQueries(filters?: object): Promise<void>
+  getDefaultOptions(): object
+}
+
 type PinState = {
   pins: Map<string, { key: QueryKey; data: unknown }>
   /** Keys the agent overwrote with query.set, by hash, for query.restore. */
@@ -113,7 +127,11 @@ function atPath(value: unknown, path: unknown): unknown {
  * Read and seed the TanStack Query cache. `query.pin` keeps a seed in place:
  * when a refetch lands with real data, the seed is put back until unpinned.
  */
-export function queryTools(queryClient: QueryClient): Tools {
+export function queryTools(queryClient: QueryClientLike): Tools {
+  return toolsFor(queryClient as unknown as QueryClient)
+}
+
+function toolsFor(queryClient: QueryClient): Tools {
   const cache = queryClient.getQueryCache()
   const state = pinStateFor(queryClient)
   const { pins, seeded } = state

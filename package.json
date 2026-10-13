@@ -103,8 +103,9 @@
     "build": "bun run generate && rm -rf dist && tsup",
     "test": "bun run generate && bun test src/",
     "typecheck": "bun run generate && tsc -p tsconfig.json --noEmit",
-    "check": "bun run typecheck && bun run test && bun run build && bun run check:gates",
+    "check": "bun run typecheck && bun run test && bun run build && bun run check:gates && bun run check:consumer-types",
     "check:gates": "node scripts/check-gates.mjs",
+    "check:consumer-types": "node scripts/check-consumer-types.mjs",
     "changeset": "changeset",
     "release": "bun run check && changeset publish",
     "prepublishOnly": "bun run check"
