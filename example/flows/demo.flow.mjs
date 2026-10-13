@@ -1,6 +1,6 @@
 // Drives the example app the way a coding agent would, with no taps.
-//   npx agent-bridge run flows/demo.mjs              no pauses
-//   PACE=paced npx agent-bridge run flows/demo.mjs   holds each step for viewers
+//   npx agent-bridge run flows/demo.flow.mjs              no pauses
+//   PACE=paced npx agent-bridge run flows/demo.flow.mjs   holds each step for viewers
 const HOLD_MS = { none: 0, paced: 1200 }[process.env.PACE ?? 'none'] ?? Number(process.env.PACE)
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))

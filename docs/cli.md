@@ -10,7 +10,7 @@ npx agent-bridge call screen.press '"add-plant"'
 npx agent-bridge call screen.fill '["plant-name", "Fiddle leaf fig"]'
 npx agent-bridge call screen.waitFor '"Name is required"'
 npx agent-bridge call query.get '["feed"]' --out feed.json   # big result to a file; prints size and shape
-npx agent-bridge run flows/add-plant.mjs --strict   # fail if the app logged an error
+npx agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
 npx agent-bridge session stop             # runs bridge.restore, then disconnects
 npx agent-bridge session stop --dry-run   # lists what it would undo, keeps the session
 ```
@@ -20,7 +20,7 @@ npx agent-bridge session stop --dry-run   # lists what it would undo, keeps the 
 **Timing checks and long sequences.** Every CLI call is a new process, roughly 90–100 ms with the bin and 280–320 ms through `npx` on one Linux box ([benchmarks](benchmarks.md#cli-overhead)), all of it startup rather than the bridge. For a timing check, or more than a handful of calls, write a flow file and use `agent-bridge run`: it pays startup once and prints how long each step took.
 
 ```js
-// flows/back-nav.mjs
+// flows/back-nav.flow.mjs
 export default async ({ step }) => {
   await step('open detail', 'router.navigate', '/plants/1')
   await step('go back', 'router.back')          // its time is printed in the step list
@@ -29,8 +29,29 @@ export default async ({ step }) => {
 ```
 
 ```sh
-./node_modules/.bin/agent-bridge run flows/back-nav.mjs   # one line per step: number, label, time
+./node_modules/.bin/agent-bridge run flows/back-nav.flow.mjs   # one line per step: number, label, time
 ```
+
+## init
+
+```sh
+npx @avasapp/agent-bridge init                 # in the app; --dir apps/mobile from a monorepo root
+npx @avasapp/agent-bridge init --dry-run       # print the actions and the files; change nothing
+npx @avasapp/agent-bridge init --json          # for agents: a report on stdout, no prompts
+```
+
+It exits 1 outside a React Native app, and at a monorepo root it names the workspaces to pass with `--dir`. Otherwise it:
+
+- installs `@avasapp/agent-bridge` as a dev dependency with the app's package manager (`--no-install` prints the command);
+- writes `src/dev/agent-bridge.tsx` (`dev/` without a `src/`, `.js` without TypeScript, `--out` to choose; never under `app/`), wired for what it finds: Expo transports, expo-router, TanStack Query and WebViews. Zustand stores and MMKV instances go in as comments, because they often hold tokens: add `redact` first. Ably and socket.io get a TODO naming the file that creates the client;
+- asks once whether to wire `networkTools()`, which patches `fetch` and `XMLHttpRequest` in dev builds. `--network` / `--no-network` answer up front. With `--json`, `--yes` or no terminal it stays off and the report lists it under `choices`. With it on, the file gets an `offline` scenario;
+- scaffolds `flows/smoke.flow.mjs`, `flows/README.md` and a `"flow": "agent-bridge run"` script, and keeps flows out of tsconfig, oxlint and a simple ESLint flat config (other configs get the line to add printed);
+- runs `npx skills add avas-app/agent-bridge` (`--no-skill` skips it);
+- prints the two lines to mount it in your root layout, never editing it, and the first commands to run.
+
+A second run skips files that exist (`--force` rewrites the generated ones), reports libraries added since then and whether the root component imports the bridge yet.
+
+`--json` prints `{ ok, files: [{ path, status }], install, skill, mount: { file, mounted, snippet, note }, choices: { network: { enabled, open, flag, why } }, commented, todos, missing, runFrom, next: [{ step, command }], prompt }`; on an error, `{ ok: false, error, workspaces? }`. With `--dry-run` it adds `contents`, each file it would write.
 
 ## Big results and arguments
 
@@ -94,6 +115,16 @@ const app = await connect({ metro: 'localhost:8081' })
 const { errors, restoreErrors } = await runFlow(app, mainTabs, { scenarios: [{ name: 'signedIn' }] })
 app.close()
 if (errors || restoreErrors.length) process.exit(1)
+```
+
+## Flows: where they go
+
+Put flows in `<app>/flows/<name>.flow.mjs`, as plain ES modules (`.mjs` is what `run` supports). Keep them out of `app/` (expo-router makes every file there a route) and don't name them `*.test.*` (test runners would pick them up). Exclude `**/*.flow.*` from tsconfig and lint configs; `init` does this for you. For editor hints, type the default export:
+
+```js
+/** @type {import('@avasapp/agent-bridge/client').FlowModule['default']} */
+const flow = async ({ step }) => { /* ... */ }
+export default flow
 ```
 
 No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.

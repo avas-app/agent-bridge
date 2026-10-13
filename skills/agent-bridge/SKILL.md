@@ -58,6 +58,13 @@ not connected; connected: …` means its app is gone and something else is there
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.
 
+If the app doesn't have the package or a bridge file yet, run
+`npx @avasapp/agent-bridge init --json` in the app (`--dir apps/x` from a
+monorepo root). It writes `src/dev/agent-bridge.tsx` but never edits the root
+layout: paste `mount.snippet` into `mount.file` as `mount.note` says. Ask the
+user about each entry in `choices` it reports as `open` (such as network
+tools) and rerun with the flag it names. Then follow `next`.
+
 ## Start from a scenario
 
 Apps can define named setups, such as a locally signed-in user. Use one

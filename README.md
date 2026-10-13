@@ -11,6 +11,14 @@ Works on Expo (dev-tools socket) and on bare React Native (CDP over Metro). Noth
 ## Install
 
 ```sh
+npx @avasapp/agent-bridge init
+```
+
+Run it in the app. It installs the package, writes a dev-only `src/dev/agent-bridge.tsx` wired for the libraries it finds, adds a smoke flow and the agent skill, and prints the two lines to paste into your root component. Agents run it as `init --json`; see [the CLI](docs/cli.md#init).
+
+### Manual setup
+
+```sh
 bun add -d @avasapp/agent-bridge   # or npm / yarn / pnpm
 ```
 
@@ -80,7 +88,7 @@ npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
 npx agent-bridge call query.pin '[["features"], {"beta": false}]'
 npx agent-bridge call screen.press '"add-plant"'
 npx agent-bridge call screen.waitFor '"Name is required"'
-npx agent-bridge run flows/add-plant.mjs --strict   # fail if the app logged an error
+npx agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
 npx agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
 

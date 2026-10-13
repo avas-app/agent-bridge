@@ -5,7 +5,7 @@
 The same checks on [the example app](../example) in Expo Go, both at real speed, all on one Mac:
 
 - **agent-device alone** ([`demo-agent-device.mjs`](../example/flows/demo-agent-device.mjs)) taps and types through the UI, edits the fake backend and reloads to change the flag and the data, and asks the realtime server to push a message.
-- **agent-device + agent-bridge** ([`demo.mjs`](../example/flows/demo.mjs)) makes each change with one call, then undoes them all with `bridge.restore`.
+- **agent-device + agent-bridge** ([`demo.flow.mjs`](../example/flows/demo.flow.mjs)) makes each change with one call, then undoes them all with `bridge.restore`.
 
 agent-device 0.21.15 won't press or fill most of this screen by selector on the iOS 27 simulator ([callstack/agent-device#2996](https://github.com/callstack/agent-device/issues/2996)), so the agent-device side looks up each element's frame and taps its centre. That adds one lookup per tap or fill.
 
