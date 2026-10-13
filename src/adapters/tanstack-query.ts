@@ -3,9 +3,7 @@ import { hashKey, type QueryClient, type QueryKey } from '@tanstack/query-core'
 import type { Tools } from '../runtime/types'
 import { trackMockedQueries } from './query-mocked'
 
-// Structural, not query-core's class: an app's client resolves query-core's ESM
-// types and this package's .d.cts the CJS ones, and the class's #private
-// members make those two declarations incompatible.
+// Structural: the app's ESM QueryClient and our .d.cts's CJS one clash on #private members.
 /** A TanStack Query `QueryClient`, e.g. from `useQueryClient()`. */
 export type QueryClientLike = {
   getQueryCache(): object
