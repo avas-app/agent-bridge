@@ -43,7 +43,7 @@ npx @avasapp/agent-bridge init --json          # for agents: a report on stdout,
 It exits 1 outside a React Native app, and at a monorepo root it names the workspaces to pass with `--dir`. Otherwise it:
 
 - installs `@avasapp/agent-bridge` as a dev dependency with the app's package manager (`--no-install` prints the command);
-- writes `src/dev/agent-bridge.tsx` (`dev/` without a `src/`, `.js` without TypeScript, `--out` to choose; never under `app/`), wired for what it finds: Expo transports, expo-router, TanStack Query and WebViews. Zustand stores and MMKV instances go in as comments, because they often hold tokens: add `redact` first. Ably and socket.io get a TODO naming the file that creates the client;
+- writes `src/dev/agent-bridge.tsx` (`dev/` without a `src/`, `.js` without TypeScript, `--out` to choose; never under `app/`), wired for what it finds: Expo transports, expo-router, TanStack Query and WebViews. Zustand stores and MMKV instances go in as comments, because they often hold tokens: add `redact` first. Ably and socket.io get a TODO naming the file that creates the client, or are wired directly if that file already exports `socketIoTools(…)` / `ablyTools(…)`;
 - asks once whether to wire `networkTools()`, which patches `fetch` and `XMLHttpRequest` in dev builds. `--network` / `--no-network` answer up front. With `--json`, `--yes` or no terminal it stays off and the report lists it under `choices`. With it on, the file gets an `offline` scenario;
 - scaffolds `flows/smoke.flow.mjs`, `flows/README.md` and a `"flow": "agent-bridge run"` script, and keeps flows out of tsconfig, oxlint and a simple ESLint flat config (other configs get the line to add printed);
 - runs `npx skills add avas-app/agent-bridge` (`--no-skill` skips it);

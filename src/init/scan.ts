@@ -10,6 +10,8 @@ export type ScanResult = {
   mmkv: Found[]
   socketIo: Found[]
   ably: Found[]
+  /** Realtime tools the app already exports from where its client is created. */
+  realtimeTools: Found[]
 }
 
 const CODE = /\.(tsx?|jsx?|mjs|cjs)$/
@@ -27,6 +29,7 @@ const PATTERNS: Array<[keyof ScanResult, string, RegExp]> = [
   ['mmkv', 'react-native-mmkv', new RegExp(`export\\s+const\\s+(\\w+)${TYPED}\\s*=\\s*(?:new\\s+MMKV|createMMKV)\\s*[<(]`, 'g')],
   ['socketIo', 'socket.io-client', new RegExp(`(?:const|let)\\s+(\\w+)${TYPED}\\s*=\\s*io\\s*\\(`, 'g')],
   ['ably', 'ably', new RegExp(`(?:const|let)\\s+(\\w+)${TYPED}\\s*=\\s*new\\s+(?:Ably\\.)?Realtime(?:\\.Promise)?\\s*\\(`, 'g')],
+  ['realtimeTools', '@avasapp/agent-bridge', /export\s+const\s+(\w+)\s*=\s*(?:socketIoTools|ablyTools)\s*\(/g],
 ]
 
 /**
@@ -55,7 +58,7 @@ export function scan(
   walk(dir, false)
   for (const sub of ['src', 'app', 'lib']) walk(join(dir, sub), true)
 
-  const result: ScanResult = { stores: [], mmkv: [], socketIo: [], ably: [] }
+  const result: ScanResult = { stores: [], mmkv: [], socketIo: [], ably: [], realtimeTools: [] }
   for (const path of files) {
     const text = fs.read(path)
     if (!text || text.length > maxBytes) continue

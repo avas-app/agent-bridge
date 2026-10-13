@@ -29,6 +29,8 @@ export type BridgeFileInput = {
   stores?: Imported[]
   mmkv?: Imported[]
   realtime: RealtimeTodo[]
+  /** Realtime tools the app already exports, wired live. */
+  realtimeTools?: Imported[]
 }
 
 const REALTIME = {
@@ -89,6 +91,8 @@ export function renderBridgeFile(o: BridgeFileInput): string {
   }
   if (o.expoRouter) L.push(`import { router, useNavigationContainerRef } from 'expo-router'`)
   if (o.reactQuery) L.push(`import { useContext } from 'react'`)
+  if (o.realtimeTools?.length)
+    L.push('', ...o.realtimeTools.map((t) => `import { ${t.name} } from '${t.from}'`))
 
   if (o.stores) {
     const stores = o.stores.length ? o.stores : [{ name: 'useAuthStore', from: '../stores/auth' }]
@@ -176,6 +180,7 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       '      ...webviewTools(),',
     )
   if (o.network) L.push('      ...networkTools(),')
+  for (const t of o.realtimeTools ?? []) L.push(`      ...${t.name},`)
   if (o.stores) {
     const stores = o.stores.length ? o.stores : [{ name: 'useAuthStore', from: '' }]
     const map = stores.map((s) => `${storeKey(s.name)}: ${s.name}`).join(', ')

@@ -106,6 +106,25 @@ describe('generated files per app', () => {
   })
 })
 
+test('a client the app already wraps is wired live, with no TODO', async () => {
+  const { files, report } = await initIn(
+    {
+      ...EXPO_ROUTER_FULL,
+      'src/lib/socket.ts': `import { socketIoTools } from '@avasapp/agent-bridge/socket.io'
+import { io } from 'socket.io-client'
+export const socket = io('http://localhost:3000')
+export const realtimeDevTools = socketIoTools(socket)
+`,
+    },
+    { skill: false },
+  )
+  const file = files['src/dev/agent-bridge.tsx']!
+  expect(file).toContain("import { realtimeDevTools } from '../lib/socket'")
+  expect(file).toContain('      ...realtimeDevTools,\n')
+  expect(file).not.toContain('TODO socket.io')
+  expect(report!.todos).toEqual([])
+})
+
 describe('side files', () => {
   test('patches tsconfig, eslint, package.json and AGENTS.md', async () => {
     const { files, report } = await initIn(EXPO_ROUTER_FULL, { skill: false })
@@ -183,6 +202,10 @@ describe('install and skill', () => {
     ])
     expect(report!.skill).toMatchObject({ status: 'added', command: 'npx skills add avas-app/agent-bridge' })
     expect(report!.skill.plugin).toHaveLength(2)
+    const asked = await initIn(EXPO_PLAIN, { install: false, json: false, network: false }, { interactive: true })
+    expect(asked.io.execs).toEqual([
+      { command: ['npx', '--yes', 'skills', 'add', 'avas-app/agent-bridge'], cwd: asked.root, interactive: true },
+    ])
     const none = await initIn(EXPO_PLAIN, { install: false, skill: false })
     expect(none.io.execs).toEqual([])
   })
@@ -241,7 +264,7 @@ describe('networkTools choice', () => {
         expect(JSON.parse(io.out.join('\n')).choices.network).toEqual({
           enabled: false,
           open: true,
-          flag: '--network',
+          flag: '--network --force',
           why: expect.stringContaining('fetch'),
         })
       else expect(io.out.join('\n')).toContain('Open choice:')
@@ -312,7 +335,7 @@ describe('re-runs', () => {
     expect(readFileSync(join(root, 'dev/agent-bridge.tsx'), 'utf8')).toContain('networkTools')
     expect(readFileSync(join(root, 'flows/README.md'), 'utf8')).toBe('mine\n')
     const report = JSON.parse(io.out.join('\n')) as InitReport
-    expect(report.choices.network).toMatchObject({ enabled: true, open: false, flag: '--no-network' })
+    expect(report.choices.network).toMatchObject({ enabled: true, open: false, flag: '--no-network --force' })
   })
 
   test('a kept bridge file decides network and the offline step', async () => {

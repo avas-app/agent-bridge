@@ -128,6 +128,7 @@ describe('scan', () => {
       mmkv: [],
       socketIo: [{ name: 'socket', file: 'src/lib/socket.ts' }],
       ably: [],
+      realtimeTools: [],
     })
   })
 
@@ -143,6 +144,7 @@ describe('scan', () => {
       mmkv: [{ name: 'secure', file: 'lib/storage.ts' }],
       socketIo: [],
       ably: [{ name: 'client', file: 'app/realtime.ts' }],
+      realtimeTools: [],
     })
   })
 

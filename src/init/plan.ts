@@ -78,15 +78,15 @@ export const PLUGIN_LINES = [
 ]
 
 // What each library looks like in a bridge file, to report ones a re-run finds unwired.
-const MARKERS: Array<[keyof Detection['has'], string, string]> = [
-  ['expo', 'expoTransport', 'expo'],
-  ['expoRouter', 'routerTools', 'expo-router'],
-  ['reactQuery', 'queryTools', '@tanstack/react-query'],
-  ['webview', 'webviewTools', 'react-native-webview'],
-  ['zustand', 'storeTools', 'zustand'],
-  ['mmkv', 'mmkvTools', 'react-native-mmkv'],
-  ['socketIo', 'realtimeDevTools', 'socket.io-client'],
-  ['ably', 'realtimeDevTools', 'ably'],
+const MARKERS: Array<[keyof Detection['has'], RegExp, string]> = [
+  ['expo', /expoTransport/, 'expo'],
+  ['expoRouter', /routerTools/, 'expo-router'],
+  ['reactQuery', /queryTools/, '@tanstack/react-query'],
+  ['webview', /webviewTools/, 'react-native-webview'],
+  ['zustand', /storeTools/, 'zustand'],
+  ['mmkv', /mmkvTools/, 'react-native-mmkv'],
+  ['socketIo', /realtimeDevTools|socketIoTools|realtime/i, 'socket.io-client'],
+  ['ably', /realtimeDevTools|ablyTools|realtime/i, 'ably'],
 ]
 
 const posix = (p: string) => p.split(sep).join('/')
@@ -161,7 +161,9 @@ export function plan(
 
   const imported = (list: Array<{ name: string; file: string }>) =>
     list.map((f) => ({ name: f.name, from: importPath(out, join(d.dir, f.file)) }))
-  const realtime: RealtimeTodo[] = [
+  // Already wrapped where the client is created: wire it instead of a TODO.
+  const realtimeTools = imported(found.realtimeTools)
+  const realtime: RealtimeTodo[] = realtimeTools.length ? [] : [
     ...(d.has.socketIo
       ? found.socketIo.length
         ? found.socketIo.map((f) => ({ kind: 'socket.io' as const, ...f }))
@@ -198,6 +200,7 @@ export function plan(
         stores: d.has.zustand ? imported(found.stores) : undefined,
         mmkv: d.has.mmkv ? imported(found.mmkv) : undefined,
         realtime,
+        realtimeTools,
       }),
     })
     files.push({ path: rel(out), status: 'written' })
@@ -222,7 +225,7 @@ export function plan(
     for (const t of realtime) todos.push(`${realtimeTodoText(t)}: ${REALTIME_WHY} (${DOCS}/realtime.md).`)
   }
   const missing = keep
-    ? MARKERS.filter(([lib, marker]) => d.has[lib] && !existing.includes(marker)).map(
+    ? MARKERS.filter(([lib, marker]) => d.has[lib] && !marker.test(existing)).map(
         ([, , dep]) => dep,
       )
     : []
@@ -310,7 +313,8 @@ export function plan(
         network: {
           enabled: network,
           open: !network && !(o.network.chosen && !keep),
-          flag: network ? '--no-network' : keep ? '--network --force' : '--network',
+          // --force because the bridge file exists after any run but a dry one.
+          flag: network ? '--no-network --force' : '--network --force',
           why: NETWORK_WHY,
         },
       },
