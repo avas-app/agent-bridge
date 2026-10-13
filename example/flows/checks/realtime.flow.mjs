@@ -2,7 +2,7 @@
 // pushes arrive, mute drops them, emit fakes one, a faked disconnect drops
 // them without replaying later, and bridge.restore puts it all back.
 //   npm run realtime                               # in another terminal
-//   npx agent-bridge run flows/checks/realtime.flow.mjs
+//   npx @avasapp/agent-bridge run flows/checks/realtime.flow.mjs
 const SERVER = process.env.REALTIME_URL ?? 'http://localhost:8138'
 const CHANNEL = 'inbox:new'
 

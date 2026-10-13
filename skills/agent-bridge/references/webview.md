@@ -5,15 +5,15 @@
 `tools`), use the same verbs on the page:
 
 ```sh
-npx agent-bridge call webview.list                              # name, url, loaded, allowed
-npx agent-bridge call webview.snapshot '"checkout"'             # buttons, links, inputs, text in the page
-npx agent-bridge call webview.press '["Pay now", {"webview": "checkout"}]'
-npx agent-bridge call webview.fill '["Email", "ada@example.com"]'   # {"submit":true} presses Enter
-npx agent-bridge call webview.waitFor '["Payment complete", {"timeoutMs": 8000}]'   # {"gone":true}
-npx agent-bridge call webview.messages '"checkout"'             # page <-> app, last 100, bodies cut at 2 KB
-npx agent-bridge call webview.message 17                        # one in full
-npx agent-bridge call webview.send '["checkout", {"type": "auth", "ok": true}]'      # as if the app sent it
-npx agent-bridge call webview.receive '["checkout", {"type": "done"}]'               # runs the app's onMessage
+npx @avasapp/agent-bridge call webview.list                              # name, url, loaded, allowed
+npx @avasapp/agent-bridge call webview.snapshot '"checkout"'             # buttons, links, inputs, text in the page
+npx @avasapp/agent-bridge call webview.press '["Pay now", {"webview": "checkout"}]'
+npx @avasapp/agent-bridge call webview.fill '["Email", "ada@example.com"]'   # {"submit":true} presses Enter
+npx @avasapp/agent-bridge call webview.waitFor '["Payment complete", {"timeoutMs": 8000}]'   # {"gone":true}
+npx @avasapp/agent-bridge call webview.messages '"checkout"'             # page <-> app, last 100, bodies cut at 2 KB
+npx @avasapp/agent-bridge call webview.message 17                        # one in full
+npx @avasapp/agent-bridge call webview.send '["checkout", {"type": "auth", "ok": true}]'      # as if the app sent it
+npx @avasapp/agent-bridge call webview.receive '["checkout", {"type": "done"}]'               # runs the app's onMessage
 ```
 
 Targets match in `screen.*` order: `data-testid` (also `data-test-id`,

@@ -8,7 +8,7 @@ one JSON line back per call.
 
 ```sh
 printf '%s\n' 'router.navigate /inbox' 'screen.waitFor "Inbox"' 'screen.snapshot' \
-  | npx agent-bridge call --batch --stop-on-error
+  | npx @avasapp/agent-bridge call --batch --stop-on-error
 # {"tool":"router.navigate","ok":true,"ms":1.8,"appMs":1,"value":...}
 # {"tool":"screen.waitFor","ok":false,"ms":2003.1,"error":"..."}   (plus "logs"/"notice" when present)
 ```
@@ -44,9 +44,9 @@ export default async ({ step }) => {
 ```
 
 ```sh
-npx agent-bridge run flows/check.flow.mjs --strict    # --strict fails if the app logged an error
-npx agent-bridge run flows/check.flow.mjs --scenario signedIn   # add a scenario the flow doesn't declare
-npx agent-bridge run flows/check.flow.mjs --scenario 'signedIn={"user":{"name":"Ada"}}'   # with options
+npx @avasapp/agent-bridge run flows/check.flow.mjs --strict    # --strict fails if the app logged an error
+npx @avasapp/agent-bridge run flows/check.flow.mjs --scenario signedIn   # add a scenario the flow doesn't declare
+npx @avasapp/agent-bridge run flows/check.flow.mjs --scenario 'signedIn={"user":{"name":"Ada"}}'   # with options
 ```
 
 A flow can declare several scenarios, with options:

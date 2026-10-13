@@ -1,4 +1,4 @@
-// npx agent-bridge run examples/flow.mjs
+// npx @avasapp/agent-bridge run examples/flow.mjs
 // Assumes the app registers the tanstack-query and expo-router adapters.
 export default async ({ step, call }) => {
   const flags = await call('query.get', ['features'])

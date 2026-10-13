@@ -7,7 +7,7 @@ A small Expo app wired to agent-bridge, with a flow that drives it.
 npm install
 npm run realtime                          # optional: the live inbox's socket.io server
 npx expo start                            # open it in Expo Go
-npx agent-bridge run flows/demo.flow.mjs       # PACE=paced holds each step
+npx @avasapp/agent-bridge run flows/demo.flow.mjs       # PACE=paced holds each step
 ```
 
 `flows/demo-agent-device.mjs` does the same checks with agent-device alone, for a side-by-side recording: it taps and types through the UI, edits `src/dev/fake-backend.ts` and reloads to change the flag and the plants, and pushes the inbox message through the realtime server. Open the app with agent-device first and run it from the same directory, on the Metro machine: `METRO=localhost:8081 npm run demo:agent-device`. `TIMINGS=out.json` saves each step's start and duration for captions.
@@ -16,4 +16,4 @@ npx agent-bridge run flows/demo.flow.mjs       # PACE=paced holds each step
 
 The inbox is live: `src/realtime.ts` connects a socket.io socket to `realtime-server.mjs` (port 8138, on the Metro machine) and patches it with `socketIoTools`, so agents get `realtime.*`. Push a real message with `curl 'localhost:8138/push?title=Hello'`. `flows/checks/realtime.flow.mjs` checks the whole thing: real pushes, mute, emit, a faked disconnect and restore. Without the server the app still runs, and `realtime.emit` still works.
 
-The app has a local `signedIn` scenario (`src/dev/scenarios.ts`): a fake token in the `auth` store, `/me` from a fixture, strict network so any request nothing answers fails with a 501, and a gate that keeps the realtime socket disconnected. `npx agent-bridge scenarios` lists it; `flows/checks/signed-in.flow.mjs` declares it, and `agent-bridge run` signs in before the flow and out after it. That flow blocks one request on purpose, so the run reports one app error.
+The app has a local `signedIn` scenario (`src/dev/scenarios.ts`): a fake token in the `auth` store, `/me` from a fixture, strict network so any request nothing answers fails with a 501, and a gate that keeps the realtime socket disconnected. `npx @avasapp/agent-bridge scenarios` lists it; `flows/checks/signed-in.flow.mjs` declares it, and `agent-bridge run` signs in before the flow and out after it. That flow blocks one request on purpose, so the run reports one app error.

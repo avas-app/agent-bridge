@@ -26,9 +26,9 @@ bridge call can set.
 
 ## Run the CLI directly
 
-The examples say `npx agent-bridge` for brevity. Prefer the installed bin,
-`./node_modules/.bin/agent-bridge` (with bun too; `bunx agent-bridge` would
-fetch an unrelated npm package of that name): `npx` loads npm's
+The examples say `npx @avasapp/agent-bridge`; never drop the scope, because
+`agent-bridge` on npm is an unrelated package. Prefer the installed bin,
+`./node_modules/.bin/agent-bridge` (with bun too): `npx` loads npm's
 config on every call, so a project `.npmrc` with keys npm doesn't know prints
 `npm warn Unknown project config` into your output each time, and it adds
 roughly 200 ms more startup per call (machine-dependent).
@@ -36,8 +36,8 @@ roughly 200 ms more startup per call (machine-dependent).
 ## Start a session
 
 ```sh
-npx agent-bridge session start            # add --metro host:port if Metro isn't on localhost:8081
-npx agent-bridge tools                    # what this app exposes
+npx @avasapp/agent-bridge session start            # add --metro host:port if Metro isn't on localhost:8081
+npx @avasapp/agent-bridge tools                    # what this app exposes
 ```
 
 A session holds one connection for all your calls. It stops itself after 15
@@ -73,8 +73,8 @@ Apps can define named setups, such as a locally signed-in user. Use one
 instead of signing in by hand or seeding auth state yourself:
 
 ```sh
-npx agent-bridge scenarios                                        # what this app defines
-npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
+npx @avasapp/agent-bridge scenarios                                        # what this app defines
+npx @avasapp/agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
 ```
 
 `scenarios` shows each one's options as a JSON Schema. Bad options fail
@@ -94,11 +94,11 @@ real account instead. If you're asked to add one, read
 ## See and use the screen
 
 ```sh
-npx agent-bridge call screen.snapshot                       # buttons, inputs, text on the focused screen
-npx agent-bridge call screen.press '"add-plant"'            # by testID, label or text
-npx agent-bridge call screen.fill '["plant-name", "Fern"]'  # runs the input's handlers
-npx agent-bridge call screen.waitFor '"Name is required"'   # {"gone": true} waits for it to go
-npx agent-bridge call router.navigate /inbox
+npx @avasapp/agent-bridge call screen.snapshot                       # buttons, inputs, text on the focused screen
+npx @avasapp/agent-bridge call screen.press '"add-plant"'            # by testID, label or text
+npx @avasapp/agent-bridge call screen.fill '["plant-name", "Fern"]'  # runs the input's handlers
+npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'   # {"gone": true} waits for it to go
+npx @avasapp/agent-bridge call router.navigate /inbox
 ```
 
 `press` and `fill` return once the app has rendered the result, so the next
@@ -109,14 +109,14 @@ spread into the tool's arguments.
 
 Every reply carries errors the app logged or threw since the previous reply,
 printed as `! error during <tool>` or `! error after <tool>`. Treat them as
-failures of the step they name. `npx agent-bridge call bridge.logs` shows the
-last 200 errors and warnings.
+failures of the step they name. `npx @avasapp/agent-bridge call bridge.logs`
+shows the last 200 errors and warnings.
 
 ## Clean up
 
 ```sh
-npx agent-bridge call bridge.pending      # what restore will put back, per area
-npx agent-bridge session stop             # runs bridge.restore; --keep leaves the app as is
+npx @avasapp/agent-bridge call bridge.pending      # what restore will put back, per area
+npx @avasapp/agent-bridge session stop             # runs bridge.restore; --keep leaves the app as is
 ```
 
 `bridge.restore` unpins queries, puts back store values, removes network mocks,

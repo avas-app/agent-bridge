@@ -29,11 +29,11 @@ export function subscribe(channel: string, onMessage: (message: Message) => void
 ```
 
 ```sh
-npx agent-bridge call realtime.channels
-npx agent-bridge call realtime.mute '"order-42"'                       # the real feed goes quiet
-npx agent-bridge call realtime.emit '["order-42", {"name": "status", "data": {"status": "arrived"}}]'
-npx agent-bridge call realtime.log '{"channel": "order-42"}'
-npx agent-bridge call realtime.connection '"disconnected"'             # null goes back
+npx @avasapp/agent-bridge call realtime.channels
+npx @avasapp/agent-bridge call realtime.mute '"order-42"'                       # the real feed goes quiet
+npx @avasapp/agent-bridge call realtime.emit '["order-42", {"name": "status", "data": {"status": "arrived"}}]'
+npx @avasapp/agent-bridge call realtime.log '{"channel": "order-42"}'
+npx @avasapp/agent-bridge call realtime.connection '"disconnected"'             # null goes back
 ```
 
 - `realtime.emit` runs the app's own handlers. Ably gets an Ably message shaped like one ably-js decodes (`{ id, name, data, timestamp, action, version, annotations }` plus what you pass, e.g. `clientId`, `connectionId`, `extras`; `name` is the event name, there is no `event` field), socket.io gets the arguments after the event name (`["chat", "a", "b"]` calls `listener("a", "b")`), and `createRealtimeTap` gets the value as is, or what its `toMessage` option builds.

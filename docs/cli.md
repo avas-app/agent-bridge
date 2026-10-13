@@ -1,21 +1,21 @@
 # The CLI, flows and the client
 
 ```sh
-npx agent-bridge session start            # hold one connection; call/tools/run reuse it
-npx agent-bridge tools
-npx agent-bridge scenarios                # setups the app defines, e.g. signedIn
-npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
-npx agent-bridge call query.pin '[["features"], {"beta": false}]'
-npx agent-bridge call screen.press '"add-plant"'
-npx agent-bridge call screen.fill '["plant-name", "Fiddle leaf fig"]'
-npx agent-bridge call screen.waitFor '"Name is required"'
-npx agent-bridge call query.get '["feed"]' --out feed.json   # big result to a file; prints size and shape
-npx agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
-npx agent-bridge session stop             # runs bridge.restore, then disconnects
-npx agent-bridge session stop --dry-run   # lists what it would undo, keeps the session
+npx @avasapp/agent-bridge session start            # hold one connection; call/tools/run reuse it
+npx @avasapp/agent-bridge tools
+npx @avasapp/agent-bridge scenarios                # setups the app defines, e.g. signedIn
+npx @avasapp/agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
+npx @avasapp/agent-bridge call query.pin '[["features"], {"beta": false}]'
+npx @avasapp/agent-bridge call screen.press '"add-plant"'
+npx @avasapp/agent-bridge call screen.fill '["plant-name", "Fiddle leaf fig"]'
+npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'
+npx @avasapp/agent-bridge call query.get '["feed"]' --out feed.json   # big result to a file; prints size and shape
+npx @avasapp/agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
+npx @avasapp/agent-bridge session stop             # runs bridge.restore, then disconnects
+npx @avasapp/agent-bridge session stop --dry-run   # lists what it would undo, keeps the session
 ```
 
-**Skip npx for agents.** `npx` loads npm's config on every call. If the project's `.npmrc` has keys npm doesn't know, each call prints `npm warn Unknown project config …` into the agent's output, and npx adds process startup. The installed bin does neither: run `./node_modules/.bin/agent-bridge …` (with bun too: `bunx agent-bridge` fetches an unrelated npm package of that name) in place of `npx agent-bridge` in every command here.
+**Skip npx for agents.** `npx` loads npm's config on every call. If the project's `.npmrc` has keys npm doesn't know, each call prints `npm warn Unknown project config …` into the agent's output, and npx adds process startup. The installed bin does neither: run `./node_modules/.bin/agent-bridge …` (with bun too: `bunx agent-bridge` fetches an unrelated npm package of that name) in place of `npx @avasapp/agent-bridge` in every command here.
 
 **Timing checks and long sequences.** Every CLI call is a new process, roughly 90–100 ms with the bin and 280–320 ms through `npx` on one Linux box ([benchmarks](benchmarks.md#cli-overhead)), all of it startup rather than the bridge. For a timing check, or more than a handful of calls, write a flow file and use `agent-bridge run`: it pays startup once and prints how long each step took.
 

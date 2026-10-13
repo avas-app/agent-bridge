@@ -11,5 +11,5 @@
 Every entry point is gated on `process.env.NODE_ENV`, like `react/index.js`: Metro inlines it and a release bundle gets empty stubs. Check a bundle in CI:
 
 ```sh
-npx agent-bridge assert-absent path/to/main.jsbundle
+npx @avasapp/agent-bridge assert-absent path/to/main.jsbundle
 ```
