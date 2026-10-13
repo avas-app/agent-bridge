@@ -77,8 +77,8 @@ function tiers(target: Target): Test[] {
 
 // A view that is only an accessibility label: visible in the snapshot, but it
 // must not shadow a button or text that shows the same words.
-const labelOnly = ({ element: e, press, input }: Found) =>
-  e.kind === 'view' && !e.testID && !e.text && !e.placeholder && !press && !input
+const labelOnly = ({ element: e, press, input, actions }: Found) =>
+  e.kind === 'view' && !e.testID && !e.text && !e.placeholder && !press && !input && !actions
 
 /**
  * Matches from the first tier that has any. Label-only views match only when

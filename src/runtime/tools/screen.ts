@@ -26,7 +26,7 @@ export function screenTools(): Tools {
     },
     'screen.snapshot': {
       description:
-        'Buttons, inputs, text, and testID or labelled views on screen, with rects and checked/selected/expanded state (a Switch\'s value is checked). Only the focused screen: unfocused tabs and stack screens, content under an open modal, display:none and accessibility-hidden subtrees are left out, and `hidden` counts the elements skipped. {all:true} lists everything, marking off-screen (onScreen:false) and hidden (hidden:true) ones. A WebView registered with the react-native-webview adapter shows as one `webview` element with its name: use webview.* inside it.',
+        'Buttons, inputs, text, and testID or labelled views on screen, with rects and checked/selected/expanded state (a Switch\'s value is checked). `actions` lists the accessibility actions an element handles; one with "activate" and no onPress (a swipe-to-confirm) is a button screen.press can press. Only the focused screen: unfocused tabs and stack screens, content under an open modal, display:none and accessibility-hidden subtrees are left out, and `hidden` counts the elements skipped. {all:true} lists everything, marking off-screen (onScreen:false) and hidden (hidden:true) ones. A WebView registered with the react-native-webview adapter shows as one `webview` element with its name: use webview.* inside it.',
       run: (options?: { all?: boolean }) => screen.snapshot(options),
     },
     'screen.fill': {
@@ -41,9 +41,11 @@ export function screenTools(): Tools {
     },
     'screen.press': {
       description:
-        `Press a button, then wait for the render. ${TARGET_HELP} Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap. {scroll:true} scrolls an off-screen target into view first.`,
-      run: (target: Target, options?: { force?: boolean; index?: number; scroll?: boolean }) =>
-        screen.press(target, options),
+        `Press a button, then wait for the render. ${TARGET_HELP} Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap. {scroll:true} scrolls an off-screen target into view first. With no onPress it sends the "activate" accessibility action, as a screen reader's double tap does (swipe-to-confirm buttons, sliders), and the reply says via:"accessibilityAction:activate". {action:"increment"} (or any name in the element's snapshot \`actions\`) sends that action instead.`,
+      run: (
+        target: Target,
+        options?: { force?: boolean; index?: number; scroll?: boolean; action?: string },
+      ) => screen.press(target, options),
     },
     'screen.scroll': {
       description:

@@ -94,6 +94,96 @@ describe('press', () => {
   })
 })
 
+describe('press through accessibility actions', () => {
+  function setupActions() {
+    const calls: unknown[][] = []
+    const onAction = (name: string) => (e: { nativeEvent: { actionName: string } }) =>
+      calls.push([name, e.nativeEvent.actionName])
+    // A swipe-to-confirm: an Animated.View with no onPress, operable by screen readers.
+    const swipe = (props: Record<string, unknown>, ...children: ReturnType<typeof host>[]) => {
+      const all = {
+        accessible: true,
+        accessibilityRole: 'button',
+        accessibilityActions: [{ name: 'activate', label: props.accessibilityLabel }],
+        ...props,
+      }
+      return tree(composite(all), tree(host(all), ...children))
+    }
+    const root = tree(
+      host(),
+      swipe({ accessibilityLabel: 'Swipe to confirm', onAccessibilityAction: onAction('confirm') }, rnText('Swipe to confirm')),
+      swipe({ accessibilityLabel: 'Swipe to cancel', onAccessibilityAction: onAction('cancel'), accessibilityState: { disabled: true } }),
+      swipe({ onAccessibilityAction: onAction('track') }, host({ testID: 'thumb' })),
+      pressable({
+        onPress: () => calls.push(['press']),
+        accessibilityActions: [{ name: 'activate' }],
+        onAccessibilityAction: onAction('pressable'),
+        testID: 'both',
+      }),
+      tree(
+        composite({
+          accessibilityLabel: 'Volume',
+          accessibilityActions: [{ name: 'increment' }, { name: 'decrement' }],
+          onAccessibilityAction: onAction('volume'),
+        }),
+        host({}),
+      ),
+    )
+    return { screen: createScreen({ roots: () => [root], window: () => WINDOW }), calls }
+  }
+
+  test('a swipe button with only onAccessibilityAction is a button that press activates', async () => {
+    const { screen, calls } = setupActions()
+    const { elements } = screen.snapshot()
+    expect(elements.filter((e) => e.label === 'Swipe to confirm')).toEqual([
+      expect.objectContaining({ kind: 'button', text: 'Swipe to confirm', actions: ['activate'] }),
+    ])
+    expect(await screen.press('Swipe to confirm')).toMatchObject({
+      kind: 'button',
+      via: 'accessibilityAction:activate',
+    })
+    expect(calls).toEqual([['confirm', 'activate']])
+  })
+
+  test('a disabled one is refused unless forced', async () => {
+    const { screen, calls } = setupActions()
+    await expect(screen.press('Swipe to cancel')).rejects.toThrow(/is disabled; pass \{"force":true\}/)
+    expect(calls).toEqual([])
+    await screen.press('Swipe to cancel', { force: true })
+    expect(calls).toEqual([['cancel', 'activate']])
+  })
+
+  test('the nearest ancestor with an activate action handles a press inside it', async () => {
+    const { screen, calls } = setupActions()
+    expect(await screen.press('thumb')).toMatchObject({ testID: 'thumb', via: 'accessibilityAction:activate' })
+    expect(calls).toEqual([['track', 'activate']])
+  })
+
+  test('onPress still wins when the element has both', async () => {
+    const { screen, calls } = setupActions()
+    const result = await screen.press('both')
+    expect(result).not.toHaveProperty('via')
+    expect(calls).toEqual([['press']])
+  })
+
+  test('{action} sends a named action, and names the ones there are when it is missing', async () => {
+    const { screen, calls } = setupActions()
+    expect(screen.snapshot().elements.find((e) => e.label === 'Volume')).toMatchObject({
+      kind: 'view',
+      actions: ['increment', 'decrement'],
+    })
+    await expect(screen.press('Volume')).rejects.toThrow(/has no onPress or "activate" accessibility action/)
+    expect(await screen.press('Volume', { action: 'increment' })).toMatchObject({
+      via: 'accessibilityAction:increment',
+    })
+    await screen.press('both', { action: 'activate' })
+    await expect(screen.press('Volume', { action: 'magicTap' })).rejects.toThrow(
+      /has no accessibility action "magicTap"; it has "increment", "decrement"/,
+    )
+    expect(calls).toEqual([['volume', 'increment'], ['pressable', 'activate']])
+  })
+})
+
 describe('fill ambiguity', () => {
   test('the example puts index after the text, and index picks the input', async () => {
     const { screen, calls } = setup()
