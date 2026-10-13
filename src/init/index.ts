@@ -196,7 +196,8 @@ export function formatReport(r: InitReport, actions: Action[]): string {
     '',
     `Install: ${r.install.status} (${r.install.command})`,
     `Skill:   ${r.skill.status} (${r.skill.command})`,
-    `         In Claude Code instead: ${r.skill.plugin.join(' then ')}`,
+    '         In Claude Code, install it as a plugin instead:',
+    ...r.skill.plugin.map((l) => `           ${l}`),
   )
   if (r.missing.length)
     L.push('', `Detected but not in the bridge file: ${r.missing.join(', ')} (--force regenerates it)`)

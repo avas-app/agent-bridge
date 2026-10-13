@@ -5,7 +5,7 @@ import {
   detectPackageManager,
 } from './package-manager'
 
-/** Read-only file access, injected so detection never touches the disk in tests it shouldn't. */
+/** Read-only file access, injected so the planning code has no side effects. */
 export type ReadFs = {
   exists: (path: string) => boolean
   read: (path: string) => string | undefined
