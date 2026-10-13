@@ -40,6 +40,11 @@ npx agent-bridge session start            # add --metro host:port if Metro isn't
 npx agent-bridge tools                    # what this app exposes
 ```
 
+If Metro runs on another port, pass the same `--metro` (or set
+`AGENT_BRIDGE_METRO`) on every command that doesn't go through the session. A
+`Nothing is listening on …` error names the Metro it found instead and its apps;
+check it's yours before switching to it.
+
 A session holds one connection for all your calls. It stops itself after 15
 minutes without calls and runs `bridge.restore` when it does.
 

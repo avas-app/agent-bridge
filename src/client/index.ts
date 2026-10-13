@@ -2,6 +2,7 @@ import type { DeviceInfo, LogEntry, ToolInfo } from '../shared/protocol'
 import type { TransportName } from './connection'
 import { listCdpTargets, metroHost } from './discover'
 import { listExpoDevices } from './expo'
+import { explainConnectError } from './metro-hint'
 import { openConnection } from './open'
 
 export type ConnectOptions = {
@@ -57,7 +58,9 @@ export async function connect(
   options: ConnectOptions = {},
 ): Promise<AgentBridge> {
   const timeoutMs = options.timeoutMs ?? 10_000
-  const conn = await openConnection(options)
+  const conn = await openConnection(options).catch(async (error: unknown) => {
+    throw await explainConnectError(error, metroHost(options.metro), options.device)
+  })
   const timed = async <T>(
     tool: string,
     ...args: unknown[]
