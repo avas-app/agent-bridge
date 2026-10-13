@@ -96,7 +96,6 @@ export const PLUGIN_LINES = [
   '/plugin install agent-bridge@agent-bridge',
 ]
 
-// What each library looks like in a bridge file, to report ones a re-run finds unwired.
 const MARKERS: Array<[keyof Detection['has'], RegExp, string]> = [
   ['expo', /expoTransport/, 'expo'],
   ['expoRouter', /routerTools/, 'expo-router'],
@@ -338,7 +337,6 @@ export function plan(
     )
   }
   const wrote = state === 'written'
-  // What the app ends up with when this run doesn't write the bridge file.
   const liveText = wrote
     ? undefined
     : elsewhere
