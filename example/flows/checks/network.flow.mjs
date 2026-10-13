@@ -1,6 +1,6 @@
 // Checks net.* on a running example app: the log sees the fake backend,
 // agent mocks override it, and net.restore puts it back.
-//   npx agent-bridge run flows/checks/network.mjs
+//   npx agent-bridge run flows/checks/network.flow.mjs
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export default async ({ step, call }) => {

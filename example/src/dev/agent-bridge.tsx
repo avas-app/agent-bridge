@@ -28,14 +28,14 @@ export function AgentBridge() {
       ...networkTools(),
       ...realtimeDevTools,
       ...hudTools,
-      // For flows/checks/logs.mjs: errors come back with the next reply.
+      // For flows/checks/logs.flow.mjs: errors come back with the next reply.
       'app.logError': (message: string) => console.error(message),
       'app.throwLater': () => {
         setTimeout(() => {
           throw new Error('boom from a timer')
         }, 0)
       },
-      // For flows/checks/signed-in.mjs: a request the app makes, from any path.
+      // For flows/checks/signed-in.flow.mjs: a request the app makes, from any path.
       'app.fetch': async (path: string) => {
         const res = await fetch(`${API_URL}${path}`)
         return { status: res.status, body: await res.text() }

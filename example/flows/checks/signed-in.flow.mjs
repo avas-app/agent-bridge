@@ -1,7 +1,7 @@
 // Checks the signedIn scenario (src/dev/scenarios.ts) on a running example
 // app. `agent-bridge run` applies it before the flow and runs bridge.restore
 // after, even if a check fails, so the app ends up signed out again.
-//   npx agent-bridge run flows/checks/signed-in.mjs
+//   npx agent-bridge run flows/checks/signed-in.flow.mjs
 // One request is blocked on purpose, so the run reports one app error.
 export const scenario = { name: 'signedIn', options: { user: { name: 'Grace Gardener' } } }
 

@@ -93,5 +93,5 @@ In a release build it's always open. `realtime.connection` isn't enough on its
 own: it hides the state from the app, but the client still connects.
 
 The agent-bridge repo's example app has a complete local `signedIn` in
-`example/src/dev/scenarios.ts`, and `example/flows/checks/signed-in.mjs`
+`example/src/dev/scenarios.ts`, and `example/flows/checks/signed-in.flow.mjs`
 declares it.

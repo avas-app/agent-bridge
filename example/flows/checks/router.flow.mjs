@@ -1,5 +1,5 @@
 // router.current must see a navigation the moment router.navigate returns.
-//   npx agent-bridge run flows/checks/router.mjs
+//   npx agent-bridge run flows/checks/router.flow.mjs
 export default async ({ call }) => {
   const expectPath = async (wanted) => {
     const current = await call('router.current')

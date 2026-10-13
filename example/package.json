@@ -6,8 +6,8 @@
   "scripts": {
     "start": "expo start",
     "realtime": "node realtime-server.mjs",
-    "demo": "agent-bridge run flows/demo.mjs",
-    "demo:paced": "PACE=paced agent-bridge run flows/demo.mjs",
+    "demo": "agent-bridge run flows/demo.flow.mjs",
+    "demo:paced": "PACE=paced agent-bridge run flows/demo.flow.mjs",
     "demo:agent-device": "node flows/demo-agent-device.mjs",
     "typecheck": "tsc --noEmit"
   },

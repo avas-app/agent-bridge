@@ -29,11 +29,14 @@ import {
   sessionFor,
 } from './client/session/cli'
 import { connectSession } from './client/session/client'
+import { nodeIo, runInit } from './init/index'
 import { RUNTIME_MARKER } from './shared/protocol'
 
 const HELP = `agent-bridge: drive a running React Native app from an agent
 
 Usage
+  agent-bridge init                       Set up this app: install, write the dev-only bridge
+                                          file and a smoke flow, print the line to mount it
   agent-bridge devices                    Apps connected to Metro
   agent-bridge tools                      Tools the app exposes
   agent-bridge call <tool> [args]         Call a tool. args: a JSON array, or one JSON value
@@ -44,7 +47,7 @@ Usage
   agent-bridge call --batch               Read \`tool args\` lines from stdin (args may be @file); one JSON line per call, one connection
   agent-bridge repl                       Interactive prompt (history, tab completion, .help). With
                                           stdin not a terminal it behaves like call --batch
-  agent-bridge run <flow.mjs|.ts>         Run a flow: export default async ({ step, call }) => {}
+  agent-bridge run <flow.mjs>             Run a flow: export default async ({ step, call }) => {}
                                           export const scenario = 'signedIn' applies it first
                                           and runs bridge.restore after, even on failure
   agent-bridge scenarios                  Scenarios the app defines (scenario.apply applies one)
@@ -72,6 +75,17 @@ Options
                          JSON after "=": --scenario 'signedIn={"user":{"name":"Ada"}}'
   --session <name>       Use this session (env AGENT_BRIDGE_SESSION)
   --no-session           Connect directly even if a session is running
+
+init options
+  --dir <path>           The app (default: the current directory)
+  --out <file>           Bridge file path, inside the app (default src/dev/agent-bridge.tsx, or dev/)
+  --dry-run              Print what it would do and the files; change nothing
+  --force                Regenerate files init wrote that are still unedited (edited ones get a .new copy)
+  --no-install           Print the install command instead of running it
+  --no-skill             Don't run \`npx skills add avas-app/agent-bridge\`
+  --network, --no-network  Wire networkTools into a new bridge file (asked in a terminal; off otherwise)
+  --json                 Machine-readable report on stdout; never prompts
+  --yes, -y              Never prompt
 `
 
 /** Errors a failed call brought back, for printing before the failure. */
@@ -112,6 +126,14 @@ async function main() {
       'dry-run': { type: 'boolean' },
       session: { type: 'string' },
       'no-session': { type: 'boolean' },
+      dir: { type: 'string' },
+      force: { type: 'boolean' },
+      'no-install': { type: 'boolean' },
+      'no-skill': { type: 'boolean' },
+      network: { type: 'boolean' },
+      'no-network': { type: 'boolean' },
+      json: { type: 'boolean' },
+      yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
     },
   })
@@ -155,6 +177,22 @@ async function main() {
   }
 
   switch (command) {
+    case 'init':
+      process.exitCode = await runInit(
+        {
+          dir: values.dir,
+          out: values.out,
+          dryRun: values['dry-run'],
+          force: values.force,
+          install: !values['no-install'],
+          skill: !values['no-skill'],
+          network: values.network ? true : values['no-network'] ? false : undefined,
+          json: values.json,
+          yes: values.yes,
+        },
+        nodeIo(),
+      )
+      return
     case 'devices': {
       const devices = await listDevices(options)
       if (!devices.length) console.log('No apps connected.')

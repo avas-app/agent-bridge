@@ -29,7 +29,8 @@ reading the output.
 ## A flow file
 
 Write the steps into a flow file and run it when a step depends on an earlier
-result, and for timing checks.
+result, and for timing checks. Name it `flows/<name>.flow.mjs` in the app: plain
+`.mjs`, never under `app/`, never `*.test.*`.
 
 ```js
 export const scenario = 'signedIn'   // applied first, undone after, even on failure
@@ -43,9 +44,9 @@ export default async ({ step }) => {
 ```
 
 ```sh
-npx agent-bridge run flow.mjs --strict    # --strict fails if the app logged an error
-npx agent-bridge run flow.mjs --scenario signedIn   # add a scenario the flow doesn't declare
-npx agent-bridge run flow.mjs --scenario 'signedIn={"user":{"name":"Ada"}}'   # with options
+npx agent-bridge run flows/check.flow.mjs --strict    # --strict fails if the app logged an error
+npx agent-bridge run flows/check.flow.mjs --scenario signedIn   # add a scenario the flow doesn't declare
+npx agent-bridge run flows/check.flow.mjs --scenario 'signedIn={"user":{"name":"Ada"}}'   # with options
 ```
 
 A flow can declare several scenarios, with options:

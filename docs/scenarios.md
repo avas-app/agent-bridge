@@ -49,4 +49,4 @@ useAgentBridge({ tools, scenarios })
 
 **Gates.** Some side effects must wait while a scenario runs, such as a realtime client connecting with the fake token and signing the user out when auth fails. `createGate(name)` from `@avasapp/agent-bridge` is a counted switch: `gate.close()` returns the function that reopens it (hand that to `onUndo`), `gate.closed` is what app code checks, and `gate.subscribe(fn)` hears it change. In a release build it's always open. `realtime.connection` isn't enough on its own: it hides the state from the app, but the client still connects.
 
-The example app's [`src/dev/scenarios.ts`](../example/src/dev/scenarios.ts) is a complete local `signedIn`, and [`flows/checks/signed-in.mjs`](../example/flows/checks/signed-in.mjs) declares it.
+The example app's [`src/dev/scenarios.ts`](../example/src/dev/scenarios.ts) is a complete local `signedIn`, and [`flows/checks/signed-in.flow.mjs`](../example/flows/checks/signed-in.flow.mjs) declares it.

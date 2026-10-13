@@ -1,7 +1,7 @@
-// The demo without agent-bridge: the same checks as demo.mjs, done the way
+// The demo without agent-bridge: the same checks as demo.flow.mjs, done the way
 // an agent does them with agent-device alone. It taps and types through the
 // UI, edits the fake backend and reloads to change flags and data, and asks
-// the realtime server to push a message. Recorded next to demo.mjs for the
+// the realtime server to push a message. Recorded next to demo.flow.mjs for the
 // side-by-side comparison.
 //
 //   agent-device open host.exp.Exponent "exp://<metro host>:<port>" --platform ios --device "<sim>"
@@ -19,7 +19,7 @@ const [METRO_HOST, METRO_PORT] = (process.env.METRO ?? 'localhost:8081').split('
 const REALTIME = process.env.REALTIME_URL ?? 'http://localhost:8138'
 const BACKEND = new URL('../src/dev/fake-backend.ts', import.meta.url)
 
-// Same edge cases as demo.mjs seeds with query.pin.
+// Same edge cases as demo.flow.mjs seeds with query.pin.
 const plants = `const plants: Plant[] = [
   { id: 's1', name: 'Orchid', species: 'Phalaenopsis', emoji: '🥀', waterInDays: -3 },
   { id: 's2', name: 'Fern with a name long enough to wrap', species: 'Nephrolepis', emoji: '🌿', waterInDays: 0 },
