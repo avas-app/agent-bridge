@@ -11,9 +11,9 @@ and `connect()` always get the full value.
 Narrow the call before reaching for `--out`:
 
 ```sh
-npx agent-bridge call query.get '["feed", {"pages": [0, 2]}]'          # first two pages of an infinite query, plus totalPages
-npx agent-bridge call query.get '["feed", {"path": "pages.0.items"}]'  # just that value
-npx agent-bridge call net.mocks '[{"full": true}]'   # net.mocks cuts bodies over ~2 KB unless full
+npx @avasapp/agent-bridge call query.get '["feed", {"pages": [0, 2]}]'          # first two pages of an infinite query, plus totalPages
+npx @avasapp/agent-bridge call query.get '["feed", {"path": "pages.0.items"}]'  # just that value
+npx @avasapp/agent-bridge call net.mocks '[{"full": true}]'   # net.mocks cuts bodies over ~2 KB unless full
 ```
 
 `pages` is `[from, to]` with `to` exclusive, like `Array.slice`; `path` applies
@@ -25,9 +25,9 @@ The shell caps one argument at about 128 KB on Linux. For a bigger value (a long
 feed, a large `net.mock` body), write JSON to a file and pass `@file`:
 
 ```sh
-npx agent-bridge call query.pin @args.json                  # the file is the argument list, like the inline form
-npx agent-bridge call net.mock '"/feed"' @feed.json         # several words: each is one argument; @file is its JSON as-is
-some-generator | npx agent-bridge call store.set @-         # @- reads stdin
+npx @avasapp/agent-bridge call query.pin @args.json                  # the file is the argument list, like the inline form
+npx @avasapp/agent-bridge call net.mock '"/feed"' @feed.json         # several words: each is one argument; @file is its JSON as-is
+some-generator | npx @avasapp/agent-bridge call store.set @-         # @- reads stdin
 ```
 
 A file holding an array is the argument list; any other JSON value is one

@@ -1,5 +1,5 @@
 // Checks that bridge.restore undoes a pin and a store action.
-//   npx agent-bridge run flows/checks/restore.flow.mjs
+//   npx @avasapp/agent-bridge run flows/checks/restore.flow.mjs
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const seeded = [

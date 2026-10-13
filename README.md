@@ -82,14 +82,14 @@ Most flows need the app in a known state first, such as a user signed in locally
 ## From the agent
 
 ```sh
-npx agent-bridge session start            # hold one connection; call/tools/run reuse it
-npx agent-bridge tools
-npx agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
-npx agent-bridge call query.pin '[["features"], {"beta": false}]'
-npx agent-bridge call screen.press '"add-plant"'
-npx agent-bridge call screen.waitFor '"Name is required"'
-npx agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
-npx agent-bridge session stop             # runs bridge.restore, then disconnects
+npx @avasapp/agent-bridge session start            # hold one connection; call/tools/run reuse it
+npx @avasapp/agent-bridge tools
+npx @avasapp/agent-bridge call scenario.apply '["signedIn", {"user": {"name": "Ada"}}]'
+npx @avasapp/agent-bridge call query.pin '[["features"], {"beta": false}]'
+npx @avasapp/agent-bridge call screen.press '"add-plant"'
+npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'
+npx @avasapp/agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
+npx @avasapp/agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
 
 Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is slower and can print npm warnings into their output. See [the CLI](docs/cli.md) for flows, batch mode, the REPL, sessions and the `connect()` client.

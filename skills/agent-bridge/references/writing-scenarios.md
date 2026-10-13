@@ -56,8 +56,8 @@ useAgentBridge({ tools, scenarios })
   is back in its real state. If `apply` throws, the callbacks it had registered
   run straight away.
 - Tools: `scenario.list`, `scenario.apply [name, options?]` (applying an active
-  one again undoes it first) and `scenario.restore`. `npx agent-bridge scenarios`
-  lists them.
+  one again undoes it first) and `scenario.restore`.
+  `npx @avasapp/agent-bridge scenarios` lists them.
 - Flows declare scenarios with `export const scenario` or
   `export const scenarios`; see [flows.md](flows.md).
 

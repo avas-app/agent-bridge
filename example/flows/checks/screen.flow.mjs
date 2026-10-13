@@ -1,6 +1,6 @@
 // Device check for screen.snapshot, press, fill and waitFor, through the
 // Add plant form. Throws on the first mismatch.
-//   npx agent-bridge run flows/checks/screen.flow.mjs
+//   npx @avasapp/agent-bridge run flows/checks/screen.flow.mjs
 export default async ({ step }) => {
   const name = `Check fern ${Date.now() % 100000}`
   const expect = (ok, message) => {

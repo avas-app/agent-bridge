@@ -1,10 +1,10 @@
 # What restore undoes
 
 ```sh
-npx agent-bridge call bridge.pending      # what restore will put back, per area
-npx agent-bridge session stop --dry-run   # the same, and keeps the session
-npx agent-bridge session stop             # runs bridge.restore
-npx agent-bridge session stop --keep      # leaves the app as is; warns about anything still pending
+npx @avasapp/agent-bridge call bridge.pending      # what restore will put back, per area
+npx @avasapp/agent-bridge session stop --dry-run   # the same, and keeps the session
+npx @avasapp/agent-bridge session stop             # runs bridge.restore
+npx @avasapp/agent-bridge session stop --keep      # leaves the app as is; warns about anything still pending
 ```
 
 `bridge.restore` unpins queries, puts back store and MMKV values, removes

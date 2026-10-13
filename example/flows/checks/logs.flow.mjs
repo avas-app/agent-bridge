@@ -1,5 +1,5 @@
 // Errors the app logs come back with the next reply.
-//   npx agent-bridge run flows/checks/logs.flow.mjs
+//   npx @avasapp/agent-bridge run flows/checks/logs.flow.mjs
 // Needs the example's dev tools app.logError and app.throwLater
 // (src/dev/agent-bridge.tsx): a flow can't add tools. app.throwLater throws
 // from a timer, so React Native shows a red box; this check only records.

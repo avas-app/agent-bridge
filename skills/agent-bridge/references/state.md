@@ -3,11 +3,11 @@
 ## Set state
 
 ```sh
-npx agent-bridge call query.pin '[["features"], <data>]'       # stays through refetches
-npx agent-bridge call store.call '["settings", "setTheme", "dark"]'
-npx agent-bridge call router.navigate /inbox
-npx agent-bridge call router.current
-npx agent-bridge call router.dismiss                            # closes a route-based modal
+npx @avasapp/agent-bridge call query.pin '[["features"], <data>]'       # stays through refetches
+npx @avasapp/agent-bridge call store.call '["settings", "setTheme", "dark"]'
+npx @avasapp/agent-bridge call router.navigate /inbox
+npx @avasapp/agent-bridge call router.current
+npx @avasapp/agent-bridge call router.dismiss                            # closes a route-based modal
 ```
 
 `router.back` only pops the navigator: an in-app modal or sheet the app renders
@@ -19,12 +19,12 @@ own tool (e.g. `modal.close`) if it has one; check `tools` first.
 Read the current value first and change only what you need:
 
 ```sh
-npx agent-bridge call query.get '["todos", 1]'             # a flat key or '[["todos", 1]]'
-npx agent-bridge call query.list '["todos"]'               # key prefix; shows isStale, isInvalidated, fetchStatus
-npx agent-bridge call query.refetch '["todos"]'            # {matched, refetched, data}; errors when nothing matches
-npx agent-bridge call store.get '["app", "auth.isLoggedIn"]'   # or ["app","auth","isLoggedIn"]
-npx agent-bridge call store.get '["app", {"pick": ["auth.isLoggedIn", "settings.fontScale"]}]'
-npx agent-bridge call store.get '["app", {"keys": true}]'  # top-level keys and types, no values
+npx @avasapp/agent-bridge call query.get '["todos", 1]'             # a flat key or '[["todos", 1]]'
+npx @avasapp/agent-bridge call query.list '["todos"]'               # key prefix; shows isStale, isInvalidated, fetchStatus
+npx @avasapp/agent-bridge call query.refetch '["todos"]'            # {matched, refetched, data}; errors when nothing matches
+npx @avasapp/agent-bridge call store.get '["app", "auth.isLoggedIn"]'   # or ["app","auth","isLoggedIn"]
+npx @avasapp/agent-bridge call store.get '["app", {"pick": ["auth.isLoggedIn", "settings.fontScale"]}]'
+npx @avasapp/agent-bridge call store.get '["app", {"keys": true}]'  # top-level keys and types, no values
 ```
 
 `query.get` errors on a key that is not cached (with similar keys), so a
