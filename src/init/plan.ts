@@ -158,7 +158,7 @@ export function nextSteps(
   const from = runFrom === '.' ? '' : `From \`${runFrom}\`: `
   return {
     next,
-    prompt: `This app has agent-bridge. ${from}start a session with \`${bin} session start\`, see the screen with \`${bin} call screen.snapshot\`, and check changes through the bridge instead of tapping; stop the session when done.`,
+    prompt: `This app has agent-bridge. ${from ? `${from}s` : 'S'}tart a session with \`${bin} session start\`, see the screen with \`${bin} call screen.snapshot\`, and check changes through the bridge instead of tapping; stop the session when done.`,
   }
 }
 
