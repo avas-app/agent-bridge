@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline'
 import type { ResultMessage } from '../../shared/protocol'
 import type { AppPin, Connection, TransportName } from '../connection'
 import { metroHost } from '../discover'
+import { explainConnectError } from '../metro-hint'
 import { openConnection } from '../open'
 import {
   type SessionRequest,
@@ -125,7 +126,9 @@ export async function runSessionDaemon(
       `${c.device.name} already belongs to session "${owner.name}". Use --session ${owner.name}, or stop it first.`,
     )
   }
-  let conn: Connection = await reach()
+  let conn: Connection = await reach().catch(async (error: unknown) => {
+    throw await explainConnectError(error, metro, options.device)
+  })
   claim(conn)
   // Reconnects go to this app only: after a reload it has a new deviceId,
   // and anything else connected by then is someone else's app.

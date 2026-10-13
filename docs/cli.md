@@ -84,6 +84,10 @@ On an error it prints `{ ok: false, error, workspaces? }` and exits 1. With `--d
 
 The shell caps one argument at about 128 KB on Linux (`Argument list too long`). `call <tool> @args.json` reads the arguments from a file, and `@-` from stdin, with the inline rules: an array is the argument list, any other JSON value is one argument. With several words each is one argument and `@feed.json` is that file's JSON as it is: `call net.mock '"/feed"' @feed.json`. A bare word that starts with `@` is always a path; write a string like that as JSON (`'"@user"'`). A missing file or invalid JSON fails before connecting and names the path. `call --batch` lines take `@file` as their whole argument list (relative to the cwd; `@-` isn't allowed there, stdin carries the calls).
 
+## Metro address
+
+Commands connect to `--metro host:port`, else `$AGENT_BRIDGE_METRO`, else `localhost:8081`. When nothing listens there, the error checks Metro's `/status` on ports 8081-8090 and 8100-8199 and on running sessions' addresses (within a second) and names what it found, with its apps: `Nothing is listening on localhost:8081. Metro is running on localhost:8131 (app: …). Pass --metro localhost:8131 or set AGENT_BRIDGE_METRO=localhost:8131.` It never connects there on its own, since another agent's Metro may be among them. "No app is connected" and "No app matches" add the likely causes (the app isn't open or hasn't reloaded, another Metro, a `--device` that doesn't match) and any other Metro with apps.
+
 ## Batch and REPL
 
 For a sequence of ad-hoc calls where a flow file is too much, `call --batch` reads one call per line from stdin (`tool args`, args as in `call`; blank lines and `#` lines are skipped; arguments that start like JSON but don't parse are reported as an error line rather than sent as a string) and prints one JSON line per call over a single connection:

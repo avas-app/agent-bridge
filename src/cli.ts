@@ -19,7 +19,9 @@ import {
   runFlow,
 } from './client/flow'
 import { parseCallArgv, readArgFile, runBatch } from './client/batch'
+import { metroHost } from './client/discover'
 import { logLine } from './client/log-lines'
+import { assertListening, noAppHint } from './client/metro-hint'
 import { renderResult } from './client/output'
 import { DEFAULT_HISTORY_FILE, runRepl } from './client/repl'
 import {
@@ -195,7 +197,12 @@ async function main() {
       return
     case 'devices': {
       const devices = await listDevices(options)
-      if (!devices.length) console.log('No apps connected.')
+      if (!devices.length) {
+        const metro = metroHost(options.metro)
+        await assertListening(metro)
+        console.log('No apps connected.')
+        console.error(await noAppHint(metro))
+      }
       for (const d of devices) {
         const extra =
           d.tools !== undefined ? `  ${d.tools} tools  ${d.deviceId}` : ''
