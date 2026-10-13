@@ -1,5 +1,20 @@
 # @avasapp/agent-bridge
 
+## 0.5.0
+
+### Minor Changes
+
+- acc2fd6: `agent-bridge init` sets up an app in one command: `npx @avasapp/agent-bridge init`. It installs the package with the app's package manager, writes a dev-only `src/dev/agent-bridge.tsx` wired for what it finds (Expo, expo-router, TanStack Query, WebViews; zustand and MMKV as comments, since they often hold tokens; a TODO for Ably or socket.io), scaffolds `flows/smoke.flow.mjs`, adds the agent skill, and prints the two lines to mount it. It asks once whether to wire `networkTools()`, and never prompts with `--json`, `--yes` or without a terminal, listing the open choice in the report instead. `--dry-run` changes nothing, and a second run skips existing files (`--force` regenerates only the ones you haven't edited). See [the CLI docs](https://github.com/avas-app/agent-bridge/blob/main/docs/cli.md#init).
+  
+  Flows now go in `<app>/flows/<name>.flow.mjs`, and the example app's flows were renamed to match. `run`'s help no longer lists `.ts` flows, which were never tested.
+- 62ba7b1: `screen.press` works on controls with no `onPress` that are screen-reader operable, such as swipe-to-confirm buttons: it calls `onAccessibilityAction` with `activate`, as VoiceOver and TalkBack do on a double tap, and the reply says `via: "accessibilityAction:activate"`. `screen.press(target, {action: "increment"})` sends any other action the element declares, and `screen.snapshot` lists them as `actions` and shows activatable controls as buttons.
+
+### Patch Changes
+
+- dbb4eab: When nothing listens on the Metro address, the CLI and `connect()` now look for Metro on ports 8081-8090, 8100-8199 and running sessions' addresses (within a second, only after the failure) and name what they found with its apps, plus the `--metro` flag or `AGENT_BRIDGE_METRO` value to use. "No app is connected" and "No app matches" add the likely causes, and `devices` fails with the same hint instead of printing "No apps connected." when Metro isn't there.
+- d1f385e: The docs, skill and example now say `npx @avasapp/agent-bridge` instead of `npx agent-bridge`. The unscoped `agent-bridge` on npm is an unrelated package, so `npx agent-bridge` without this package installed downloads and runs someone else's code.
+- 1217860: `queryTools` takes any TanStack Query client structurally (`QueryClientLike`), so `queryTools(useQueryClient())` typechecks in an app without a tsconfig `paths` entry for `@tanstack/query-core`.
+
 ## 0.4.2
 
 ### Patch Changes
