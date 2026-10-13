@@ -15,7 +15,7 @@ npx agent-bridge session stop             # runs bridge.restore, then disconnect
 npx agent-bridge session stop --dry-run   # lists what it would undo, keeps the session
 ```
 
-**Skip npx for agents.** `npx` loads npm's config on every call. If the project's `.npmrc` has keys npm doesn't know, each call prints `npm warn Unknown project config …` into the agent's output, and npx adds process startup. The installed bin does neither: run `./node_modules/.bin/agent-bridge …` (or `bunx agent-bridge …`) in place of `npx agent-bridge` in every command here.
+**Skip npx for agents.** `npx` loads npm's config on every call. If the project's `.npmrc` has keys npm doesn't know, each call prints `npm warn Unknown project config …` into the agent's output, and npx adds process startup. The installed bin does neither: run `./node_modules/.bin/agent-bridge …` (with bun too: `bunx agent-bridge` fetches an unrelated npm package of that name) in place of `npx agent-bridge` in every command here.
 
 **Timing checks and long sequences.** Every CLI call is a new process, roughly 90–100 ms with the bin and 280–320 ms through `npx` on one Linux box ([benchmarks](benchmarks.md#cli-overhead)), all of it startup rather than the bridge. For a timing check, or more than a handful of calls, write a flow file and use `agent-bridge run`: it pays startup once and prints how long each step took.
 
@@ -43,15 +43,40 @@ npx @avasapp/agent-bridge init --json          # for agents: a report on stdout,
 It exits 1 outside a React Native app, and at a monorepo root it names the workspaces to pass with `--dir`. Otherwise it:
 
 - installs `@avasapp/agent-bridge` as a dev dependency with the app's package manager (`--no-install` prints the command);
-- writes `src/dev/agent-bridge.tsx` (`dev/` without a `src/`, `.js` without TypeScript, `--out` to choose; never under `app/`), wired for what it finds: Expo transports, expo-router, TanStack Query and WebViews. Zustand stores and MMKV instances go in as comments, because they often hold tokens: add `redact` first. Ably and socket.io get a TODO naming the file that creates the client, or are wired directly if that file already exports `socketIoTools(…)` / `ablyTools(…)`;
-- asks once whether to wire `networkTools()`, which patches `fetch` and `XMLHttpRequest` in dev builds. `--network` / `--no-network` answer up front. With `--json`, `--yes` or no terminal it stays off and the report lists it under `choices`. With it on, the file gets an `offline` scenario;
-- scaffolds `flows/smoke.flow.mjs`, `flows/README.md` and a `"flow": "agent-bridge run"` script, and keeps flows out of tsconfig, oxlint and a simple ESLint flat config (other configs get the line to add printed);
-- runs `npx skills add avas-app/agent-bridge` (`--no-skill` skips it);
+- writes `src/dev/agent-bridge.tsx` (`dev/` without a `src/`, `.js` without TypeScript, `--out` to choose, relative to the current directory and inside the app; never under `app/`), wired for what it finds: Expo transports, expo-router, TanStack Query and WebViews. Zustand stores and MMKV instances go in as comments, because they often hold tokens: add `redact` first. Ably and socket.io get a TODO naming the file that creates the client, or are wired directly if that file already exports `socketIoTools(…)` / `ablyTools(…)`;
+- asks once whether to wire `networkTools()`, which patches `fetch` and `XMLHttpRequest` in dev builds. `--network` / `--no-network` answer up front. With `--json`, `--yes`, `CI=true` or no terminal it stays off and the report lists it under `choices`. With it on, the file gets an `offline` scenario;
+- scaffolds `flows/smoke.flow.mjs`, `flows/README.md` and a `"flow": "agent-bridge run"` script, and keeps flows out of oxlint and a simple ESLint flat config (other configs get the line to add printed). It adds `**/*.flow.*` to tsconfig `exclude` only when that config would type check `.mjs` files at all, and prints the change instead when the config `extends` another without its own `exclude` (one here would replace the inherited list);
+- runs `npx skills add avas-app/agent-bridge` (`--no-skill` skips it). The install and the skill each time out (5 and 2 minutes) with a warning;
 - prints the two lines to mount it in your root layout, never editing it, and the first commands to run.
 
-A second run skips files that exist (`--force` rewrites the generated ones), reports libraries added since then and whether the root component imports the bridge yet.
+If the app already calls `useAgentBridge` or imports `@avasapp/agent-bridge`, it writes no bridge file (pass `--out` to get one anyway) and reports where under `existing`.
 
-`--json` prints `{ ok, files: [{ path, status }], install, skill, mount: { file, mounted, snippet, note }, choices: { network: { enabled, open, flag, why } }, commented, todos, missing, runFrom, next: [{ step, command }], prompt }`; on an error, `{ ok: false, error, workspaces? }`. With `--dry-run` it adds `contents`, each file it would write.
+A second run skips files that exist and reports libraries added since then, and whether the root component imports the bridge file yet. Generated files carry a hash in their first line: `--force` regenerates one only while it is unedited, and otherwise writes `<file>.new` beside it to compare. `--network` and `--no-network` only change a bridge file init writes in that run; for one that exists, the report gives the lines to add by hand.
+
+`--json` prints one object:
+
+```ts
+{
+  ok: boolean,                    // false when the install failed (the exit code is then 1)
+  version: string, dryRun: boolean,
+  app: { dir, name, packageManager, detected: string[] },
+  files: [{ path, status: 'written' | 'skipped' | 'patched' | 'unchanged' | 'manual' | 'appended', note? }],
+  install: { status: 'present' | 'installed' | 'not-run' | 'failed', command, error? },
+  skill: { status: 'added' | 'not-run' | 'failed', command, plugin: string[], error? },
+  mount: { file: string | null, mounted: boolean, snippet, note },
+  choices: { network: { enabled, open, why, flag?, lines?, note? } },  // open: ask the user
+  commented: [{ adapter, items: string[], why }],
+  todos: string[],
+  missing: string[],              // re-run: detected libraries the bridge file doesn't wire
+  existing: string[],             // files that already use the bridge
+  scenarios: string[],            // what the bridge file defines, e.g. ['offline']
+  runFrom: string,                // run `next` from here, relative to the cwd
+  next: [{ step, command? }],
+  prompt: string,
+}
+```
+
+On an error it prints `{ ok: false, error, workspaces? }` and exits 1. With `--dry-run` it adds `contents`: each file it would write.
 
 ## Big results and arguments
 

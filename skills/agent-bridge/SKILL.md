@@ -27,7 +27,8 @@ bridge call can set.
 ## Run the CLI directly
 
 The examples say `npx agent-bridge` for brevity. Prefer the installed bin,
-`./node_modules/.bin/agent-bridge` (or `bunx agent-bridge`): `npx` loads npm's
+`./node_modules/.bin/agent-bridge` (with bun too; `bunx agent-bridge` would
+fetch an unrelated npm package of that name): `npx` loads npm's
 config on every call, so a project `.npmrc` with keys npm doesn't know prints
 `npm warn Unknown project config` into your output each time, and it adds
 roughly 200 ms more startup per call (machine-dependent).
@@ -63,7 +64,8 @@ If the app doesn't have the package or a bridge file yet, run
 monorepo root). It writes `src/dev/agent-bridge.tsx` but never edits the root
 layout: paste `mount.snippet` into `mount.file` as `mount.note` says. Ask the
 user about each entry in `choices` it reports as `open` (such as network
-tools) and rerun with the flag it names. Then follow `next`.
+tools), then rerun with the `flag` it names, or add its `lines` by hand when
+there's no flag. Then follow `next`, from `runFrom`.
 
 ## Start from a scenario
 

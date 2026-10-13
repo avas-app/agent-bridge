@@ -75,6 +75,11 @@ const depsOf = (pkg: any): Record<string, string> => ({
   ...pkg?.dependencies,
 })
 
+// A library lists react-native as a peer or dev dependency; an app depends on it or has app files.
+const isApp = (dir: string, fs: ReadFs) =>
+  !!fs.readJson(join(dir, 'package.json'))?.dependencies?.['react-native'] ||
+  ['app.json', 'app.config.js', 'app.config.ts', 'ios', 'android'].some((f) => fs.exists(join(dir, f)))
+
 const isWorkspaceRoot = (dir: string, fs: ReadFs) =>
   !!fs.readJson(join(dir, 'package.json'))?.workspaces ||
   fs.exists(join(dir, 'pnpm-workspace.yaml'))
@@ -157,7 +162,7 @@ export function detect(
   if (!deps['react-native']) {
     if (isWorkspaceRoot(dir, fs)) {
       const apps = expandWorkspaces(dir, workspacePatterns(dir, fs), fs)
-        .filter((d) => depsOf(fs.readJson(join(d, 'package.json')))['react-native'])
+        .filter((d) => isApp(d, fs))
         .map((d) => relative(dir, d))
       return {
         error: apps.length

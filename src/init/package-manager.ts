@@ -53,11 +53,14 @@ export function installCommand(pm: PackageManager, spec: string): string[] {
   }
 }
 
-/** How to run the installed bin when no `.bin/agent-bridge` was found. Never npx. */
+/**
+ * How to run the CLI when no `.bin/agent-bridge` was found. Never npx, and
+ * never `bunx agent-bridge`: that name on npm is someone else's package.
+ */
 export function binFallback(pm: PackageManager): string {
   switch (pm) {
     case 'bun':
-      return 'bunx agent-bridge'
+      return 'bunx @avasapp/agent-bridge'
     case 'pnpm':
       return 'pnpm exec agent-bridge'
     case 'yarn':

@@ -48,7 +48,17 @@ export type TestIo = InitIo & {
 /** Real file access; exec and prompt are fakes that record what they were asked. */
 export function testIo(
   cwd: string,
-  { interactive = false, answer = '', execCode = 0 }: { interactive?: boolean; answer?: string; execCode?: number } = {},
+  {
+    interactive = false,
+    answer = '',
+    execCode = 0,
+    onExec,
+  }: {
+    interactive?: boolean
+    answer?: string
+    execCode?: number | 'timeout'
+    onExec?: (command: string[], cwd: string) => void
+  } = {},
 ): TestIo {
   const io: TestIo = {
     fs: nodeFs,
@@ -59,6 +69,7 @@ export function testIo(
     append: (path, text) => writeFileSync(path, text, { flag: 'a' }),
     exec: async (command, cwd, interactive) => {
       io.execs.push({ command, cwd, interactive })
+      onExec?.(command, cwd)
       return execCode
     },
     prompt: async (question) => {
@@ -82,6 +93,17 @@ const pkg = (deps: Record<string, string>, extra: object = {}) =>
   `${JSON.stringify({ name: 'fixture-app', version: '1.0.0', ...extra, dependencies: deps }, null, 2)}\n`
 
 const TSCONFIG = `{\n  "extends": "expo/tsconfig.base",\n  "compilerOptions": { "strict": true }\n}\n`
+
+/** create-expo-app's, which never includes .mjs. */
+const EXPO_TSCONFIG = `{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+}
+`
 
 /** create-expo-app's flat config. */
 export const EXPO_ESLINT = `// https://docs.expo.dev/guides/using-eslint/
@@ -111,7 +133,7 @@ export const EXPO_ROUTER_FULL: Tree = {
     { devDependencies: { typescript: '~6.0.0' } },
   ),
   'app.json': JSON.stringify({ expo: { name: 'Sprout', slug: 'sprout' } }),
-  'tsconfig.json': TSCONFIG,
+  'tsconfig.json': EXPO_TSCONFIG,
   'bun.lock': '',
   'eslint.config.js': EXPO_ESLINT,
   'AGENTS.md': '# Agents\n\n- Use bun.\n',
@@ -174,7 +196,8 @@ export const PNPM_MONOREPO: Tree = {
   'apps/mobile/package.json': pkg({ expo: '~57.0.0', react: '19.2.0', 'react-native': '0.86.0' }),
   'apps/mobile/App.tsx': `export default function App() { return null }\n`,
   'apps/mobile/tsconfig.json': TSCONFIG,
-  'packages/ui/package.json': pkg({ react: '19.2.0' }),
+  // A library: react-native only as a peer and dev dependency.
+  'packages/ui/package.json': `${JSON.stringify({ name: 'ui', peerDependencies: { 'react-native': '*' }, devDependencies: { 'react-native': '0.86.0' } })}\n`,
 }
 
 /** 4b. The yarn-workspaces variant. */

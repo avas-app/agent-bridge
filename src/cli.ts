@@ -78,12 +78,12 @@ Options
 
 init options
   --dir <path>           The app (default: the current directory)
-  --out <file>           Bridge file path (default src/dev/agent-bridge.tsx, or dev/)
+  --out <file>           Bridge file path, inside the app (default src/dev/agent-bridge.tsx, or dev/)
   --dry-run              Print what it would do and the files; change nothing
-  --force                Overwrite the files init generated before
+  --force                Regenerate files init wrote that are still unedited (edited ones get a .new copy)
   --no-install           Print the install command instead of running it
   --no-skill             Don't run \`npx skills add avas-app/agent-bridge\`
-  --network, --no-network  Wire networkTools (asked in a terminal; off otherwise)
+  --network, --no-network  Wire networkTools into a new bridge file (asked in a terminal; off otherwise)
   --json                 Machine-readable report on stdout; never prompts
   --yes, -y              Never prompt
 `

@@ -129,6 +129,7 @@ describe('scan', () => {
       socketIo: [{ name: 'socket', file: 'src/lib/socket.ts' }],
       ably: [],
       realtimeTools: [],
+      bridgeUsers: [],
     })
   })
 
@@ -145,6 +146,7 @@ describe('scan', () => {
       socketIo: [],
       ably: [{ name: 'client', file: 'app/realtime.ts' }],
       realtimeTools: [],
+      bridgeUsers: [],
     })
   })
 
