@@ -27,6 +27,8 @@ export type ScreenElement = {
   expanded?: boolean
   /** A WebView registered with the react-native-webview adapter: drive it with `webview.*`. */
   webview?: string
+  /** `accessibilityActions` it handles with `onAccessibilityAction`, e.g. `activate` on a swipe button. */
+  actions?: string[]
   rect: Rect | null
   /** Only in `screen.snapshot({ all: true })`. */
   onScreen?: boolean
@@ -46,6 +48,8 @@ export type Found = {
   press: Fiber | null
   /** Outermost fiber with text-input handlers, when the element is an input. */
   input: Fiber | null
+  /** Outermost fiber with `onAccessibilityAction`, when it names `accessibilityActions`. */
+  actions: Fiber | null
   maxLength?: number
   /**
    * On a screen the user can't reach: an unfocused tab or stack screen, under
@@ -243,8 +247,20 @@ export const isInputProps = (p: Props) =>
 // A view named only by an accessibility label is still something on screen.
 const labelOf = (p: Props) => p.accessibilityLabel ?? p['aria-label']
 
+/** The `accessibilityActions` names, when the fiber also handles them. */
+export function actionNamesOf(p: Props): string[] | null {
+  if (!isFn(p.onAccessibilityAction) || !Array.isArray(p.accessibilityActions)) return null
+  return p.accessibilityActions
+    .map((a: unknown) => (a as { name?: unknown } | null)?.name)
+    .filter((name): name is string => typeof name === 'string')
+}
+
+/** Screen readers send `activate` on a double tap: a swipe-to-confirm with no onPress. */
+const activates = (rec: Found) => !!rec.actions && !!rec.element.actions?.includes('activate')
+
 const interesting = (p: Props) =>
   isFn(p.onPress) ||
+  actionNamesOf(p) !== null ||
   isFn(p.onValueChange) ||
   isInputProps(p) ||
   typeof p.testID === 'string' ||
@@ -270,6 +286,11 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
   const e = rec.element
   if (!rec.input && isInputProps(p)) rec.input = fiber
   if (!rec.press && isFn(p.onPress)) rec.press = fiber
+  const actions = actionNamesOf(p)
+  if (!rec.actions && actions) {
+    rec.actions = fiber
+    if (actions.length) e.actions = actions
+  }
   const fill = (key: 'testID' | 'label' | 'role' | 'placeholder', v: unknown) => {
     if (e[key] === undefined && typeof v === 'string') e[key] = v
   }
@@ -400,9 +421,10 @@ const handles = (control: Fiber | null, p: Props, name: string) =>
 /** The nearest enclosing control whose handler this fiber was handed down. */
 function sameControl(rec: Rec | null, p: Props): Rec | null {
   for (let r = rec; r; r = r.parent) {
-    if (!r.press && !r.input) continue
+    if (!r.press && !r.input && !r.actions) continue
     const same =
       handles(r.press, p, 'onPress') ||
+      handles(r.actions, p, 'onAccessibilityAction') ||
       handles(r.input, p, 'onChangeText') ||
       handles(r.input, p, 'onChange')
     return same ? r : null
@@ -456,6 +478,7 @@ export function collectScreen(
       host,
       press: null,
       input: null,
+      actions: null,
       hidden,
       scroller,
       modal,
@@ -471,7 +494,7 @@ export function collectScreen(
 
   // Buttons own the text beneath them; inputs don't (a field's label stays text).
   const buttonOf = (rec: Rec | null) => {
-    for (let r = rec; r; r = r.parent) if (r.press) return r
+    for (let r = rec; r; r = r.parent) if (r.press || activates(r)) return r
     return null
   }
 
@@ -591,7 +614,7 @@ export function collectScreen(
       ? 'webview'
       : rec.input
       ? 'input'
-      : rec.press
+      : rec.press || activates(rec)
         ? 'button'
         : rec.parts.length
           ? 'text'
@@ -631,12 +654,30 @@ export const collectElements = (roots: Fiber[], window: Window): Found[] =>
 /** What a user could touch: not hidden behind another screen. */
 export const focused = (found: Found[]): Found[] => found.filter((f) => !f.hidden)
 
-/** The fiber `press` should call: the element's own, or the nearest ancestor's. */
-export function pressFiberOf(found: Found): Fiber | null {
-  if (found.press) return found.press
+export type PressVia = 'onPress' | 'accessibilityAction'
+
+/**
+ * The fiber `press` should call and how: the element's own `onPress`, else its
+ * `activate` accessibility action, else the nearest ancestor with either.
+ */
+export function pressFiberOf(found: Found): { fiber: Fiber; via: PressVia } | null {
+  if (found.press) return { fiber: found.press, via: 'onPress' }
+  if (activates(found)) return { fiber: found.actions as Fiber, via: 'accessibilityAction' }
   for (let f = found.fiber.return; f; f = f.return) {
     const p = propsOf(f)
-    if (p && isFn(p.onPress)) return f
+    if (!p) continue
+    if (isFn(p.onPress)) return { fiber: f, via: 'onPress' }
+    if (actionNamesOf(p)?.includes('activate')) return { fiber: f, via: 'accessibilityAction' }
+  }
+  return null
+}
+
+/** The fiber that handles accessibility action `name`: the element's, or the nearest ancestor's. */
+export function actionFiberOf(found: Found, name: string): Fiber | null {
+  if (found.actions && found.element.actions?.includes(name)) return found.actions
+  for (let f = found.fiber.return; f; f = f.return) {
+    const p = propsOf(f)
+    if (p && actionNamesOf(p)?.includes(name)) return f
   }
   return null
 }

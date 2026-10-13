@@ -1,7 +1,7 @@
 // Calls an element's handlers the way React Native would after a real tap or
 // keystroke, with minimal synthetic events (like Testing Library's fireEvent).
 import { type Fiber, type Rect } from '../find-text-core'
-import { type Found, pressFiberOf, propsOf } from './elements'
+import { actionFiberOf, type Found, pressFiberOf, propsOf } from './elements'
 import { describe } from './targets'
 
 type Handler = (event?: unknown) => unknown
@@ -56,17 +56,49 @@ const center = (rect: Rect | null) =>
     ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
     : { x: 0, y: 0 }
 
-/** Presses the element, or the nearest ancestor that handles presses. */
-export function pressElement(found: Found, options: { force?: boolean } = {}): void {
-  const fiber = pressFiberOf(found)
-  if (!fiber) throw new Error(`${describe(found.element)} has no onPress`)
-  if (
-    !options.force &&
-    (found.element.disabled || propsOf(fiber)?.disabled === true)
-  )
+const disabledProps = (fiber: Fiber) => {
+  const p = propsOf(fiber)
+  const state = p?.accessibilityState as { disabled?: boolean } | undefined
+  return p?.disabled === true || state?.disabled === true || p?.['aria-disabled'] === true
+}
+
+function pressTargetOf(found: Found, action: string | undefined) {
+  if (action === undefined) return pressFiberOf(found)
+  const fiber = actionFiberOf(found, action)
+  return fiber && { fiber, via: 'accessibilityAction' as const }
+}
+
+/**
+ * Presses the element, or the nearest ancestor that handles presses. With no
+ * onPress it sends the `activate` accessibility action, as a screen reader's
+ * double tap does; `action` sends that named action instead. Returns how the
+ * press was delivered.
+ */
+export function pressElement(
+  found: Found,
+  options: { force?: boolean; action?: string } = {},
+): string {
+  const { action } = options
+  const target = pressTargetOf(found, action)
+  if (!target) {
+    const names = found.element.actions ?? []
+    const has = names.length ? `; it has ${names.map((a) => JSON.stringify(a)).join(', ')}` : ''
+    throw new Error(
+      action === undefined
+        ? `${describe(found.element)} has no onPress or "activate" accessibility action`
+        : `${describe(found.element)} has no accessibility action ${JSON.stringify(action)}${has}`,
+    )
+  }
+  const { fiber, via } = target
+  if (!options.force && (found.element.disabled || disabledProps(fiber)))
     throw new Error(
       `${describe(found.element)} is disabled; pass {"force":true} as the last argument to press anyway`,
     )
+  if (via === 'accessibilityAction') {
+    const actionName = action ?? 'activate'
+    handler(fiber, 'onAccessibilityAction')?.(event({ actionName }))
+    return `accessibilityAction:${actionName}`
+  }
   const { x, y } = center(found.element.rect)
   const e = () =>
     event({
@@ -81,4 +113,5 @@ export function pressElement(found: Found, options: { force?: boolean } = {}): v
   handler(fiber, 'onPressIn')?.(e())
   handler(fiber, 'onPress')?.(e())
   handler(fiber, 'onPressOut')?.(e())
+  return 'onPress'
 }

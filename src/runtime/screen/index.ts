@@ -163,12 +163,23 @@ export function createScreen(env: {
 
     async press(
       target: Target,
-      options: { force?: boolean; index?: number; scroll?: boolean } = {},
-    ): Promise<ScreenElement> {
-      const found = await resolve(target, (f) => !!f.press, options)
-      pressElement(found, options)
+      options: { force?: boolean; index?: number; scroll?: boolean; action?: string } = {},
+    ): Promise<ScreenElement & { via?: string }> {
+      const { action } = options
+      if (action !== undefined && typeof action !== 'string')
+        throw new Error(`"action" must be an accessibility action name; got ${JSON.stringify(action)}`)
+      const found = await resolve(
+        target,
+        (f) =>
+          action === undefined
+            ? !!f.press || f.element.kind === 'button'
+            : !!f.element.actions?.includes(action),
+        options,
+      )
+      const via = pressElement(found, options)
       await settle()
-      return found.element
+      // Only a press that skipped onPress says so, to keep the usual reply unchanged.
+      return via === 'onPress' ? found.element : { ...found.element, via }
     },
 
     /**

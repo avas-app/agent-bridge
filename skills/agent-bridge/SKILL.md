@@ -152,4 +152,7 @@ The app may expose its own tools for hooks the bridge has no tool for
   overlap. Finish a flow with one real UI check or screenshot from agent-device.
 - `fill` skips the keyboard: autocorrect and native-only input behaviour need
   one real typing step from agent-device.
+- Swipe and drag gestures need agent-device, unless the control is screen-reader
+  operable: `press` sends its `activate` accessibility action (see
+  [references/screen.md](references/screen.md)).
 - With several apps on one Metro, pass `--device`.
