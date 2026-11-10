@@ -223,16 +223,19 @@ function unselectedTabs(tabs: Fiber): Fiber[] {
   const selected = (propsOf(tabs)?.navStateRequest as { selectedScreenKey?: unknown } | undefined)
     ?.selectedScreenKey
   const out: Fiber[] = []
+  let matches = 0
   if (typeof selected !== 'string') return out
   const todo = tabs.child ? [tabs.child] : []
   while (todo.length) {
     const f = todo.pop() as Fiber
     if (f.sibling) todo.push(f.sibling)
     if (f.tag === HOST_COMPONENT && TAB_SCREENS.has(f.type as string)) {
-      if (propsOf(f)?.screenKey !== selected) out.push(f)
+      if (propsOf(f)?.screenKey === selected) matches++
+      else out.push(f)
     } else if (f.child) todo.push(f.child)
   }
-  return out
+  // A stale key (no tab, or two) says nothing about which tab is showing.
+  return matches === 1 ? out : []
 }
 
 const hasDom = (recs: Rec[]) =>
@@ -476,7 +479,7 @@ function absorbChain(rec: Rec, fiber: Fiber, host: Fiber) {
 export function collectScreen(
   roots: Fiber[],
   window: Window,
-): { found: Found[]; scrollables: Scrollable[] } {
+): { found: Found[]; scrollables: Scrollable[]; unmeasured: boolean } {
   const byHost = new Map<Fiber, Rec>()
   const order: Rec[] = []
   const scrollByHost = new Map<Fiber, Scrollable>()
@@ -657,12 +660,11 @@ export function collectScreen(
     if (own) rec.scroller = own
     rec.onScreen = isOnScreen(rec, rect, window, bars)
   }
-  // Without Fabric's UIManager (old architecture) nothing can be measured, so
-  // everything would silently read as off screen.
-  if (order.length && !measured && !hasDom(order) && !(globalThis as { nativeFabricUIManager?: unknown }).nativeFabricUIManager)
-    throw new Error(
-      'Cannot measure the screen: this app runs on React Native\'s old architecture. agent-bridge measures with Fabric (the New Architecture), so enable it to use screen tools.',
-    )
+  const unmeasured =
+    order.length > 0 &&
+    !measured &&
+    !hasDom(order) &&
+    !(globalThis as { nativeFabricUIManager?: unknown }).nativeFabricUIManager
   // A text-only element whose glyphs were all icons has nothing to show.
   // A WebView's props reach a wrapper component and the native host under it,
   // which are two hosts for one element: keep the outermost.
@@ -680,8 +682,14 @@ export function collectScreen(
         (rec.element.kind !== 'text' || rec.element.text !== undefined) && single(rec),
     ),
     scrollables: [...scrollByHost.values()],
+    unmeasured,
   }
 }
+
+// Without Fabric's UIManager nothing can be measured, so everything would
+// silently read as off screen.
+export const UNMEASURED_ERROR =
+  "No Fabric UIManager found (React Native's old architecture, or a test renderer), so elements can't be measured. agent-bridge screen tools need the New Architecture."
 
 export const collectElements = (roots: Fiber[], window: Window): Found[] =>
   collectScreen(roots, window).found

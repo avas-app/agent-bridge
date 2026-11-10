@@ -95,10 +95,20 @@ export async function connectSession(
     device: options.device,
     transport: options.transport,
   })
-  if (!state)
+  if (!state) {
+    const where = [
+      explicitMetro(options.metro) && `on Metro ${explicitMetro(options.metro)}`,
+      options.device && `on a device matching "${options.device}"`,
+      options.transport && options.transport !== 'auto' && `using ${options.transport}`,
+    ].filter(Boolean)
     throw new Error(
-      `No single session matches (looked for sessions started in ${projectRoot()}, or in an app folder under it). Start one with \`agent-bridge session start\`, or name it.`,
+      `No single session matches (looked for sessions ${
+        where.length
+          ? where.join(', ')
+          : `started in ${projectRoot()}, or in an app folder under it`
+      }). Start one with \`agent-bridge session start\`, or name it.`,
     )
+  }
   const link = await openSessionLink(state)
   const info = await link.request({ op: 'info' })
   if (info.error || !info.device || !info.transport) {

@@ -44,6 +44,15 @@ describe('native tabs', () => {
     })
   }
 
+  test('a selected key that matches no tab screen hides nothing', () => {
+    const tabs = tree(
+      typed(host({ navStateRequest: { selectedScreenKey: 'gone' } }), 'RNSTabsHostIOS'),
+      tree(typed(host({ screenKey: 'home' }), 'RNSTabsScreenIOS'), rnText('Home feed')),
+      tree(typed(host({ screenKey: 'activity' }), 'RNSTabsScreenIOS'), rnText('Activity log')),
+    )
+    expect(texts(screenOf(tabs))).toEqual(['Home feed', 'Activity log'])
+  })
+
   test('a host without a selected key hides nothing', () => {
     const tabs = tree(
       typed(host(), 'RNSTabsHostIOS'),
@@ -230,9 +239,19 @@ describe('native modal screens', () => {
 })
 
 describe('old architecture', () => {
-  test('a native tree that cannot be measured says so instead of reading as empty', () => {
+  const unmeasured = () => {
     const root = tree(host({}, null), tree(composite(), tree(host({}, null), text('Hello'))))
-    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
-    expect(() => screen.snapshot()).toThrow(/old architecture/)
+    return createScreen({ roots: () => [root], window: () => WINDOW })
+  }
+
+  test('a native tree that cannot be measured says so instead of reading as empty', () => {
+    expect(() => unmeasured().snapshot()).toThrow(/No Fabric UIManager/)
+    expect(() => unmeasured().press({ text: 'Hello' })).toThrow(/No Fabric UIManager/)
+  })
+
+  test('snapshot {all:true} and findText still return text without rects', () => {
+    const screen = unmeasured()
+    expect(screen.snapshot({ all: true }).elements.map((e) => e.text)).toEqual(['Hello'])
+    expect(screen.findText('Hello')).toBeTruthy()
   })
 })

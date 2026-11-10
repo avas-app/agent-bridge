@@ -96,7 +96,7 @@ Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is
 
 No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
 
-The screen tools measure with Fabric, so they need React Native's New Architecture; on the old one they fail with an error that says so.
+The screen tools measure with Fabric, so they need React Native's New Architecture; on the old one the tools that need positions fail with an error that says so (`snapshot {all: true}` and `findText` still return text, without rects).
 
 ## Docs
 
