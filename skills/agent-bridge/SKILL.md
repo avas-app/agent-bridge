@@ -61,12 +61,12 @@ its 5 s health check and on your next call: wait a few seconds and call again.
 `session stop` still works. A session never moves to another app: `<app> is
 not connected; connected: …` means its app is gone and something else is there.
 
-If a call fails with `the app reloaded during <tool>; it may or may not have run`,
-the connection dropped mid-call and the session did not repeat it (only
-read-only tools are repeated). Check the screen or state before you call again.
+If a call fails with `the app reloaded during <tool>; it may or may not have run`
+(or `disconnected`, `the connection dropped`), the connection dropped mid-call
+and the session did not repeat it (only read-only tools are repeated). Check the screen or state before you call again.
 
-A `timeoutMs` in a tool's arguments (`screen.waitFor`) longer than the call
-timeout stretches it, so you don't need `--timeout` for that.
+A `timeoutMs` in the options of `screen.waitFor` or `webview.waitFor` longer
+than the call timeout stretches it, so you don't need `--timeout` for that.
 
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.

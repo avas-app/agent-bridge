@@ -60,7 +60,6 @@ const REPEATABLE = new Set([
   'bridge.ping',
   'bridge.pending',
   'bridge.tools',
-  'bridge.restore',
   'screen.snapshot',
   'screen.findText',
   'screen.waitFor',
@@ -85,11 +84,25 @@ const REPEATABLE = new Set([
   'realtime.channels',
 ])
 
+/** Tools that read a log; `clear: true` empties it, so a second read would come back empty. */
+const LOG_TOOLS = new Set(['net.log', 'realtime.log', 'bridge.logs'])
+
+/** Waits that run inside the app; a repeat gets only the time left. */
+const WAIT_TOOLS = new Set(['screen.waitFor', 'webview.waitFor'])
+const WAIT_DEFAULT_MS = 5000
+
 const repeatable = (tool: string, args: unknown[]) =>
   REPEATABLE.has(tool) ||
-  // A log read with `clear: true` empties it, so a second read would come back empty.
-  (/\.log$/.test(tool) &&
+  (LOG_TOOLS.has(tool) &&
     !args.some((a) => (a as { clear?: unknown } | null)?.clear))
+
+/** `args` with the wait's options cut to `leftMs`. */
+const withTimeLeft = (args: unknown[], leftMs: number): unknown[] => {
+  const next = [...args]
+  const options = (next[1] as object | null | undefined) ?? {}
+  next[1] = { ...options, timeoutMs: Math.max(1, Math.round(leftMs)) }
+  return next
+}
 
 /** Resolves after `ms`, or as soon as `signal` aborts. */
 const pause = (ms: number, signal: AbortSignal) =>
@@ -326,6 +339,7 @@ export async function runSessionDaemon(
   const callApp = async (tool: string, args: unknown[], ms: number) => {
     if (stale || reconnecting) await connected()
     let t0 = performance.now()
+    const start = t0
     const first = await attempt(tool, args, ms)
     if (first.result) {
       observe(first.result)
@@ -344,19 +358,42 @@ export async function runSessionDaemon(
       }
       return { result, ms: performance.now() - t0 }
     }
-    if (!repeatable(tool, args)) {
-      // Get the session back on the app (and the reload noticed) for the next call.
-      const before = knownLoad
+    const before = knownLoad
+    // A wait for something to go away would pass on a fresh runtime.
+    const goneWait =
+      WAIT_TOOLS.has(tool) && (args[1] as { gone?: unknown } | null)?.gone
+    let reconnectFailure = ''
+    try {
       await connected(first.lost)
-      const how =
-        knownLoad !== before ? 'the app reloaded' : 'the app disconnected'
+    } catch (error) {
+      reconnectFailure = message(error)
+    }
+    const reloaded = knownLoad !== before
+    const again = repeatable(tool, args) && !(goneWait && reloaded)
+    // A read-only call has nothing to warn about: the reconnect error says it.
+    if (again && reconnectFailure) throw new Error(reconnectFailure)
+    if (!again) {
+      const how = reloaded
+        ? 'the app reloaded'
+        : before
+          ? 'the app disconnected'
+          : 'the connection dropped'
       throw new Error(
-        `${how} during ${tool}; it may or may not have run (${first.lost})`,
+        `${how} during ${tool}; it may or may not have run (${first.lost})${
+          reconnectFailure ? `; reconnecting failed: ${reconnectFailure}` : ''
+        }`,
       )
     }
-    await connected(first.lost)
     t0 = performance.now()
-    const second = await attempt(tool, args, ms)
+    const retryArgs = WAIT_TOOLS.has(tool)
+      ? withTimeLeft(
+          args,
+          ((args[1] as { timeoutMs?: number } | null)?.timeoutMs ??
+            WAIT_DEFAULT_MS) -
+            (t0 - start),
+        )
+      : args
+    const second = await attempt(tool, retryArgs, ms)
     if (!second.result)
       throw new Error(
         `The app stopped answering after a reconnect: ${second.lost}`,
@@ -395,9 +432,10 @@ export async function runSessionDaemon(
       ? undefined
       : setInterval(async () => {
           if (inflight || reconnecting || finishing) return
+          const pinged = conn
           const answered = await ping()
           // A call that started during the ping owns the connection now.
-          if (inflight || reconnecting || finishing) return
+          if (inflight || reconnecting || finishing || conn !== pinged) return
           if (stale || !answered)
             await reconnect('no answer to bridge.ping').catch(() => {})
         }, options.healthMs ?? 5000)
@@ -478,7 +516,7 @@ export async function runSessionDaemon(
           const answer = await callApp(
             req.tool,
             args,
-            callTimeout(req.timeoutMs ?? timeoutMs, args),
+            callTimeout(req.timeoutMs ?? timeoutMs, req.tool, args),
           )
           return { id: req.id, ...answer, ...takeNotice() }
         } catch (error) {

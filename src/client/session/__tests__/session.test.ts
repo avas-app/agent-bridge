@@ -47,6 +47,12 @@ async function fakeApp(
     pending?: boolean
     /** The name the app gives the bridge. Default "Fake App". */
     name?: string
+    /** Announce no load id, as an older app package does. */
+    noLoadId?: boolean
+    /** Tools that run, then drop the socket before replying, the first time only. */
+    dropOnce?: string[]
+    /** Tools that just count their runs and answer "ran". */
+    counted?: string[]
   } = {},
 ) {
   let deviceId = firstId
@@ -58,7 +64,11 @@ async function fakeApp(
     drops: 0,
     slow: 0,
     reloads: 0,
+    /** How many times each dropOnce tool ran. */
+    runs: {} as Record<string, number>,
     changed: false,
+    /** Called for every call this app receives. */
+    onCall: undefined as ((tool: string, args: unknown[]) => void) | undefined,
     ws: undefined as unknown as WebSocket,
     /** The runtime restarts on this socket. A new device id is announced, as Expo does. */
     reload: (id: string, load = loadId) => {
@@ -124,13 +134,20 @@ async function fakeApp(
           },
         }),
   }
+  for (const name of [...(options.dropOnce ?? []), ...(options.counted ?? [])]) {
+    tools[name] = () => {
+      app.runs[name] = (app.runs[name] ?? 0) + 1
+      if (app.runs[name] === 1 && options.dropOnce?.includes(name)) app.ws.close()
+      return 'ran'
+    }
+  }
   type Registry = ReturnType<typeof createRegistry>
   let registry: Registry
   const make = (): Registry =>
     createRegistry(
       () => ({ ...bridgeTools(() => registry.list()), ...tools }),
       logs,
-      loadId,
+      options.noLoadId ? undefined : loadId,
     )
   registry = make()
   const info = (): DeviceInfo => ({
@@ -138,7 +155,7 @@ async function fakeApp(
     name: options.name ?? 'Fake App',
     platform: 'ios',
     protocol: PROTOCOL_VERSION,
-    loadId,
+    loadId: options.noLoadId ? undefined : loadId,
     tools: registry.list(),
   })
   const ws = new WebSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
@@ -157,6 +174,7 @@ async function fakeApp(
     if (messageKey.method === 'hello') send('hello:reply', info())
     // Calls to an id this runtime no longer has are dropped, as in the app.
     if (messageKey.method === 'call' && payload.to === deviceId) {
+      app.onCall?.(payload.tool, payload.args ?? [])
       // An extra field, like the logs a newer app sends, must pass through.
       send('result', {
         ...(await registry.dispatch(payload, deviceId)),
@@ -597,6 +615,109 @@ describe('session daemon', () => {
     expect(await bridge.call('mmkv.get')).toBe('got')
     expect(app.drops).toBe(1)
     expect(reloaded.drops).toBe(1)
+  }, 15_000)
+
+  test('a call whose reply was lost says the connection dropped when no reload is known', async () => {
+    const { metro, bridge } = await session('wording', {
+      app: { noLoadId: true },
+    })
+    const again = await fakeApp(metro, 'dev-2', { noLoadId: true })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect((error as Error).message).toContain(
+      'the connection dropped during demo.drop; it may or may not have run',
+    )
+  }, 15_000)
+
+  test('the same app back on the same load says it disconnected, not reloaded', async () => {
+    const { metro, bridge } = await session('wording2')
+    const again = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect((error as Error).message).toContain(
+      'the app disconnected during demo.drop; it may or may not have run',
+    )
+  }, 15_000)
+
+  test('a failed reconnect still says the call may have run', async () => {
+    const { bridge, app } = await session('gone')
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect((error as Error).message).toContain(
+      'during demo.drop; it may or may not have run',
+    )
+    expect((error as Error).message).toContain('Reconnecting failed')
+    expect(app.drops).toBe(1)
+  }, 15_000)
+
+  test('bridge.restore is not run again after a lost reply', async () => {
+    const { metro, app, bridge } = await session('restore-lost', {
+      app: { dropOnce: ['bridge.restore'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { dropOnce: ['bridge.restore'] })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('bridge.restore').catch((e: Error) => e)
+    expect((error as Error).message).toContain('may or may not have run')
+    expect(app.runs['bridge.restore']).toBe(1)
+    expect(again.runs['bridge.restore'] ?? 0).toBe(0)
+  }, 15_000)
+
+  test('an app tool that merely ends in .log is not run again', async () => {
+    const { metro, app, bridge } = await session('applog', {
+      app: { dropOnce: ['analytics.log'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { dropOnce: ['analytics.log'] })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('analytics.log', 'event').catch((e: Error) => e)
+    expect((error as Error).message).toContain('may or may not have run')
+    expect(app.runs['analytics.log']).toBe(1)
+    expect(again.runs['analytics.log'] ?? 0).toBe(0)
+  }, 15_000)
+
+  for (const tool of ['net.log', 'bridge.logs']) {
+    test(`${tool} is run again after a lost reply, but not with clear: true`, async () => {
+      const first = await session(`log-${tool}`, { app: { dropOnce: [tool] } })
+      const again = await fakeApp(first.metro, 'dev-2', { counted: [tool] })
+      cleanups.push(() => again.ws.close())
+      expect(await first.bridge.call(tool)).toBe('ran')
+      expect(first.app.runs[tool]).toBe(1)
+      expect(again.runs[tool]).toBe(1)
+
+      const next = await session(`log-clear-${tool}`, { app: { dropOnce: [tool] } })
+      const plain = await fakeApp(next.metro, 'dev-2', { counted: [tool] })
+      cleanups.push(() => plain.ws.close())
+      const error = await next.bridge.call(tool, { clear: true }).catch((e: Error) => e)
+      expect((error as Error).message).toContain('may or may not have run')
+      expect(plain.runs[tool] ?? 0).toBe(0)
+    }, 20_000)
+  }
+
+  test('a wait for something to go away is not repeated after a reload', async () => {
+    const { metro, bridge } = await session('gone-wait', {
+      app: { dropOnce: ['screen.waitFor'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { loadId: 'load-2', dropOnce: ['screen.waitFor'] })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge
+      .call('screen.waitFor', 'Spinner', { gone: true })
+      .catch((e: Error) => e)
+    expect((error as Error).message).toContain('may or may not have run')
+    expect(again.runs['screen.waitFor'] ?? 0).toBe(0)
+  }, 15_000)
+
+  test('a repeated wait gets only the time left', async () => {
+    const seen: unknown[] = []
+    const { metro, bridge } = await session('time-left', {
+      app: { dropOnce: ['screen.waitFor'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { loadId: 'load-1' })
+    cleanups.push(() => again.ws.close())
+    again.onCall = (tool, args) => {
+      if (tool === 'screen.waitFor') seen.push(args)
+    }
+    await bridge.call('screen.waitFor', 'Done', { timeoutMs: 8000 }).catch(() => {})
+    const opts = (seen[0] as unknown[] | undefined)?.[1] as { timeoutMs: number } | undefined
+    expect(opts?.timeoutMs).toBeLessThan(8000)
+    expect(opts?.timeoutMs).toBeGreaterThan(0)
   }, 15_000)
 
   test('stop --dry-run lists what restore would undo and keeps the session; --keep reports it', async () => {

@@ -22,7 +22,7 @@ const tools: Tools = {
     await new Promise((r) => setTimeout(r, ms))
     return 'done'
   },
-  'demo.waits': async (options: { timeoutMs: number }) => {
+  'screen.waitFor': async (_t: string, options: { timeoutMs: number }) => {
     await new Promise((r) => setTimeout(r, 1200))
     return options.timeoutMs
   },
@@ -247,7 +247,7 @@ describe('a timeoutMs argument stretches the call timeout', () => {
     const bridge = await connect({ metro: metro.metro, transport: 'expo', timeoutMs: 1000 })
     cleanups.push(bridge.close)
     await expect(bridge.call('demo.later', 1200)).rejects.toThrow('within 1000 ms')
-    expect(await bridge.call('demo.waits', { timeoutMs: 1300 })).toBe(1300)
+    expect(await bridge.call('screen.waitFor', 'x', { timeoutMs: 1300 })).toBe(1300)
   }, 10_000)
 })
 

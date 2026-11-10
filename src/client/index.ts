@@ -67,7 +67,7 @@ export async function connect(
     ...args: unknown[]
   ): Promise<Timed<T>> => {
     const t0 = performance.now()
-    const result = await conn.call(tool, args, callTimeout(timeoutMs, args))
+    const result = await conn.call(tool, args, callTimeout(timeoutMs, tool, args))
     const ms = performance.now() - t0
     const logs = result.logs ?? []
     if (!result.ok) throw new AgentBridgeCallError(tool, result.error, logs)
