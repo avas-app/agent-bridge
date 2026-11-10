@@ -9,7 +9,7 @@ import {
   type SessionResponse,
   encodeLine,
 } from './protocol'
-import { type SessionState, pickSession } from './state'
+import { type SessionState, pickSession, projectRoot } from './state'
 
 type Link = {
   request: (req: Omit<SessionRequest, 'id'>) => Promise<SessionResponse>
@@ -97,7 +97,7 @@ export async function connectSession(
   })
   if (!state)
     throw new Error(
-      'No single session matches. Start one with `agent-bridge session start`, or name it.',
+      `No single session matches (looked for sessions started in ${projectRoot()}, or in an app folder under it). Start one with \`agent-bridge session start\`, or name it.`,
     )
   const link = await openSessionLink(state)
   const info = await link.request({ op: 'info' })

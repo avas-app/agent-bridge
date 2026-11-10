@@ -134,7 +134,7 @@ export default async ({ step }) => {
 }
 ```
 
-To run flows from your own script or CI job, import them and pass them to `runFlow`. It applies declared [scenarios](scenarios.md), restores afterwards, and throws what the flow threw:
+To run flows from your own script or CI job, import them and pass them to `runFlow`. It applies declared [scenarios](scenarios.md), restores afterwards when the flow declared any (a flow with no scenarios has nothing to restore), and throws what the flow threw:
 
 ```ts
 import { connect, runFlow } from '@avasapp/agent-bridge/client'

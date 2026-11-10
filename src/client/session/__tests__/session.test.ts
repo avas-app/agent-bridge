@@ -1024,6 +1024,42 @@ describe('session CLI', () => {
     expect(sessionFor({ metro: 'localhost:8084' })?.name).toBe('mine2')
   })
 
+  test('a command in a monorepo root finds the one session started in a child app', () => {
+    const root = projectRoot()
+    writePrivate(
+      sessionFiles('child', dir).state,
+      JSON.stringify({
+        name: 'child',
+        pid: process.pid,
+        socket: '',
+        metro: 'localhost:8085',
+        project: join(root, 'apps', 'mobile'),
+        device: { name: 'Fake App', deviceId: 'child', platform: 'ios' },
+        transport: 'expo',
+        startedAt: Date.now(),
+        lastCallAt: Date.now(),
+        idleMs: 0,
+      }),
+    )
+    expect(sessionFor({})?.name).toBe('child')
+    writePrivate(
+      sessionFiles('sibling', dir).state,
+      JSON.stringify({
+        name: 'sibling',
+        pid: process.pid,
+        socket: '',
+        metro: 'localhost:8086',
+        project: root + '-other',
+        device: { name: 'Fake App', deviceId: 'sibling', platform: 'ios' },
+        transport: 'expo',
+        startedAt: Date.now(),
+        lastCallAt: Date.now(),
+        idleMs: 0,
+      }),
+    )
+    expect(sessionFor({})?.name).toBe('child')
+  })
+
   test('start reports the connect error', async () => {
     const metro = await startFakeMetro({ expo: true })
     cleanups.push(metro.close)

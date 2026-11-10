@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import type { TransportName } from '../connection'
 
@@ -39,6 +39,10 @@ export function projectRoot(from = process.cwd()): string {
     if (dirname(dir) === dir) return resolve(from)
   }
 }
+
+/** The session's project is this directory's project or an app folder inside it (a monorepo root). */
+const inProject = (session: string | undefined, project: string) =>
+  !!session && (session === project || session.startsWith(project + sep))
 
 const uid = () => process.getuid?.() ?? userInfo().username
 
@@ -186,7 +190,7 @@ export function pickSession(filter: {
   const project = projectRoot()
   const matching = listSessions().filter(
     (s) =>
-      (explicit || s.project === project) &&
+      (explicit || inProject(s.project, project)) &&
       (!filter.metro || s.metro === filter.metro) &&
       (!device ||
         s.device.name.toLowerCase().includes(device) ||

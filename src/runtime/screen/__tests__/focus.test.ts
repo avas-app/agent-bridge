@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { createScreen } from '..'
 import type { Fiber } from '../../find-text-core'
-import { WINDOW, composite, host, pressable, rnText, tree } from './fake-tree'
+import { WINDOW, composite, host, pressable, rnText, text, tree } from './fake-tree'
 
 const typed = (fiber: Fiber, type: string): Fiber => {
   fiber.type = type
@@ -16,6 +16,42 @@ const screenOf = (...children: Fiber[]) => {
 
 const texts = (screen: ReturnType<typeof screenOf>) =>
   screen.snapshot().elements.map((e) => e.text)
+
+describe('native tabs', () => {
+  for (const platform of ['IOS', 'Android']) {
+    test(`${platform}: only the selected tab counts as on screen`, () => {
+      const tabs = tree(
+        typed(host({ navStateRequest: { selectedScreenKey: 'activity', baseProvenance: 1 } }), `RNSTabsHost${platform}`),
+        tree(typed(host({ screenKey: 'home' }), `RNSTabsScreen${platform}`), rnText('Home feed')),
+        composite({}),
+        tree(typed(host({ screenKey: 'activity' }), `RNSTabsScreen${platform}`), rnText('Activity log')),
+      )
+      const screen = screenOf(tabs)
+      expect(texts(screen)).toEqual(['Activity log'])
+      expect(screen.snapshot()).toMatchObject({ hidden: 1 })
+      expect(screen.findText('Home feed')).toMatchObject({ onScreen: 0, hidden: 1 })
+    })
+  }
+
+  for (const type of ['RNSBottomTabsScreen', 'RNSTabsScreen']) {
+    test(`${type} (react-native-screens before 4.25) hides when isFocused is false`, () => {
+      const tabs = tree(
+        typed(host(), 'RNSBottomTabs'),
+        tree(typed(host({ isFocused: false, tabKey: 'home' }), type), rnText('Home feed')),
+        tree(typed(host({ isFocused: true, tabKey: 'activity' }), type), rnText('Activity log')),
+      )
+      expect(texts(screenOf(tabs))).toEqual(['Activity log'])
+    })
+  }
+
+  test('a host without a selected key hides nothing', () => {
+    const tabs = tree(
+      typed(host(), 'RNSTabsHostIOS'),
+      tree(typed(host({ screenKey: 'home' }), 'RNSTabsScreenIOS'), rnText('Home feed')),
+    )
+    expect(texts(screenOf(tabs))).toEqual(['Home feed'])
+  })
+})
 
 describe('focused screen', () => {
   test('a native stack shows only its last screen, and counts what it skipped', () => {
@@ -190,5 +226,13 @@ describe('native modal screens', () => {
       tree(typed(host(), 'RNSModalScreen'), rnText('B')),
     )
     expect(texts(screenOf(stack, rnText('Tab bar')))).toEqual(['B'])
+  })
+})
+
+describe('old architecture', () => {
+  test('a native tree that cannot be measured says so instead of reading as empty', () => {
+    const root = tree(host({}, null), tree(composite(), tree(host({}, null), text('Hello'))))
+    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
+    expect(() => screen.snapshot()).toThrow(/old architecture/)
   })
 })

@@ -45,6 +45,13 @@ If Metro runs on another port, pass the same `--metro` (or set
 `Nothing is listening on …` error names the Metro it found instead and its apps;
 check it's yours before switching to it.
 
+Calls take `--timeout <ms>` (default 10000) for a slow call. To drive two apps
+at once, start named sessions (`session start --name ios`, `--name android`) and
+pass `--session <name>` on each call. A session is found from the nearest
+`package.json` above where you run: a command at a monorepo root also finds the
+one session started in an app folder under it, and with several it asks for
+`--session`.
+
 A session holds one connection for all your calls. It stops itself after 15
 minutes without calls and runs `bridge.restore` when it does.
 
@@ -107,7 +114,10 @@ npx @avasapp/agent-bridge call router.navigate /inbox
 ```
 
 `press` and `fill` return once the app has rendered the result, so the next
-check sees it. Arguments are a JSON array (or a single JSON value): the array is
+check sees it. `press` on plain text presses the nearest pressable ancestor.
+Unfocused tabs (native tabs included) and screens under others count as hidden.
+Screen tools need React Native's New Architecture (Fabric); on the old one
+they fail with a message saying so. Arguments are a JSON array (or a single JSON value): the array is
 spread into the tool's arguments.
 
 ## Watch for errors
