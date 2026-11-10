@@ -22,6 +22,10 @@ const tools: Tools = {
     await new Promise((r) => setTimeout(r, ms))
     return 'done'
   },
+  'demo.waits': async (options: { timeoutMs: number }) => {
+    await new Promise((r) => setTimeout(r, 1200))
+    return options.timeoutMs
+  },
   'demo.fail': () => {
     throw new Error('it broke')
   },
@@ -233,6 +237,18 @@ describe('CDP transport', () => {
     expect(bridge.transport).toBe('cdp')
     expect(await bridge.call('demo.echo', 1)).toEqual([1])
   })
+})
+
+describe('a timeoutMs argument stretches the call timeout', () => {
+  test('connect() waits for a tool that was told to wait longer', async () => {
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    cleanups.push(await fakeExpoApp(metro.metro, 'Fake', 'dev-1').then((ws) => () => ws.close()))
+    const bridge = await connect({ metro: metro.metro, transport: 'expo', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    await expect(bridge.call('demo.later', 1200)).rejects.toThrow('within 1000 ms')
+    expect(await bridge.call('demo.waits', { timeoutMs: 1300 })).toBe(1300)
+  }, 10_000)
 })
 
 describe('opening a connection never hangs', () => {

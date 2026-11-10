@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline'
 
 import type { ResultMessage } from '../../shared/protocol'
 import type { AppPin, Connection, TransportName } from '../connection'
+import { callTimeout } from '../call-timeout'
 import { metroHost } from '../discover'
 import { explainConnectError } from '../metro-hint'
 import { openConnection } from '../open'
@@ -53,6 +54,42 @@ export type SessionDaemon = {
 
 /** Not run again after a lost reply: it would reload twice. */
 const RELOAD = 'app.reload'
+
+/** Read-only tools: running one again after a lost reply changes nothing. */
+const REPEATABLE = new Set([
+  'bridge.ping',
+  'bridge.pending',
+  'bridge.tools',
+  'bridge.restore',
+  'screen.snapshot',
+  'screen.findText',
+  'screen.waitFor',
+  'screen.capture',
+  'store.get',
+  'store.list',
+  'query.get',
+  'query.list',
+  'mmkv.get',
+  'mmkv.keys',
+  'mmkv.list',
+  'net.entry',
+  'net.mocks',
+  'router.current',
+  'scenario.list',
+  'webview.list',
+  'webview.url',
+  'webview.messages',
+  'webview.message',
+  'webview.snapshot',
+  'webview.waitFor',
+  'realtime.channels',
+])
+
+const repeatable = (tool: string, args: unknown[]) =>
+  REPEATABLE.has(tool) ||
+  // A log read with `clear: true` empties it, so a second read would come back empty.
+  (/\.log$/.test(tool) &&
+    !args.some((a) => (a as { clear?: unknown } | null)?.clear))
 
 /** Resolves after `ms`, or as soon as `signal` aborts. */
 const pause = (ms: number, signal: AbortSignal) =>
@@ -307,6 +344,16 @@ export async function runSessionDaemon(
       }
       return { result, ms: performance.now() - t0 }
     }
+    if (!repeatable(tool, args)) {
+      // Get the session back on the app (and the reload noticed) for the next call.
+      const before = knownLoad
+      await connected(first.lost)
+      const how =
+        knownLoad !== before ? 'the app reloaded' : 'the app disconnected'
+      throw new Error(
+        `${how} during ${tool}; it may or may not have run (${first.lost})`,
+      )
+    }
     await connected(first.lost)
     t0 = performance.now()
     const second = await attempt(tool, args, ms)
@@ -348,7 +395,10 @@ export async function runSessionDaemon(
       ? undefined
       : setInterval(async () => {
           if (inflight || reconnecting || finishing) return
-          if (stale || !(await ping()))
+          const answered = await ping()
+          // A call that started during the ping owns the connection now.
+          if (inflight || reconnecting || finishing) return
+          if (stale || !answered)
             await reconnect('no answer to bridge.ping').catch(() => {})
         }, options.healthMs ?? 5000)
   // The ping alone mustn't keep the process alive (Node timers have unref).
@@ -424,10 +474,11 @@ export async function runSessionDaemon(
         inflight++
         touch()
         try {
+          const args = req.args ?? []
           const answer = await callApp(
             req.tool,
-            req.args ?? [],
-            req.timeoutMs ?? timeoutMs,
+            args,
+            callTimeout(req.timeoutMs ?? timeoutMs, args),
           )
           return { id: req.id, ...answer, ...takeNotice() }
         } catch (error) {
