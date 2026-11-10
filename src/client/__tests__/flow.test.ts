@@ -290,6 +290,31 @@ describe('expect', () => {
     expect(deepMatches({ a: [{ x: 1, y: 2 }] }, { a: [{ x: 1 }] })).toBe(true)
     expect(deepMatches(null, {})).toBe(false)
   })
+
+  test('deepMatches: a RegExp matches strings; other class instances are rejected', () => {
+    expect(deepMatches({ title: 'Fern is thirsty' }, { title: /thirsty$/ })).toBe(true)
+    expect(deepMatches({ title: 'ok' }, { title: /thirsty/ })).toBe(false)
+    expect(deepMatches({ title: 3 }, { title: /3/ })).toBe(false)
+    expect(() => deepMatches({ at: 1 }, { at: new Date(1) })).toThrow('Date')
+    expect(() => deepMatches({}, new Map())).toThrow('Map')
+  })
+
+  test('expect.route polls quietly: one step line, one step', async () => {
+    let polls = 0
+    const bridge = await app(null, {
+      'router.current': () => ({ pathname: ++polls < 4 ? '/a' : '/b' }),
+    })
+    const out = quiet()
+    const result = await runFlow(
+      bridge,
+      { default: async ({ expect: e }) => e.route('/b') },
+      out,
+    )
+    expect(polls).toBeGreaterThanOrEqual(4)
+    // The route step and the closing restore.
+    expect(result.steps).toBe(2)
+    expect(out.lines.filter((l) => l.includes('expect route'))).toHaveLength(1)
+  })
 })
 
 describe('runFlows', () => {
@@ -331,5 +356,133 @@ describe('runFlows', () => {
     expect(xml).toContain('name="b&#60;&#62;"')
     expect(xml).toContain('<failure message="bad &#34;x&#34;">')
     expect(xml).toContain('text &#34;Hi&#34;')
+  })
+
+  test('junit: strips ANSI sequences and U+FFFE, uses the folder as classname, relative files', () => {
+    const run = (file: string, error?: string) =>
+      ({ file, name: 'same', status: error ? 'failed' : 'passed', ms: 1, steps: 0, errors: 0, error, restoreErrors: [], notices: [] }) as import('../flow').FlowRun
+    const xml = renderJunit([
+      run('flows/a/same.flow.mjs', '\u001b[31mred\u001b[0m\u001b[1;32m!\uFFFE\uFFFF'),
+      run('flows/b/same.flow.mjs'),
+      run('top.flow.mjs'),
+    ])
+    expect(xml).toContain('message="red!"')
+    expect(xml).not.toContain('\u001b')
+    expect(xml).toContain('classname="flows/a" name="same" file="flows/a/same.flow.mjs"')
+    expect(xml).toContain('classname="flows/b" name="same"')
+    expect(xml).toContain('classname="agent-bridge" name="same" file="top.flow.mjs"')
+  })
+})
+
+describe('failures and lost apps', () => {
+  const mk = (name: string, fn: FlowModule['default']) => ({ file: `${name}.flow.mjs`, name, module: { default: fn } })
+  /** A bridge whose calls go through `hook` first, to fake a lost app, extra logs or a notice. */
+  const wrap = (real: AgentBridge, hook: (tool: string) => Partial<{ logs: AgentBridge extends never ? never : never }> | unknown) =>
+    ({
+      ...real,
+      call: (async (tool: string, ...a: unknown[]) => {
+        hook(tool)
+        return real.call(tool, ...a)
+      }) as AgentBridge['call'],
+      timed: (async (tool: string, ...a: unknown[]) => {
+        const extra = hook(tool) as { logs?: never[]; notice?: string } | undefined
+        const r = await real.timed(tool, ...a)
+        return { ...r, ...extra }
+      }) as AgentBridge['timed'],
+    }) as AgentBridge
+
+  test('the reload notice is reported when the failure snapshot is the first call after the reload', async () => {
+    const real = await app(null, {
+      'screen.snapshot': () => ({ elements: [] }),
+      'demo.echo': (n: number) => n,
+    })
+    const notice = 'app reloaded; 1 pending restore lost: store'
+    let sawEcho = false
+    const bridge = wrap(real, (tool) => {
+      if (tool === 'demo.echo') sawEcho = true
+      return tool === 'screen.snapshot' && sawEcho ? { notice } : undefined
+    })
+    const runs = await runFlows(
+      bridge,
+      [mk('a', async ({ step }) => { await step('echo', 'demo.echo', 1); throw new Error('x') })],
+      quiet(),
+    )
+    expect(runs[0]!.notices).toEqual([notice])
+  })
+
+  test('a lost app: error first, no snapshot or restore waits, later flows skipped with a reason', async () => {
+    const calls: string[] = []
+    const real = await app(null, {
+      'screen.snapshot': () => ({ elements: [] }),
+      'router.current': () => ({ pathname: '/' }),
+      'demo.echo': (n: number) => n,
+    })
+    let lost = false
+    const bridge = wrap(real, (tool) => {
+      calls.push(tool)
+      if (lost) throw new Error(`No reply to "${tool}" within 10000 ms`)
+    })
+    const out = quiet()
+    const runs = await runFlows(
+      bridge,
+      [
+        mk('a', async ({ step }) => {
+          lost = true
+          await step('echo', 'demo.echo', 1)
+        }),
+        mk('b', async () => {}),
+      ],
+      out,
+    )
+    expect(calls).toEqual(['demo.echo'])
+    expect(runs.map((r) => r.status)).toEqual(['failed', 'skipped'])
+    expect(runs[1]!.error).toContain('stopped answering')
+    expect(out.lines.some((l) => l.includes('FAILED: No reply'))).toBe(true)
+  })
+
+  test('--keep with a lost app still skips the rest; a failing restore tool does not', async () => {
+    const real = await app(null, { 'demo.echo': (n: number) => n })
+    let lost = false
+    const bridge = wrap(real, () => {
+      if (lost) throw new Error('socket closed')
+    })
+    const kept = await runFlows(
+      bridge,
+      [mk('a', async ({ step }) => { lost = true; await step('e', 'demo.echo', 1) }), mk('b', async () => {})],
+      { ...quiet(), keep: true },
+    )
+    expect(kept.map((r) => r.status)).toEqual(['failed', 'skipped'])
+
+    const failing = {
+      ...real,
+      timed: (async (tool: string, ...a: unknown[]) => {
+        if (tool === 'bridge.restore') throw new AgentBridgeCallError(tool, 'restorer broke')
+        return real.timed(tool, ...a)
+      }) as AgentBridge['timed'],
+    } as AgentBridge
+    const runs = await runFlows(failing, [mk('a', async () => {}), mk('b', async () => {})], quiet())
+    expect(runs.map((r) => r.status)).toEqual(['failed', 'failed'])
+  })
+
+  test('one flow in text mode: no header, the failure goes to printError; restore errors do not trip --strict', async () => {
+    const real = await app(null, {})
+    const bridge = wrap(real, (tool) =>
+      tool === 'bridge.restore'
+        ? { logs: [{ level: 'error', message: 'noisy restore', ts: 0 }] }
+        : undefined,
+    )
+    const out = quiet()
+    const err: string[] = []
+    const runs = await runFlows(
+      bridge,
+      [mk('only', async () => { throw new Error('nope') })],
+      { ...out, single: true, strict: true, printError: (l) => void err.push(l) },
+    )
+    expect(out.lines.some((l) => l === '' || l === '\nonly' || l.startsWith('\n'))).toBe(false)
+    expect(out.lines.some((l) => l.includes('FAILED'))).toBe(false)
+    expect(err).toEqual(['   FAILED: nope'])
+    const ok = await runFlows(bridge, [mk('only', async () => {})], { ...out, single: true, strict: true })
+    expect(ok[0]!.status).toBe('passed')
+    expect(runs[0]!.status).toBe('failed')
   })
 })

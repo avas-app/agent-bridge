@@ -57,12 +57,14 @@ when the flow fails. The flow gets what each scenario's `apply` returned as
 
 Run several at once: `run flows/` (a directory's `*.flow.mjs`), several files, or a
 glob, in order on one connection, with a pass/fail line each and a summary; exit 1 if
-any failed. `--bail` stops at the first failure, `--grep <text>` filters by name,
-`--reporter json|junit --out report.xml` is for CI. Every flow ends with
+any failed. `--bail` stops at the first failure, `--grep <text>` filters by name or path
+(relative to here), `--reporter json|junit` is for CI: report on stdout with all
+other output on stderr, or `--out report.xml`. Globs only match `*.flow.mjs`. Every flow ends with
 `bridge.restore`, pass or fail (it is global: through a session it also undoes what
 you set up by hand first); `--keep` skips it to debug. A failed flow prints the
 screen elements and route. `expect.text(t)`, `expect.gone(t)`, `expect.route(path)`
-and `expect.result(tool, args, match)` throw readable messages.
+and `expect.result(tool, args, match)` (a RegExp matches a string) throw readable
+messages.
 
 `step` takes the same argument shapes as `call`; see [state.md](state.md).
 

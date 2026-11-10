@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import {
@@ -12,14 +11,9 @@ import {
   type LogEntry,
   listDevices,
 } from './client/index'
-import {
-  type FlowEntry,
-  type FlowModule,
-  flowScenarios,
-  parseScenarioFlag,
-  runFlows,
-} from './client/flow'
-import { flowName, resolveFlowFiles } from './client/flow-files'
+import { type FlowRun, parseScenarioFlag, runFlows } from './client/flow'
+import { checkRunFlags, failedRun, loadFlows, logToStderr, selectFlows, writeReport } from './client/flow-cli'
+import { resolveFlowFiles } from './client/flow-files'
 import { renderJson, renderJunit } from './client/flow-report'
 import { parseCallArgv, readArgFile, runBatch } from './client/batch'
 import { metroHost } from './client/discover'
@@ -73,15 +67,16 @@ Options
   --device <text>        Pick an app when several are connected
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
-  --out <file>           call: write the result to a file; run: the report file; print its size and shape
+  --out <file>           call: write the result to a file and print its size and shape
                          (--batch: a directory, one <n>-<tool>.json per call)
+                         run: the report file (with --reporter json|junit)
   --stop-on-error        call --batch: stop after the first failed call
   --full                 call: print results over 32 KB instead of a summary
   --strict               run: fail a flow if the app logged an error
   --bail                 run: stop at the first failed flow
-  --grep <text>          run: only flows whose name or path contains text
+  --grep <text>          run: only flows whose name or path (relative to here) contains text
   --keep                 run: no bridge.restore after each flow (session stop: keep the session)
-  --reporter <name>      run: text (default), json or junit; --out <file> writes it to a file
+  --reporter <name>      run: text (default), json or junit; step lines and flow output go to stderr
   --scenario <name>      run: also apply this scenario (repeatable). Options as
                          JSON after "=": --scenario 'signedIn={"user":{"name":"Ada"}}'
   --session <name>       Use this session (env AGENT_BRIDGE_SESSION)
@@ -279,41 +274,28 @@ async function main() {
     case 'run': {
       if (!rest.length)
         throw new Error('Usage: agent-bridge run <flow file | directory | glob>...')
+      const machine = checkRunFlags({ reporter: values.reporter, out: values.out })
       const reporter = values.reporter ?? 'text'
-      if (!['text', 'json', 'junit'].includes(reporter))
-        throw new Error(`--reporter is text, json or junit, not ${reporter}`)
       const files = await resolveFlowFiles(rest)
-      const loaded: FlowEntry[] = []
-      for (const file of files) {
-        const module = (await import(pathToFileURL(file).href)) as FlowModule
-        // Before connecting, so a bad declaration fails fast.
-        flowScenarios(module)
-        loaded.push({ file, name: flowName(file, module.name), module })
+      const { entries: loaded, failures } = await loadFlows(files)
+      const entries = selectFlows(loaded, values.grep)
+      if (!entries.length && !failures.length) {
+        if (!machine) throw new Error(`--grep ${values.grep}: no flow matches`)
+        failures.push(failedRun('', `--grep ${values.grep}`, 'no flow matches'))
       }
-      const grep = values.grep?.toLowerCase()
-      const entries = grep
-        ? loaded.filter((e) => `${e.name} ${e.file}`.toLowerCase().includes(grep))
-        : loaded
-      if (!entries.length) throw new Error(`--grep ${values.grep}: no flow matches`)
+      // Fail on a bad --out folder now, not after every flow ran.
+      if (machine && values.out) await mkdir(dirname(values.out), { recursive: true })
       const extra = (values.scenario ?? []).map(parseScenarioFlag)
       // The report goes to stdout or --out; step lines go to stderr then, so a pipe gets clean JSON or XML.
-      const machine = reporter !== 'text'
-      return withBridge(async (bridge) => {
-        const runs = await runFlows(bridge, entries, {
-          scenarios: extra,
-          strict: values.strict,
-          bail: values.bail,
-          keep: values.keep,
-          print: machine ? (line) => console.error(line) : undefined,
-        })
+      const finish = async (runs: FlowRun[]) => {
         const failed = runs.filter((r) => r.status === 'failed')
         if (machine) {
           const doc = reporter === 'json' ? renderJson(runs) : renderJunit(runs)
-          if (values.out) await writeFile(values.out, doc.endsWith('\n') ? doc : `${doc}\n`)
+          if (values.out) await writeReport(values.out, doc)
           else console.log(doc)
         }
         const log = machine ? console.error : console.log
-        if (entries.length > 1 || machine || failed.length) {
+        if (runs.length > 1 || machine) {
           log('')
           for (const r of runs)
             log(
@@ -325,7 +307,34 @@ async function main() {
           )
         }
         if (failed.length) process.exitCode = 1
-      })
+      }
+      const execute = (bridge: AgentBridge) =>
+        runFlows(bridge, entries, {
+          scenarios: extra,
+          strict: values.strict,
+          bail: values.bail,
+          keep: values.keep,
+          single: entries.length === 1 && !machine,
+          print: machine ? (line) => console.error(line) : undefined,
+        })
+      let runs: FlowRun[]
+      if (!entries.length) runs = []
+      else {
+        try {
+          const run = (bridge: AgentBridge) => (machine ? logToStderr(() => execute(bridge)) : execute(bridge))
+          let result: FlowRun[] = []
+          await withBridge(async (bridge) => {
+            result = await run(bridge)
+          })
+          runs = result
+        } catch (error) {
+          // Connecting failed: nothing ran, but CI still gets a report saying why.
+          if (!machine) throw error
+          const why = error instanceof Error ? error.message : String(error)
+          runs = entries.map((e) => failedRun(e.file, e.name, why))
+        }
+      }
+      return finish([...failures, ...runs])
     }
     case 'scenarios':
       return withBridge(async (bridge) => {
