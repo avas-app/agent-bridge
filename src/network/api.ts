@@ -39,6 +39,7 @@ const ROUTE = /^(?:([A-Za-z]+)\s+)?(\/\S*)$/
 export function compileRoute(
   baseUrl: string,
   route: string,
+  { trailingSlash = false }: { trailingSlash?: boolean } = {},
 ): { method?: string; regex: RegExp; names: string[] } {
   const parsed = ROUTE.exec(route.trim())
   if (!parsed)
@@ -65,12 +66,12 @@ export function compileRoute(
     : '(?:[a-z][a-z0-9+.-]*://[^/?#]*)?'
   return {
     method: method?.toUpperCase(),
-    regex: new RegExp(`^${base}${pattern}(?:[?#].*)?$`, 'i'),
+    regex: new RegExp(`^${base}${pattern}${trailingSlash ? '/?' : ''}(?:[?#].*)?$`, 'i'),
     names,
   }
 }
 
-function queryOf(url: string): Record<string, string> {
+export function queryOf(url: string): Record<string, string> {
   const search = /\?([^#]*)/.exec(url)?.[1]
   const out: Record<string, string> = {}
   if (!search) return out

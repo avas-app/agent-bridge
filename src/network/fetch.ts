@@ -15,6 +15,7 @@ import {
   responseParts,
   sleep,
   markResponse,
+  setRequestBody,
   setResponseBody,
   startEntry,
 } from './state'
@@ -104,6 +105,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
       method,
       url,
       requestBody,
+      requestHeaders: headersRecord(init?.headers ?? req.headers),
     })
 
     const real = () => {
@@ -116,7 +118,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
       }
       return promise.then(
         (res) => {
-          finishEntry(entry, { status: res.status })
+          finishEntry(entry, { status: res.status, responseHeaders: headersRecord(res.headers) })
           const type = res.headers?.get?.('content-type') ?? undefined
           if (isTextual(type) && typeof res.clone === 'function') {
             markResponse(entry, 'pending')
@@ -137,7 +139,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
 
     // No mock answered: the network, or strict mode's error response.
     const passOn = () => {
-      const blocked = blockedResponse(state, method, url)
+      const blocked = blockedResponse(state, method, url, requestBody)
       if (!blocked) return real()
       entry.blocked = true
       if (isOffline(blocked)) {
@@ -145,30 +147,35 @@ export function patchFetch(state: NetworkState): (() => void) | null {
         return Promise.reject(new TypeError(OFFLINE_MESSAGE))
       }
       const { status, text, headers } = responseParts(blocked)
-      finishEntry(entry, { status, responseBody: text, contentType: contentTypeOf(headers) })
+      finishEntry(entry, { status, responseBody: text, contentType: contentTypeOf(headers), responseHeaders: headers })
       return Promise.resolve(mockedResponse(blocked))
     }
 
-    const candidates = matchingMocks(state, method, url)
+    // A Request object's body can only be read asynchronously, so a body check waits for it.
+    const bodyKnown =
+      init?.body !== undefined || !req.clone || method === 'GET' || method === 'HEAD'
+    const candidates = matchingMocks(state, method, url, bodyKnown ? { text: requestBody } : undefined)
     if (!candidates.length) return passOn()
 
-    const request = async () => {
-      let body = requestBody
-      if (body === undefined && init?.body === undefined && req.clone) {
-        body = await req
-          .clone()
-          .text()
-          .catch(() => undefined)
-      }
-      return mockRequest(
-        method,
-        url,
-        headersRecord(init?.headers ?? req.headers),
-        body || undefined,
-      )
-    }
+    let built: Promise<ReturnType<typeof mockRequest>> | undefined
+    const request = () =>
+      (built ??= (async () => {
+        let body = requestBody
+        if (body === undefined && !bodyKnown) {
+          body = await Promise.resolve()
+            .then(() => req.clone!().text())
+            .catch(() => undefined)
+          setRequestBody(entry, body)
+        }
+        return mockRequest(
+          method,
+          url,
+          headersRecord(init?.headers ?? req.headers),
+          body || undefined,
+        )
+      })())
 
-    const answered = answer(state, candidates, request).catch((error) => {
+    const answered = answer(state, candidates, request, bodyKnown).catch((error) => {
       // A handler threw: the app sees the error, the log says why.
       entry.mocked = true
       finishEntry(entry, { error: errorMessage(error) })
@@ -188,7 +195,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
         throw new TypeError(OFFLINE_MESSAGE)
       }
       const { status, text, headers } = responseParts(hit.response)
-      finishEntry(entry, { status, responseBody: text, contentType: contentTypeOf(headers) })
+      finishEntry(entry, { status, responseBody: text, contentType: contentTypeOf(headers), responseHeaders: headers })
       return mockedResponse(hit.response)
     })
   }

@@ -1,6 +1,6 @@
 // A fake network: a route table standing in for servers, a browser-style
 // XMLHttpRequest, React Native's flavour of it, and two kinds of fetch.
-export type Reply = { status: number; body: string } | 'offline'
+export type Reply = { status: number; body: string; headers?: Record<string, string> } | 'offline'
 export type Server = (method: string, url: string, body?: string) => Reply
 
 export const server = {
@@ -32,13 +32,16 @@ export class FakeXHR extends EventTarget {
     this.url = url
     this.readyState = 1
   }
+  responseHeaders: Record<string, string> = {}
   setRequestHeader(_name: string, _value: string) {}
   abort() {}
   send(body?: string | null) {
     setTimeout(() => this.deliver(reach(this.method, this.url, body ?? undefined)), 1)
   }
   getAllResponseHeaders() {
-    return ''
+    return Object.entries(this.responseHeaders)
+      .map(([k, v]) => `${k}: ${v}\r\n`)
+      .join('')
   }
   protected deliver(reply: Reply) {
     this.readyState = 4
@@ -47,6 +50,7 @@ export class FakeXHR extends EventTarget {
       this.dispatchEvent(new Event('error'))
     } else {
       this.status = reply.status
+      this.responseHeaders = reply.headers ?? {}
       this.responseText = reply.body
       this.response = this.responseType === 'json' ? JSON.parse(reply.body) : reply.body
       this.dispatchEvent(new Event('readystatechange'))
@@ -71,7 +75,8 @@ export class FakeRNXHR extends FakeXHR {
     setTimeout(() => {
       const reply = reach(this.method, this.url, body ?? undefined)
       if (reply === 'offline') return this.__didCompleteResponse(id, 'Could not connect', false)
-      this.__didReceiveResponse(id, reply.status, {}, this.url)
+      this.responseHeaders = reply.headers ?? {}
+      this.__didReceiveResponse(id, reply.status, reply.headers ?? {}, this.url)
       this.__didReceiveData(id, reply.body)
       this.__didCompleteResponse(id, '', false)
     }, 1)
@@ -103,7 +108,7 @@ export async function nativeFetch(input: unknown, init?: RequestInit): Promise<R
   if (reply === 'offline') throw new TypeError('fetch failed')
   return new Response(reply.body, {
     status: reply.status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...reply.headers },
   })
 }
 
@@ -112,9 +117,22 @@ export function xhrFetch(input: unknown, init?: RequestInit): Promise<Response> 
   return new Promise((resolve, reject) => {
     const xhr = new globalThis.XMLHttpRequest()
     xhr.onload = () =>
-      resolve(new Response(xhr.responseText, { status: xhr.status }))
+      resolve(
+        new Response(xhr.responseText, {
+          status: xhr.status,
+          headers: Object.fromEntries(
+            xhr
+              .getAllResponseHeaders()
+              .split('\r\n')
+              .filter(Boolean)
+              .map((line) => line.split(': ') as [string, string]),
+          ),
+        }),
+      )
     xhr.onerror = () => reject(new TypeError('Network request failed'))
     xhr.open(init?.method ?? 'GET', String(input), true)
+    for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>))
+      xhr.setRequestHeader(k, v)
     xhr.send((init?.body as string | undefined) ?? null)
   })
 }
