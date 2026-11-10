@@ -126,15 +126,23 @@ A flow is a module the CLI runs without a model in the loop. `step(label, tool, 
 ```js
 export const scenario = 'signedIn'   // optional: see scenarios.md
 
-export default async ({ step }) => {
+export default async ({ step, expect }) => {
   await step('flag: beta off', 'query.pin', ['features'], { beta: false })
   await step('save empty form', 'screen.press', 'save-plant')
-  await step('error shown', 'screen.waitFor', 'Name is required')
-  await step('undo', 'bridge.restore')
+  await expect.text('Name is required')
 }
 ```
 
-To run flows from your own script or CI job, import them and pass them to `runFlow`. It applies declared [scenarios](scenarios.md), restores afterwards, and throws what the flow threw:
+`run` takes several files, directories (their `*.flow.mjs`, recursively) and globs, and runs them in order on one connection: `agent-bridge run flows/` or `run 'flows/**/*.flow.mjs'`. It prints a line per flow and a summary (`3 passed, 1 failed`) and exits 1 if any flow failed. A flow is named by its file (`add-plant.flow.mjs` is `add-plant`) or an `export const name = '…'`.
+
+- `--bail` stops at the first failed flow; the rest show as skipped. `--grep <text>` runs only flows whose name or path contains the text. `--strict` fails a flow when the app logged an error.
+- **Every flow ends with `bridge.restore`**, pass or fail, not only flows that declare a scenario, so one flow can't leave the app dirty for the next. `bridge.restore` is global: through a session it also undoes what you set up by hand before `run`. `--keep` skips it, to leave the state for debugging (scenarios from a kept flow stay active, and a reload may be reported on the next flow). A flow doesn't need its own `step('undo', 'bridge.restore')` any more. If the restore call itself fails (the app is gone), the remaining flows are skipped instead of each waiting out a timeout; if the app reloaded, `run` says the changes made before the reload could not be undone.
+- When a flow fails, `run` prints what was on screen: the `screen.snapshot` elements (up to 40, one line each) and `router.current` if the app has it.
+- `--reporter json|junit` prints a report for CI (step lines go to stderr then); `--out <file>` writes it to a file. JUnit has one testcase per flow, with the failure and screen state in the failure body.
+
+`expect` is the second argument's helper for checks that throw a readable message, each shown as a step: `expect.text('Saved')` (waits for it on screen, `{ timeoutMs }`, default 5000), `expect.gone('Loading')`, `expect.route('/plants')` (needs `router.current`; waits up to 2 s), and `expect.result('query.get', [['plants']], { length: 2 })` (calls the tool and checks its result contains the object given: objects by the keys you list, arrays and values exactly).
+
+To run flows from your own script or CI job, import them and pass them to `runFlow`. It applies declared [scenarios](scenarios.md), restores afterwards (`{ keep: true }` skips that), and throws what the flow threw.:
 
 ```ts
 import { connect, runFlow } from '@avasapp/agent-bridge/client'

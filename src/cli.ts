@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
@@ -13,11 +13,14 @@ import {
   listDevices,
 } from './client/index'
 import {
+  type FlowEntry,
   type FlowModule,
   flowScenarios,
   parseScenarioFlag,
-  runFlow,
+  runFlows,
 } from './client/flow'
+import { flowName, resolveFlowFiles } from './client/flow-files'
+import { renderJson, renderJunit } from './client/flow-report'
 import { parseCallArgv, readArgFile, runBatch } from './client/batch'
 import { metroHost } from './client/discover'
 import { logLine } from './client/log-lines'
@@ -49,9 +52,11 @@ Usage
   agent-bridge call --batch               Read \`tool args\` lines from stdin (args may be @file); one JSON line per call, one connection
   agent-bridge repl                       Interactive prompt (history, tab completion, .help). With
                                           stdin not a terminal it behaves like call --batch
-  agent-bridge run <flow.mjs>             Run a flow: export default async ({ step, call }) => {}
-                                          export const scenario = 'signedIn' applies it first
-                                          and runs bridge.restore after, even on failure
+  agent-bridge run <flow|dir|glob>...     Run flows in order on one connection: export default
+                                          async ({ step, call, expect }) => {}. A directory means
+                                          its *.flow.mjs. Each flow ends with bridge.restore, even
+                                          on failure (--keep skips it); a scenario export is
+                                          applied first. Exits 1 if any flow failed
   agent-bridge scenarios                  Scenarios the app defines (scenario.apply applies one)
   agent-bridge assert-absent <files...>   Fail if a release bundle contains the bridge
 
@@ -68,11 +73,15 @@ Options
   --device <text>        Pick an app when several are connected
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
-  --out <file>           call: write the result to a file; print its size and shape
+  --out <file>           call: write the result to a file; run: the report file; print its size and shape
                          (--batch: a directory, one <n>-<tool>.json per call)
   --stop-on-error        call --batch: stop after the first failed call
   --full                 call: print results over 32 KB instead of a summary
-  --strict               run: exit non-zero if the app logged an error
+  --strict               run: fail a flow if the app logged an error
+  --bail                 run: stop at the first failed flow
+  --grep <text>          run: only flows whose name or path contains text
+  --keep                 run: no bridge.restore after each flow (session stop: keep the session)
+  --reporter <name>      run: text (default), json or junit; --out <file> writes it to a file
   --scenario <name>      run: also apply this scenario (repeatable). Options as
                          JSON after "=": --scenario 'signedIn={"user":{"name":"Ada"}}'
   --session <name>       Use this session (env AGENT_BRIDGE_SESSION)
@@ -122,6 +131,9 @@ async function main() {
       batch: { type: 'boolean' },
       'stop-on-error': { type: 'boolean' },
       scenario: { type: 'string', multiple: true },
+      bail: { type: 'boolean' },
+      grep: { type: 'string' },
+      reporter: { type: 'string' },
       name: { type: 'string' },
       idle: { type: 'string' },
       keep: { type: 'boolean' },
@@ -265,18 +277,54 @@ async function main() {
         })
       })
     case 'run': {
-      const [file] = rest
-      if (!file) throw new Error('Usage: agent-bridge run <flow file>')
-      const flow = (await import(pathToFileURL(resolve(file)).href)) as FlowModule
-      // Before connecting, so a bad declaration fails fast.
-      flowScenarios(flow)
+      if (!rest.length)
+        throw new Error('Usage: agent-bridge run <flow file | directory | glob>...')
+      const reporter = values.reporter ?? 'text'
+      if (!['text', 'json', 'junit'].includes(reporter))
+        throw new Error(`--reporter is text, json or junit, not ${reporter}`)
+      const files = await resolveFlowFiles(rest)
+      const loaded: FlowEntry[] = []
+      for (const file of files) {
+        const module = (await import(pathToFileURL(file).href)) as FlowModule
+        // Before connecting, so a bad declaration fails fast.
+        flowScenarios(module)
+        loaded.push({ file, name: flowName(file, module.name), module })
+      }
+      const grep = values.grep?.toLowerCase()
+      const entries = grep
+        ? loaded.filter((e) => `${e.name} ${e.file}`.toLowerCase().includes(grep))
+        : loaded
+      if (!entries.length) throw new Error(`--grep ${values.grep}: no flow matches`)
       const extra = (values.scenario ?? []).map(parseScenarioFlag)
+      // The report goes to stdout or --out; step lines go to stderr then, so a pipe gets clean JSON or XML.
+      const machine = reporter !== 'text'
       return withBridge(async (bridge) => {
-        const { errors, restoreErrors } = await runFlow(bridge, flow, {
+        const runs = await runFlows(bridge, entries, {
           scenarios: extra,
+          strict: values.strict,
+          bail: values.bail,
+          keep: values.keep,
+          print: machine ? (line) => console.error(line) : undefined,
         })
-        if ((values.strict && errors) || restoreErrors.length)
-          process.exitCode = 1
+        const failed = runs.filter((r) => r.status === 'failed')
+        if (machine) {
+          const doc = reporter === 'json' ? renderJson(runs) : renderJunit(runs)
+          if (values.out) await writeFile(values.out, doc.endsWith('\n') ? doc : `${doc}\n`)
+          else console.log(doc)
+        }
+        const log = machine ? console.error : console.log
+        if (entries.length > 1 || machine || failed.length) {
+          log('')
+          for (const r of runs)
+            log(
+              `${r.status === 'passed' ? 'PASS' : r.status === 'failed' ? 'FAIL' : 'SKIP'} ${r.name}${r.status === 'skipped' ? '' : ` (${(r.ms / 1000).toFixed(1)} s)`}${r.error ? `: ${r.error}` : ''}`,
+            )
+          const count = (st: string) => runs.filter((r) => r.status === st).length
+          log(
+            `${count('passed')} passed, ${failed.length} failed${count('skipped') ? `, ${count('skipped')} skipped` : ''}`,
+          )
+        }
+        if (failed.length) process.exitCode = 1
       })
     }
     case 'scenarios':

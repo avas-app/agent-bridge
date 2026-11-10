@@ -12,7 +12,10 @@ import {
   mergeScenarios,
   parseScenarioFlag,
   runFlow,
+  runFlows,
+  deepMatches,
 } from '../flow'
+import { renderJson, renderJunit } from '../flow-report'
 import {
   type AgentBridge,
   AgentBridgeCallError,
@@ -117,8 +120,9 @@ describe('runFlow', () => {
       },
       out,
     )
-    expect(result.notices).toEqual([notice, notice])
-    expect(out.lines.filter((l) => l === `   ! ${notice}`)).toHaveLength(2)
+    // The closing restore carries the mock's notice too.
+    expect(result.notices).toEqual([notice, notice, notice])
+    expect(out.lines.filter((l) => l === `   ! ${notice}`)).toHaveLength(3)
     expect(out.lines.at(-1)).toContain('the app reloaded')
   })
 
@@ -212,17 +216,21 @@ describe('runFlow', () => {
     ).rejects.toThrow('the app defines none')
   })
 
-  test('a flow without scenarios runs as before, with no restore', async () => {
+  test('a flow without scenarios still restores, unless keep is set', async () => {
     const calls: string[] = []
     const bridge = {
       transport: 'cdp',
-      tools: () => [],
+      tools: () => [{ name: 'bridge.restore' }],
       timed: async (tool: string) => {
         calls.push(tool)
-        return { value: 1, ms: 1, appMs: 1, logs: [] }
+        return { value: {}, ms: 1, appMs: 1, logs: [] }
       },
     } as unknown as AgentBridge
-    await runFlow(bridge, { default: async ({ step }) => void (await step('one', 'x.y')) }, quiet())
+    const flow = { default: async ({ step }: { step: (l: string, t: string) => Promise<unknown> }) => void (await step('one', 'x.y')) }
+    await runFlow(bridge, flow as FlowModule, quiet())
+    expect(calls).toEqual(['x.y', 'bridge.restore'])
+    calls.length = 0
+    await runFlow(bridge, flow as FlowModule, { ...quiet(), keep: true })
     expect(calls).toEqual(['x.y'])
   })
 
@@ -242,5 +250,86 @@ describe('runFlow', () => {
       out,
     )
     expect(seen).toEqual([['Confirm', 1], ['Confirm', 1], [['Confirm']]])
+  })
+})
+
+describe('expect', () => {
+  const screen = (texts: string[]) => ({
+    'screen.waitFor': (target: string, o?: { gone?: boolean }) => {
+      const has = texts.includes(target)
+      if (o?.gone ? has : !has) throw new Error(`timed out waiting for ${target}`)
+      return { ms: 1 }
+    },
+    'router.current': () => ({ pathname: '/home' }),
+    'demo.state': () => ({ user: { name: 'Ada', id: 1 }, tags: ['a'] }),
+  })
+
+  test('passes and fails with readable messages', async () => {
+    const bridge = await app(null, screen(['Hello']))
+    const run = (fn: (e: import('../flow').FlowExpect) => Promise<void>) =>
+      runFlow(bridge, { default: async ({ expect: e }) => fn(e) }, quiet())
+    await run(async (e) => {
+      await e.text('Hello')
+      await e.gone('Bye')
+      await e.route('/home')
+      await e.result('demo.state', [], { user: { name: 'Ada' } })
+    })
+    await expect(run((e) => e.text('Bye'))).rejects.toThrow('expected "Bye" on screen: ')
+    await expect(run((e) => e.gone('Hello'))).rejects.toThrow('expected "Hello" to be off screen')
+    await expect(run((e) => e.route('/plants', { timeoutMs: 60 }))).rejects.toThrow(
+      'expected route /plants, got /home',
+    )
+    await expect(run((e) => e.result('demo.state', [], { user: { name: 'Bob' } }))).rejects.toThrow(
+      'expected demo.state to match',
+    )
+  })
+
+  test('deepMatches: objects by given keys, arrays exactly', () => {
+    expect(deepMatches({ a: 1, b: 2 }, { a: 1 })).toBe(true)
+    expect(deepMatches([1, 2], [1])).toBe(false)
+    expect(deepMatches({ a: [{ x: 1, y: 2 }] }, { a: [{ x: 1 }] })).toBe(true)
+    expect(deepMatches(null, {})).toBe(false)
+  })
+})
+
+describe('runFlows', () => {
+  const mk = (name: string, fn: FlowModule['default']) => ({ file: `${name}.flow.mjs`, name, module: { default: fn } })
+
+  test('runs in order, restores after each, shows the screen on failure, and bail skips the rest', async () => {
+    const undone: string[] = []
+    const bridge = await app(null, {
+      'app.set': (v: string) => undone.push(`set ${v}`),
+      'screen.snapshot': () => ({ elements: [{ kind: 'text', text: 'Oops' }, { kind: 'button', testID: 'ok', label: 'OK' }] }),
+      'router.current': () => ({ pathname: '/x' }),
+    })
+    const out = quiet()
+    const entries = [
+      mk('a', async ({ step }) => void (await step('s', 'app.set', 'a'))),
+      mk('b', async () => {
+        throw new Error('boom')
+      }),
+      mk('c', async () => {}),
+    ]
+    const runs = await runFlows(bridge, entries, { ...out, bail: true })
+    expect(runs.map((r) => r.status)).toEqual(['passed', 'failed', 'skipped'])
+    expect(runs[1]!.error).toBe('boom')
+    expect(runs[1]!.state).toEqual({ screen: ['text "Oops"', 'button #ok "OK"'], route: { pathname: '/x' } })
+    expect(out.lines.filter((l) => l.includes('restore'))).toHaveLength(2)
+    expect(out.lines).toContain('   FAILED: boom')
+    const all = await runFlows(bridge, entries, quiet())
+    expect(all.map((r) => r.status)).toEqual(['passed', 'failed', 'passed'])
+  })
+
+  test('reporters', () => {
+    const runs = [
+      { file: 'a.flow.mjs', name: 'a', status: 'passed', ms: 10, steps: 1, errors: 0, restoreErrors: [], notices: [] },
+      { file: 'b.flow.mjs', name: 'b<>', status: 'failed', ms: 20, steps: 1, errors: 0, error: 'bad "x"', state: { screen: ['text "Hi"'] }, restoreErrors: [], notices: [] },
+    ] as import('../flow').FlowRun[]
+    expect(JSON.parse(renderJson(runs))).toMatchObject({ passed: 1, failed: 1, skipped: 0 })
+    const xml = renderJunit(runs)
+    expect(xml).toContain('tests="2" failures="1"')
+    expect(xml).toContain('name="b&#60;&#62;"')
+    expect(xml).toContain('<failure message="bad &#34;x&#34;">')
+    expect(xml).toContain('text &#34;Hi&#34;')
   })
 })
