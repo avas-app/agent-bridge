@@ -258,6 +258,44 @@ export function actionNamesOf(p: Props): string[] | null {
 /** Screen readers send `activate` on a double tap: a swipe-to-confirm with no onPress. */
 const activates = (rec: Found) => !!rec.actions && !!rec.element.actions?.includes('activate')
 
+const TEXT_HOSTS = /^RCT(Virtual)?Text$/
+
+const isControl = (p: Props) => isFn(p.onPress) || isFn(p.onValueChange) || activatesProps(p)
+const activatesProps = (p: Props) => !!actionNamesOf(p)?.includes('activate')
+
+/**
+ * Whether the control wraps an input, or two or more other controls (a card
+ * has at most one action). The control's own wrapper chain (Button over
+ * Pressable over View) counts once, and so does each nested control's; inline
+ * `<Text onPress>` links don't count.
+ */
+function wrapsControls(rec: Rec): boolean {
+  const skip = new Set<Fiber>()
+  const markChain = (from: Fiber) => {
+    for (let f: Fiber | null = from; f; f = f.child) {
+      skip.add(f)
+      if (f.tag === HOST_COMPONENT) break
+    }
+  }
+  markChain(rec.fiber)
+  let controls = 0
+  const stack = rec.fiber.child ? [rec.fiber.child] : []
+  while (stack.length) {
+    const f = stack.pop() as Fiber
+    if (f.sibling) stack.push(f.sibling)
+    if (f.child) stack.push(f.child)
+    const p = propsOf(f)
+    if (!p || skip.has(f)) continue
+    if (isInputProps(p)) return true
+    if (!isControl(p)) continue
+    const own = firstHost(f)
+    if (isFn(p.onPress) && !isFn(p.onValueChange) && own && TEXT_HOSTS.test(String(own.type))) continue
+    markChain(f)
+    if (++controls >= 2) return true
+  }
+  return false
+}
+
 const interesting = (p: Props) =>
   isFn(p.onPress) ||
   actionNamesOf(p) !== null ||
@@ -493,8 +531,16 @@ export function collectScreen(
   }
 
   // Buttons own the text beneath them; inputs don't (a field's label stays text).
+  // A pressable that wraps inputs or other controls is a layout wrapper (tap to
+  // dismiss the keyboard), not a button: its loose text stays text.
+  const wrapper = new Map<Rec, boolean>()
   const buttonOf = (rec: Rec | null) => {
-    for (let r = rec; r; r = r.parent) if (r.press || activates(r)) return r
+    for (let r = rec; r; r = r.parent)
+      if (r.press || activates(r)) {
+        let wraps = wrapper.get(r)
+        if (wraps === undefined) wrapper.set(r, (wraps = wrapsControls(r)))
+        return wraps ? null : r
+      }
     return null
   }
 
@@ -660,14 +706,18 @@ export type PressVia = 'onPress' | 'accessibilityAction'
  * The fiber `press` should call and how: the element's own `onPress`, else its
  * `activate` accessibility action, else the nearest ancestor with either.
  */
-export function pressFiberOf(found: Found): { fiber: Fiber; via: PressVia } | null {
-  if (found.press) return { fiber: found.press, via: 'onPress' }
-  if (activates(found)) return { fiber: found.actions as Fiber, via: 'accessibilityAction' }
+export function pressFiberOf(
+  found: Found,
+): { fiber: Fiber; via: PressVia; ancestor: boolean } | null {
+  if (found.press) return { fiber: found.press, via: 'onPress', ancestor: false }
+  if (activates(found))
+    return { fiber: found.actions as Fiber, via: 'accessibilityAction', ancestor: false }
   for (let f = found.fiber.return; f; f = f.return) {
     const p = propsOf(f)
     if (!p) continue
-    if (isFn(p.onPress)) return { fiber: f, via: 'onPress' }
-    if (actionNamesOf(p)?.includes('activate')) return { fiber: f, via: 'accessibilityAction' }
+    if (isFn(p.onPress)) return { fiber: f, via: 'onPress', ancestor: true }
+    if (actionNamesOf(p)?.includes('activate'))
+      return { fiber: f, via: 'accessibilityAction', ancestor: true }
   }
   return null
 }

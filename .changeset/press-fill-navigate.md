@@ -1,0 +1,5 @@
+---
+"@avasapp/agent-bridge": minor
+---
+
+`screen.press` no longer treats a pressable that wraps an input or two or more other controls (a tap-to-dismiss-keyboard screen, a modal backdrop around Cancel and OK) as one big button holding all the text under it. A button built from wrapper components, a card with one icon button, and a row with inline text links keep their text. When the handler it called belongs to an ancestor, the reply says `via: "ancestor"`. `screen.fill` now works on uncontrolled inputs (including Fabric and `value: undefined`), fires `onEndEditing`, clears with `""`, and takes `{type:true}` to type one character at a time, waiting for a render after each, with `"\n"` as the Enter key. For an uncontrolled input the reply's `element.value` is what was written, and it carries a `warning` if the text could not be written natively. `router.navigate`, `push` and `replace` now return the route the app ended on (an object, not the href string) once the screen has rendered, throw on `+not-found`, and warn when the path or query is not the href's, or when the navigation container has not mounted.
