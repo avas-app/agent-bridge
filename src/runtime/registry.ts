@@ -31,9 +31,11 @@ export function createRegistry(
     call: CallMessage,
     from: string,
   ): Promise<ResultMessage> {
-    const end = logs?.begin(call.tool)
+    // The client's health ping and pending check must not take errors meant for the next real call.
+    const quiet = call.tool === 'bridge.ping' || call.tool === 'bridge.pending'
+    const end = quiet ? undefined : logs?.begin(call.tool)
     const result = await run(call, from).finally(end)
-    const errors = logs?.takeErrors()
+    const errors = quiet ? undefined : logs?.takeErrors()
     const stamped = loadId ? { ...result, loadId, ...pending(), ...journal() } : result
     return errors?.length ? { ...stamped, logs: errors } : stamped
   }

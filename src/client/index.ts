@@ -1,5 +1,6 @@
 import type { DeviceInfo, LogEntry, ToolInfo } from '../shared/protocol'
 import type { TransportName } from './connection'
+import { callTimeout } from './call-timeout'
 import { listCdpTargets, metroHost } from './discover'
 import { listExpoDevices } from './expo'
 import { explainConnectError } from './metro-hint'
@@ -12,7 +13,7 @@ export type ConnectOptions = {
   device?: string
   /** "auto" tries Expo's socket first and falls back to CDP. */
   transport?: 'auto' | TransportName
-  /** Per-call timeout. Default 10 s. */
+  /** Per-call timeout. Default 10 s; stretched when a call's own `timeoutMs` argument is longer. */
   timeoutMs?: number
 }
 
@@ -66,7 +67,7 @@ export async function connect(
     ...args: unknown[]
   ): Promise<Timed<T>> => {
     const t0 = performance.now()
-    const result = await conn.call(tool, args, timeoutMs)
+    const result = await conn.call(tool, args, callTimeout(timeoutMs, tool, args))
     const ms = performance.now() - t0
     const logs = result.logs ?? []
     if (!result.ok) throw new AgentBridgeCallError(tool, result.error, logs)
