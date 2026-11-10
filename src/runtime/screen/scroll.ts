@@ -309,3 +309,17 @@ export function mainScrollable(
     )
   return best.s
 }
+
+/** A FlatList, SectionList or FlashList: it renders only the rows near its window. */
+export const isVirtualized = (s: Scrollable) =>
+  s.fibers.some((f) => typeof propsOf(f)?.renderItem === 'function')
+
+/** The scrollables on screen a user could page through for a row, largest first. */
+export function virtualLists(scrollables: Scrollable[], window: Window): Scrollable[] {
+  return scrollables
+    .filter((s) => !s.hidden && scrollEnabled(s) && isVirtualized(s))
+    .map((s) => ({ s, rect: measureHost(s.host) }))
+    .filter(({ rect }) => onWindow(rect, window))
+    .sort((a, b) => area(b.rect) - area(a.rect))
+    .map(({ s }) => s)
+}

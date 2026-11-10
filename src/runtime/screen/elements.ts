@@ -48,6 +48,8 @@ export type Found = {
   press: Fiber | null
   /** Outermost fiber with text-input handlers, when the element is an input. */
   input: Fiber | null
+  /** Outermost fiber with `onValueChange`: a Switch, Slider, Picker or SegmentedControl. */
+  change: Fiber | null
   /** Outermost fiber with `onAccessibilityAction`, when it names `accessibilityActions`. */
   actions: Fiber | null
   maxLength?: number
@@ -324,6 +326,7 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
   const e = rec.element
   if (!rec.input && isInputProps(p)) rec.input = fiber
   if (!rec.press && isFn(p.onPress)) rec.press = fiber
+  if (!rec.change && isFn(p.onValueChange)) rec.change = fiber
   const actions = actionNamesOf(p)
   if (!rec.actions && actions) {
     rec.actions = fiber
@@ -516,6 +519,7 @@ export function collectScreen(
       host,
       press: null,
       input: null,
+      change: null,
       actions: null,
       hidden,
       scroller,

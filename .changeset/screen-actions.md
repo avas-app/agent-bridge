@@ -1,0 +1,5 @@
+---
+"@avasapp/agent-bridge": minor
+---
+
+New `screen.setValue(target, value)` sets a Switch, Slider, Picker or SegmentedControl by calling its `onValueChange` (and a Slider's `onSlidingComplete`) with a value of the right type, and returns the value the app shows once it has rendered, with a warning when the app did not take it. A wrong type, a number outside the slider's range or a Picker value that is not one of its items is an error that lists the options. `screen.press` on a Switch now toggles it with `onValueChange(!value)` instead of pressing the row around it (the reply says `via: "onValueChange"`). `screen.press(target, {long:true})` long presses, calling `onPressIn`, `onLongPress` and `onPressOut`, and errors when there is no `onLongPress`. `{scroll:true}` on `screen.press`, `screen.fill`, `screen.setValue` and `screen.waitFor` now pages a `FlatList`, `SectionList` or `FlashList` for a row it has not rendered yet (up to 40 pages or 3 seconds), and the error says how far it got. Pressing something inside a react-native-gesture-handler `GestureDetector` fails with a message saying its callbacks run on the UI thread and cannot be called from here.
