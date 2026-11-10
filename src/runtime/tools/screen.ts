@@ -41,7 +41,7 @@ export function screenTools(): Tools {
     },
     'screen.press': {
       description:
-        `Press a button, then wait for the render. ${TARGET_HELP} Text with no handler of its own presses the nearest ancestor that has one, and the reply says via:"ancestor". Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap. {scroll:true} scrolls an off-screen target into view first. With no onPress it sends the "activate" accessibility action, as a screen reader's double tap does (swipe-to-confirm buttons, sliders), and the reply says via:"accessibilityAction:activate". {action:"increment"} (or any name in the element's snapshot \`actions\`) sends that action instead. A Switch (anything with onValueChange and a boolean value) is toggled with onValueChange(!value), not the row around it; reply via:"onValueChange". {long:true} long presses: onPressIn, onLongPress, onPressOut (never onPress); an error when there is no onLongPress, on the element or an ancestor. {scroll:true} also pages a FlatList/SectionList/FlashList for a row it has not rendered yet. A react-native-gesture-handler GestureDetector cannot be pressed from here (its callbacks run on the UI thread): the error says so.`,
+        `Press a button, then wait for the render. ${TARGET_HELP} Text with no handler of its own presses the nearest ancestor that has one, and the reply says via:"ancestor". Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap. {scroll:true} scrolls an off-screen target into view first. With no onPress it sends the "activate" accessibility action, as a screen reader's double tap does (swipe-to-confirm buttons, sliders), and the reply says via:"accessibilityAction:activate". {action:"increment"} (or any name in the element's snapshot \`actions\`) sends that action instead. A Switch (native switch host or role switch, with onValueChange) is toggled with onValueChange(!value), not the row around it; reply via:"onValueChange". {long:true} long presses: onPressIn, onLongPress, onPressOut (never onPress); an error when there is no onLongPress, on the element or an ancestor. {scroll:true} also pages the largest vertical FlatList/SectionList/FlashList for a row it has not rendered yet (and scrolls back if it finds none; onEndReached may fire). A tap inside a react-native-gesture-handler GestureDetector cannot be pressed from here (its callbacks run on the UI thread): the error says so.`,
       run: (
         target: Target,
         options?: {
@@ -55,7 +55,7 @@ export function screenTools(): Tools {
     },
     'screen.setValue': {
       description:
-        `Set a Switch, Slider, Picker or SegmentedControl: calls its onValueChange (and a Slider's onSlidingComplete) with the value, waits for the render and reads the value back. A Switch takes true or false, a Slider a number within minimumValue and maximumValue, a Picker or SegmentedControl one of its items (a wrong type or value is an error that lists the options). The reply has \`value\` as the app now shows it, and a warning when that is not what was set (a controlled value the app refused). Disabled controls are refused; {force:true} sets anyway. {scroll:true} scrolls or pages the target into view first. ${TARGET_HELP}`,
+        `Set a Switch, Slider, Picker or SegmentedControl: calls its onValueChange (and a Slider's onSlidingComplete) with the value, waits for the render and reads the value back. A Switch takes true or false, a Slider a number within minimumValue and maximumValue (0 and 1 by default) and on its step (onSlidingStart, onValueChange, onSlidingComplete), a Picker one of its Picker.Item values, a SegmentedControl one of its values (a wrong type or value is an error that lists the options). The reply has \`value\` as the app now shows it, and a warning when that is not what was set (a controlled value the app refused). Disabled controls are refused; {force:true} sets anyway. {scroll:true} scrolls or pages the target into view first (pages the largest vertical list; onEndReached may fire). ${TARGET_HELP}`,
       run: (
         target: Target,
         value: unknown,
@@ -78,7 +78,7 @@ export function screenTools(): Tools {
     },
     'screen.waitFor': {
       description:
-        'Wait until a target is on screen, or gone with {gone:true}. Matches testID, label, placeholder, then the same joined text screen.snapshot shows. {scroll:true} also accepts a match rendered off screen and scrolls it into view, and pages FlatList/SectionList/FlashList rows that are not rendered yet (not with gone). Default timeout 5000 ms; a timeout lists near misses.',
+        'Wait until a target is on screen, or gone with {gone:true}. Matches testID, label, placeholder, then the same joined text screen.snapshot shows. {scroll:true} also accepts a match rendered off screen and scrolls it into view, (it does not page lists for rows they have not rendered: wait for the list, then press/fill/setValue with {scroll:true}; not with gone). Default timeout 5000 ms; a timeout lists near misses.',
       run: (target: Target, options?: { gone?: boolean; timeoutMs?: number; scroll?: boolean }) =>
         screen.waitFor(target, options),
     },

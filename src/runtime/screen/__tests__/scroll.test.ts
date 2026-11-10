@@ -357,9 +357,9 @@ describe('scroll arguments', () => {
     expect(list.state.offset).toBe(1400)
   })
 
-  test('a row that is not rendered says to scroll by or to the end first', async () => {
+  test('a row that is not rendered, with scroll:true and no list, says so', async () => {
     const list = scroller(VIEW, 2000, [{ at: 10, make: field('Row 1') }])
-    await expect(roots(list.fiber).press('Row 90', { scroll: true })).rejects.toThrow(/toEnd/)
+    await expect(roots(list.fiber).press('Row 90', { scroll: true })).rejects.toThrow(/found no FlatList/)
   })
 })
 

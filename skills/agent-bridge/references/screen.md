@@ -8,7 +8,7 @@ npx @avasapp/agent-bridge call screen.press '[{"at":[350,60]}]'          # icon-
 npx @avasapp/agent-bridge call screen.press '["save-plant", {"scroll":true}]'   # scrolls an off-screen target into view first
 npx @avasapp/agent-bridge call screen.press '"Swipe to confirm"'        # no onPress: sends the "activate" accessibility action
 npx @avasapp/agent-bridge call screen.press '["Volume", {"action":"increment"}]'   # any action in the element's snapshot `actions`
-npx @avasapp/agent-bridge call screen.press '["Item 80", {"scroll":true}]'   # a row a FlatList has not rendered yet: pages the list until it shows up
+npx @avasapp/agent-bridge call screen.press '["Item 80", {"scroll":true}]'   # a row a FlatList has not rendered yet: pages the main list until it shows up (waitFor does not page)
 npx @avasapp/agent-bridge call screen.press '["Message", {"long":true}]'   # onPressIn, onLongPress, onPressOut; errors when there is no onLongPress
 npx @avasapp/agent-bridge call screen.press '"dark-mode"'                  # a Switch is toggled with onValueChange(!value)
 npx @avasapp/agent-bridge call screen.setValue '["volume", 7]'             # Switch true/false, Slider number, Picker or SegmentedControl item; reads the value back

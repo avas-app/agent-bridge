@@ -1,7 +1,7 @@
 // Calls an element's handlers the way React Native would after a real tap or
 // keystroke, with minimal synthetic events (like Testing Library's fireEvent).
 import { type Fiber, type Rect } from '../find-text-core'
-import { actionFiberOf, type Found, pressFiberOf, propsOf } from './elements'
+import { actionFiberOf, firstHost, type Found, isSwitchFiber, pressFiberOf, propsOf } from './elements'
 import { describe } from './targets'
 
 type Handler = (...args: unknown[]) => unknown
@@ -134,7 +134,7 @@ const disabledProps = (fiber: Fiber) => {
 function refuseDisabled(found: Found, fiber: Fiber, force?: boolean) {
   if (!force && (found.element.disabled || disabledProps(fiber)))
     throw new Error(
-      `${describe(found.element)} is disabled; pass {"force":true} as the last argument to press anyway`,
+      `${describe(found.element)} is disabled; pass {"force":true} as the last argument to act on it anyway`,
     )
 }
 
@@ -146,39 +146,71 @@ function pressTargetOf(found: Found, action: string | undefined) {
 
 const isFn = (v: unknown) => typeof v === 'function'
 
-/** A Switch-like control with no onPress of its own: pressing it flips its value. */
+/** A Switch with no onPress of its own: pressing it flips its value (anything but `true` is off). */
 export const isToggle = (found: Found) =>
-  !found.press && !!found.change && typeof propsOf(found.change)?.value === 'boolean'
+  !found.press &&
+  !!found.change &&
+  isFn(propsOf(found.change)?.onValueChange) &&
+  isSwitchFiber(found.change)
 
-/** The fiber with `onLongPress`: the element's own (down its wrapper chain), else the nearest ancestor's. */
+const HOLD = ['onPress', 'onPressIn', 'onLongPress']
+
+/**
+ * The fiber with `onLongPress`: the element's own (down its wrapper chain), else
+ * the nearest ancestor's. A hold lands on the first fiber that handles presses,
+ * so the walk stops there: an inner Pressable shadows an outer onLongPress.
+ */
 export function longPressFiberOf(found: Found): { fiber: Fiber; ancestor: boolean } | null {
+  let handlesPress = false
   for (let f: Fiber | null = found.fiber; f; f = f.child) {
-    if (isFn(propsOf(f)?.onLongPress)) return { fiber: f, ancestor: false }
+    const p = propsOf(f)
+    if (isFn(p?.onLongPress)) return { fiber: f, ancestor: false }
+    if (p && HOLD.some((k) => isFn(p[k]))) handlesPress = true
     if (f === found.host) break
   }
-  for (let f = found.fiber.return; f; f = f.return)
-    if (isFn(propsOf(f)?.onLongPress)) return { fiber: f, ancestor: true }
+  if (handlesPress) return null
+  for (let f = found.fiber.return; f; f = f.return) {
+    const p = propsOf(f)
+    if (isFn(p?.onLongPress)) return { fiber: f, ancestor: true }
+    if (p && HOLD.some((k) => isFn(p[k]))) return null
+  }
   return null
 }
 
-// GestureDetector keeps its Gesture.Tap() callbacks as worklets that run on the UI thread.
-function insideGestureDetector(found: Found): boolean {
-  const has = (f: Fiber) => {
-    const g = propsOf(f)?.gesture as Record<string, unknown> | null | undefined
-    return !!g && typeof g === 'object' && ('handlers' in g || 'gestures' in g || 'handlerName' in g)
-  }
+const TAP_GESTURES = new Set(['TapGestureHandler', 'LongPressGestureHandler'])
+
+// react-native-gesture-handler: v2 keeps `gesture.handlerName` (a composed one, `gestures`),
+// v3's hook gestures `gesture.type`. Only taps and long presses stand in for a press.
+function isTapGesture(g: unknown): boolean {
+  if (!g || typeof g !== 'object') return false
+  const x = g as { handlerName?: unknown; type?: unknown; gestures?: unknown }
+  if (typeof x.handlerName === 'string' && TAP_GESTURES.has(x.handlerName)) return true
+  if (typeof x.type === 'string' && TAP_GESTURES.has(x.type)) return true
+  return Array.isArray(x.gestures) && x.gestures.some(isTapGesture)
+}
+
+/**
+ * Whether a tap GestureDetector sits between the element and the ancestor that
+ * would take the press (all the way up when `until` is null): that detector is
+ * what a real tap would hit, and its callbacks run on the UI thread.
+ */
+function tapDetectorBetween(found: Found, until: Fiber | null): boolean {
   for (let f: Fiber | null = found.fiber; f; f = f.child) {
-    if (has(f)) return true
+    if (isTapGesture(propsOf(f)?.gesture)) return true
     if (f === found.host) break
   }
-  for (let f = found.fiber.return; f; f = f.return) if (has(f)) return true
+  for (let f = found.fiber.return; f && f !== until; f = f.return) {
+    const p = propsOf(f)
+    if (isTapGesture(p?.gesture)) return true
+    if (!until && p && HOLD.some((k) => isFn(p[k]))) break
+  }
   return false
 }
 
-const gestureNote = (found: Found) =>
-  insideGestureDetector(found)
-    ? '; it is a react-native-gesture-handler GestureDetector, whose callbacks run on the UI thread and cannot be fired from JS, so use a real tap (agent-device)'
-    : ''
+const GESTURE_NOTE =
+  'it is inside a react-native-gesture-handler GestureDetector, whose callbacks run on the UI thread and cannot be fired from here, so use a real tap (agent-device)'
+
+const gestureNote = (found: Found) => (tapDetectorBetween(found, null) ? `; ${GESTURE_NOTE}` : '')
 
 /**
  * Presses the element, or the nearest ancestor that handles presses. With no
@@ -195,7 +227,7 @@ export function pressElement(
   if (action === undefined && isToggle(found)) {
     refuseDisabled(found, found.change as Fiber, options.force)
     const now = propsOf(found.change as Fiber)?.value
-    handler(found.change as Fiber, 'onValueChange')?.(!now)
+    handler(found.change as Fiber, 'onValueChange')?.(now !== true)
     return 'onValueChange'
   }
   const target = pressTargetOf(found, action)
@@ -209,6 +241,10 @@ export function pressElement(
     )
   }
   const { fiber, via, ancestor } = target
+  if (ancestor && action === undefined && tapDetectorBetween(found, fiber))
+    throw new Error(
+      `${describe(found.element)} has no onPress of its own, and ${GESTURE_NOTE}; pressing the ancestor that has one would do something else`,
+    )
   const from = ancestor ? 'ancestor:' : ''
   refuseDisabled(found, fiber, options.force)
   if (via === 'accessibilityAction') {
@@ -252,9 +288,22 @@ function longPress(found: Found, options: { force?: boolean; action?: string }):
 
 type Item = { value: unknown; label?: string }
 
-// Picker.Item children: elements with a label and a value.
+// The native Picker reads its items from `props.children` (React elements) and never
+// renders a Picker.Item of its own; an item is an element with a value and a label.
+function itemsOfChildren(children: unknown, out: Item[] = []): Item[] {
+  if (Array.isArray(children)) for (const c of children) itemsOfChildren(c, out)
+  else if (children && typeof children === 'object') {
+    const p = (children as { props?: Record<string, unknown> }).props
+    if (p && has(p.value) && typeof p.label === 'string') out.push({ value: p.value, label: p.label })
+    else if (p) itemsOfChildren(p.children, out)
+  }
+  return out
+}
+
+// Picker.Item children, else (the web build renders them) fibers with a label and a value.
 function pickerItems(fiber: Fiber): Item[] {
-  const items: Item[] = []
+  const items = itemsOfChildren(propsOf(fiber)?.children)
+  if (items.length) return items
   const stack = fiber.child ? [fiber.child] : []
   while (stack.length) {
     const f = stack.pop() as Fiber
@@ -264,6 +313,15 @@ function pickerItems(fiber: Fiber): Item[] {
     if (p && has(p.value) && typeof p.label === 'string') items.push({ value: p.value, label: p.label })
   }
   return items
+}
+
+/** A Slider (`@react-native-community/slider`): its own props or its native host say so. */
+export function isSlider(fiber: Fiber): boolean {
+  const p = propsOf(fiber) as Record<string, unknown>
+  if (['onSlidingStart', 'onSlidingComplete', 'minimumValue', 'maximumValue', 'step'].some((k) => k in p))
+    return true
+  const own = firstHost(fiber)
+  return !!own && /Slider/.test(String(own.type))
 }
 
 /** The value a Switch, Slider, Picker or SegmentedControl shows now. */
@@ -279,9 +337,10 @@ export function valueOf(found: Found): unknown {
 const list = (xs: unknown[]) => xs.map((x) => JSON.stringify(x)).join(', ')
 
 /**
- * Calls the control's `onValueChange` with a value of the type it holds (a
- * Slider's `onSlidingComplete` after it, a Picker's item index along with
- * it). Throws when the value does not fit the control.
+ * Calls the control's handlers with a value of the type it holds, in the order
+ * its native side does: a Slider's `onSlidingStart`, `onValueChange`, then
+ * `onSlidingComplete`; a SegmentedControl's `onChange` before `onValueChange`; a
+ * Picker's item index along with the value. Throws when the value does not fit.
  */
 export function setControlValue(found: Found, value: unknown, options: { force?: boolean } = {}): void {
   const fiber = found.change
@@ -290,39 +349,49 @@ export function setControlValue(found: Found, value: unknown, options: { force?:
     throw new Error(`${what} has no onValueChange (a Switch, Slider, Picker or SegmentedControl has one)`)
   refuseDisabled(found, fiber, options.force)
   const p = propsOf(fiber) as Record<string, unknown>
-  const current = valueOf(found)
-  const call = (...args: unknown[]) => handler(fiber, 'onValueChange')?.(...args)
-  if (typeof current === 'boolean') {
+  const call = (name: string, ...args: unknown[]) => handler(fiber, name)?.(...args)
+  if (isSwitchFiber(fiber)) {
     if (typeof value !== 'boolean') throw new Error(`${what} is a switch: pass true or false; got ${JSON.stringify(value)}`)
-    return void call(value)
+    return void call('onValueChange', value)
   }
-  const items = pickerItems(fiber)
   if (Array.isArray(p.values)) {
     if (!p.values.includes(value))
       throw new Error(`${what} takes one of ${list(p.values)}; got ${JSON.stringify(value)}`)
-    call(value)
-    handler(fiber, 'onChange')?.(
-      event({ value, selectedSegmentIndex: p.values.indexOf(value) }),
-    )
-    return
+    const selectedSegmentIndex = p.values.indexOf(value)
+    call('onChange', event({ value, selectedSegmentIndex }))
+    return void call('onValueChange', value)
   }
-  if (items.length) {
+  const items = pickerItems(fiber)
+  if (items.length || 'selectedValue' in p) {
     const index = items.findIndex((i) => i.value === value)
+    if (!items.length) throw new Error(`${what} is a picker but no Picker.Item children could be read`)
     if (index < 0)
       throw new Error(`${what} takes one of ${list(items.map((i) => i.value))}; got ${JSON.stringify(value)}`)
-    return void call(value, index)
+    return void call('onValueChange', value, index)
   }
-  const { minimumValue: min, maximumValue: max } = p
-  if (typeof current === 'number' || typeof min === 'number' || typeof max === 'number') {
+  const current = valueOf(found)
+  if (isSlider(fiber) || typeof current === 'number') {
     if (typeof value !== 'number' || !Number.isFinite(value))
       throw new Error(`${what} takes a number; got ${JSON.stringify(value)}`)
-    if ((typeof min === 'number' && value < min) || (typeof max === 'number' && value > max))
+    const slider = isSlider(fiber)
+    // The component defaults the range to 0..1 itself, so the fiber props can omit it.
+    const min = typeof p.minimumValue === 'number' ? p.minimumValue : slider ? 0 : undefined
+    const max = typeof p.maximumValue === 'number' ? p.maximumValue : slider ? 1 : undefined
+    if ((min !== undefined && value < min) || (max !== undefined && value > max))
       throw new Error(`${what} takes a number between ${min ?? '-∞'} and ${max ?? '∞'}; got ${value}`)
-    call(value)
-    handler(fiber, 'onSlidingComplete')?.(value)
-    return
+    const step = p.step
+    if (typeof step === 'number' && step > 0) {
+      const n = (value - (min ?? 0)) / step
+      if (Math.abs(n - Math.round(n)) > 1e-6) {
+        const lo = (min ?? 0) + Math.floor(n) * step
+        throw new Error(`${what} moves in steps of ${step}; got ${value} (nearest: ${lo}, ${lo + step})`)
+      }
+    }
+    call('onSlidingStart', value)
+    call('onValueChange', value)
+    return void call('onSlidingComplete', value)
   }
   if (typeof current === 'string' && typeof value !== 'string')
     throw new Error(`${what} takes a string; got ${JSON.stringify(value)}`)
-  call(value)
+  call('onValueChange', value)
 }

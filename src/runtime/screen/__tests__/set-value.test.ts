@@ -17,13 +17,38 @@ function setup() {
     },
     onSlidingComplete: (v: number) => calls.push(['complete', v]),
   }
+  const item = (label: string, value: string) => ({ type: 'PickerItem', props: { label, value } })
   const size: Record<string, unknown> = {
     testID: 'size',
-    value: 'm',
+    selectedValue: 'm',
+    // Picker.Item is never rendered: the native picker reads these elements.
+    children: [item('Small', 's'), item('Medium', 'm'), item('Large', 'l')],
     onValueChange: (v: string, i: number) => {
       calls.push(['size', v, i])
-      size.value = v
+      size.selectedValue = v
     },
+  }
+  // @react-native-community/slider: minimumValue/maximumValue default to 0 and 1 inside the component.
+  const unit: Record<string, unknown> = {
+    testID: 'unit',
+    onSlidingComplete: (v: number) => calls.push(['unit-complete', v]),
+    onSlidingStart: (v: number) => calls.push(['unit-start', v]),
+  }
+  const stepped: Record<string, unknown> = {
+    testID: 'stepped',
+    value: 20,
+    minimumValue: 0,
+    maximumValue: 100,
+    step: 10,
+    onValueChange: (v: number) => calls.push(['stepped', v]),
+  }
+  // @react-native-segmented-control: the README's onChange with nativeEvent, no onValueChange.
+  const mode: Record<string, unknown> = {
+    testID: 'mode',
+    values: ['Day', 'Night'],
+    selectedIndex: 0,
+    onChange: (e: { nativeEvent: { selectedSegmentIndex: number } }) =>
+      calls.push(['mode', e.nativeEvent.selectedSegmentIndex]),
   }
   const root = tree(
     host(),
@@ -42,13 +67,16 @@ function setup() {
       ),
     ),
     tree(composite(volume), host({})),
-    tree(
-      composite(size),
+    tree(composite(size), host({})),
+    tree(composite(unit), { ...host({}), type: 'RNCSlider' }),
+    tree(composite(stepped), { ...host({}), type: 'RNCSlider' }),
+    tree(composite(mode), host({})),
+    // A Switch still loading its value, inside a row with an onPress.
+    pressable(
+      { onPress: () => calls.push(['wifi-row']), testID: 'wifi-row' },
       tree(
-        host({}),
-        composite({ label: 'Small', value: 's' }),
-        composite({ label: 'Medium', value: 'm' }),
-        composite({ label: 'Large', value: 'l' }),
+        composite({ testID: 'wifi', onValueChange: (v: boolean) => calls.push(['wifi', v]) }),
+        { ...host({}), type: 'RCTSwitch' },
       ),
     ),
     tree(composite({ testID: 'locked', value: 1, disabled: true, onValueChange: () => calls.push(['locked']) }), host({})),
@@ -99,6 +127,46 @@ describe('setValue', () => {
   })
 })
 
+describe('setValue on the real components\' shapes', () => {
+  test('a picker reads its items from children, and the index goes along', async () => {
+    const { screen, calls } = setup()
+    await screen.setValue('size', 'l')
+    expect(calls).toEqual([['size', 'l', 2]])
+    await expect(screen.setValue('size', 5)).rejects.toThrow(/one of "s", "m", "l"/)
+  })
+
+  test('a slider with only onSlidingComplete defaults to 0..1, and calls start, change, complete', async () => {
+    const { screen, calls } = setup()
+    await expect(screen.setValue('unit', 50)).rejects.toThrow(/between 0 and 1/)
+    await expect(screen.setValue('unit', 'x')).rejects.toThrow(/number/)
+    const result = await screen.setValue('unit', 0.5)
+    expect(calls).toEqual([['unit-start', 0.5], ['unit-complete', 0.5]])
+    expect(result.warning).toBeUndefined()
+  })
+
+  test('a slider step is enforced, and a slider never warns that its value is only a start value', async () => {
+    const { screen, calls } = setup()
+    await expect(screen.setValue('stepped', 25)).rejects.toThrow(/steps of 10.*nearest: 20, 30/)
+    const result = await screen.setValue('stepped', 30)
+    expect(calls).toEqual([['stepped', 30]])
+    expect(result.warning).toBeUndefined()
+  })
+
+  test('a segmented control with only onChange gets the nativeEvent', async () => {
+    const { screen, calls } = setup()
+    await screen.setValue('mode', 'Night')
+    expect(calls).toEqual([['mode', 1]])
+    await expect(screen.setValue('mode', 'Dusk')).rejects.toThrow(/one of "Day", "Night"/)
+  })
+
+  test('a switch with no value yet is still a switch', async () => {
+    const { screen, calls } = setup()
+    await expect(screen.setValue('wifi', 'yes')).rejects.toThrow(/true or false/)
+    expect(await screen.press('wifi')).toMatchObject({ via: 'onValueChange' })
+    expect(calls).toEqual([['wifi', true]])
+  })
+})
+
 describe('press on a switch', () => {
   test('toggles it with onValueChange(!value) instead of pressing the row', async () => {
     const { screen, calls } = setup()
@@ -136,6 +204,20 @@ describe('long press', () => {
     expect(calls).toEqual(['menu'])
   })
 
+  test('an inner Pressable with no onLongPress shadows an outer onLongPress', async () => {
+    const calls: string[] = []
+    const root = tree(
+      host(),
+      tree(
+        composite({ onLongPress: () => calls.push('outer') }),
+        pressable({ onPress: () => calls.push('inner') }, rnText('Inside')),
+      ),
+    )
+    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
+    await expect(screen.press('Inside', { long: true })).rejects.toThrow(/no onLongPress/)
+    expect(calls).toEqual([])
+  })
+
   test('errors when there is no onLongPress, and with an accessibility action', async () => {
     const { screen, calls } = build({})
     await expect(screen.press('Plain', { long: true })).rejects.toThrow(/no onLongPress/)
@@ -145,27 +227,70 @@ describe('long press', () => {
 })
 
 describe('gesture handler', () => {
-  test('press names the reason when the control is a GestureDetector', async () => {
-    const gesture = { handlerName: 'TapGestureHandler', handlers: { onEnd: () => {} } }
-    const root = tree(host(), tree(composite({ gesture, testID: 'tap' }), host({ testID: 'tap' }, { x: 10, y: 10, width: 50, height: 50 })))
-    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
-    await expect(screen.press('tap')).rejects.toThrow(/react-native-gesture-handler.*UI thread/)
+  const tap = { handlerName: 'TapGestureHandler', handlers: { onEnd: () => {} }, config: {} }
+  const pan = { handlerName: 'PanGestureHandler', handlers: { onUpdate: () => {} }, config: {} }
+  const box = { x: 10, y: 10, width: 50, height: 50 }
+  const build = (inner: Fiber) => {
+    const calls: string[] = []
+    const root = tree(host(), inner)
+    return { calls, screen: createScreen({ roots: () => [root], window: () => WINDOW }) }
+  }
+
+  test('press names the reason when the control is inside a tap GestureDetector', async () => {
+    const { screen } = build(tree(composite({ gesture: tap }), tree(composite({ testID: 'tap' }), host({ testID: 'tap' }, box))))
+    await expect(screen.press('tap')).rejects.toThrow(/inside a react-native-gesture-handler GestureDetector.*UI thread/)
+  })
+
+  test('v3 hook gestures (type) and composed gestures count too', async () => {
+    const v3 = build(tree(composite({ gesture: { type: 'LongPressGestureHandler', config: {} } }), host({ testID: 'v3' }, box)))
+    await expect(v3.screen.press('v3')).rejects.toThrow(/GestureDetector/)
+    const composed = build(tree(composite({ gesture: { gestures: [pan, tap] } }), host({ testID: 'c' }, box)))
+    await expect(composed.screen.press('c')).rejects.toThrow(/GestureDetector/)
+  })
+
+  test('a pan detector (drawer, swipeable) around the screen is not blamed', async () => {
+    const { screen } = build(tree(composite({ gesture: pan }), host({ testID: 'plain' }, box)))
+    await expect(screen.press('plain')).rejects.toThrow(/^(?!.*GestureDetector)/)
+  })
+
+  test('a tap detector between the element and a Pressable row stops the press falling to the row', async () => {
+    const { screen, calls } = build(
+      pressable(
+        { onPress: () => calls.push('row'), testID: 'row' },
+        tree(composite({ gesture: tap }), tree(composite({ testID: 'inner' }), host({ testID: 'inner' }, box))),
+      ),
+    )
+    await expect(screen.press('inner')).rejects.toThrow(/GestureDetector.*ancestor/)
+    expect(calls).toEqual([])
+  })
+
+  test('a detector above the row it is not between is ignored', async () => {
+    const { screen, calls } = build(
+      tree(composite({ gesture: tap }), pressable({ onPress: () => calls.push('row'), testID: 'row' }, rnText('Row'))),
+    )
+    await screen.press('Row')
+    expect(calls).toEqual(['row'])
   })
 })
 
 // A FlatList: only rows near the window are rendered, so rows move in and out as it scrolls.
+// With `lag`, rows follow the offset 60 ms after scrollTo and the content only grows as rows
+// render (no getItemLayout), as a real VirtualizedList does after onScroll.
 describe('scroll:true on a list that has not rendered the row', () => {
-  function list(rows = 100) {
-    const state = { offset: 0, scrolls: [] as number[] }
+  function list(rows = 100, lag = false, extra: Fiber[] = []) {
+    const state = { offset: 0, shown: 0, grown: 0, scrolls: [] as number[] }
+    const total = () => (lag ? Math.max(state.grown, 640) : rows * 40)
     const view = { getBoundingClientRect: (): Rect => ({ x: 0, y: 100, width: 400, height: 600 }), checkVisibility: () => true }
     const content = {
-      getBoundingClientRect: (): Rect => ({ x: 0, y: 100 - state.offset, width: 400, height: rows * 40 }),
+      getBoundingClientRect: (): Rect => ({ x: 0, y: 100 - state.offset, width: 400, height: total() }),
       checkVisibility: () => true,
     }
     const scrollView = {
       scrollTo: (o: { y: number }) => {
         state.scrolls.push(o.y)
-        state.offset = Math.max(0, Math.min(rows * 40 - 600, o.y))
+        state.offset = Math.max(0, Math.min(total() - 600, o.y))
+        if (lag) setTimeout(() => (state.shown = state.offset), 60)
+        else state.shown = state.offset
       },
     }
     const cache = new Map<number, Fiber>()
@@ -173,7 +298,8 @@ describe('scroll:true on a list that has not rendered the row', () => {
       const items: Fiber[] = []
       for (let i = 0; i < rows; i++) {
         const top = i * 40
-        if (top + 40 < state.offset - 80 || top > state.offset + 680) continue
+        if (top + 40 < state.shown - 80 || top > state.shown + 680) continue
+        state.grown = Math.max(state.grown, top + 40)
         let row = cache.get(i)
         if (!row) {
           // Rendered rows keep their fibers, as in React.
@@ -197,6 +323,7 @@ describe('scroll:true on a list that has not rendered the row', () => {
           { ...composite({ testID: 'list', renderItem: () => null, data: [] }), tag: 1, stateNode: { scrollToOffset: () => {} } },
           tree(inner, tree(viewHost, tree(contentHost, ...items))),
         ),
+        ...extra,
       )
     }
     return { state, screen: createScreen({ roots: () => [build()], window: () => WINDOW }) }
@@ -214,19 +341,61 @@ describe('scroll:true on a list that has not rendered the row', () => {
     expect(state.scrolls.length).toBeGreaterThan(1)
   })
 
-  test('finds a row above the current position too', async () => {
+  test('finds a row above the current position first, in few pages', async () => {
     const { screen, state } = list()
-    state.offset = 3000
-    expect(await screen.press('Row 3', { scroll: true })).toMatchObject({ testID: 'row-3' })
+    state.offset = state.shown = 3000
+    expect(await screen.press('row-3', { scroll: true })).toMatchObject({ testID: 'row-3' })
+    expect(state.scrolls.length).toBeLessThanOrEqual(9)
   })
 
-  test('fails with how far it got when the row does not exist', async () => {
-    const { screen } = list(30)
-    await expect(screen.press('Row 99', { scroll: true })).rejects.toThrow(/Nothing on screen matches.*paged.*#list.*offset 600 of 600/)
+  test('rows that render after the offset lands, in a list whose content grows as it renders', async () => {
+    const { screen } = list(100, true)
+    expect(await screen.press('Row 30', { scroll: true })).toMatchObject({ testID: 'row-30' })
   })
 
-  test('waitFor with scroll pages too', async () => {
+  test('a row that does not exist leaves the list where it started and says how far it got', async () => {
+    const { screen, state } = list(30)
+    state.offset = state.shown = 200
+    await expect(screen.press('Row 99', { scroll: true })).rejects.toThrow(
+      /Nothing on screen matches.*paged.*#list.*down to offset 600 of 600.*scrolled back to offset 200/,
+    )
+    expect(state.offset).toBe(200)
+    expect(state.scrolls.at(-1)).toBe(200)
+  })
+
+  test('only one list is paged: a horizontal carousel is left alone', async () => {
+    const calls: number[] = []
+    const carousel = tree(
+      { ...composite({ testID: 'carousel', horizontal: true, renderItem: () => null }), tag: 1, stateNode: { scrollTo: (o: { x: number }) => calls.push(o.x) } },
+      host({}, { x: 0, y: 0, width: 400, height: 90 }),
+    )
+    const { screen } = list(30, false, [carousel])
+    await expect(screen.press('Row 99', { scroll: true })).rejects.toThrow(/Not paged: .*carousel/)
+    expect(calls).toEqual([])
+  })
+
+  test('with {index} it pages until that many matches have rendered', async () => {
     const { screen } = list()
-    expect(await screen.waitFor('Row 70', { scroll: true })).toMatchObject({ element: { testID: 'row-70' } })
+    const result = await screen.press({ text: 'ow 5', index: 3 }, { scroll: true })
+    expect(result.testID).toMatch(/^row-5\d$/)
+  })
+
+  test('a point target cannot be scrolled to', async () => {
+    const { screen, state } = list()
+    await expect(screen.press({ at: [10, 10] }, { scroll: true })).rejects.toThrow(/point on the screen/)
+    expect(state.scrolls).toEqual([])
+  })
+
+  test('with no list on screen it says so', async () => {
+    const root = tree(host(), pressable({ onPress: () => {} }, rnText('Only')))
+    const screen = createScreen({ roots: () => [root], window: () => WINDOW })
+    await expect(screen.press('Row 9', { scroll: true })).rejects.toThrow(/found no FlatList, SectionList or FlashList/)
+  })
+
+  test('waitFor does not page, and says what to do instead', async () => {
+    const { screen } = list()
+    await expect(screen.waitFor('Row 70', { scroll: true, timeoutMs: 200 })).rejects.toThrow(
+      /waitFor does not page lists.*press, fill or setValue/,
+    )
   })
 })

@@ -3,6 +3,7 @@
 import type { Fiber } from '../find-text-core'
 import {
   fillInput,
+  isSlider,
   isToggle,
   longPressFiberOf,
   pressElement,
@@ -19,6 +20,7 @@ import {
 } from './elements'
 import { findText, type FindTextOptions } from './find-text'
 import {
+  awaitRows,
   awaitScroll,
   draggable,
   isHorizontal,
@@ -32,11 +34,11 @@ import {
   scrollerFor,
   scrollToEnd,
   scrollToOffset,
-  virtualLists,
+  pagingList,
   wait,
 } from './scroll'
 import { settle } from './settle'
-import { describe, matchTarget, resolveTarget, type Target } from './targets'
+import { describe, indexOf, matchTarget, resolveTarget, type Target } from './targets'
 import { type WaitForOptions, waitForTarget } from './wait-for'
 
 export type { ScreenElement } from './elements'
@@ -131,65 +133,118 @@ export function createScreen(env: {
     )
   }
 
-  // Pages one list a viewport at a time (down from where it is, then from the
-  // top back to where it was) until the target renders, a page limit or the deadline.
+  // Whether the target has rendered (the `index`th match, when one is asked for).
+  const rendered = (target: Target, index?: number) => () =>
+    matchTarget(collect().filter((f) => !f.hidden), target).length > (indexOf(target) ?? index ?? 0)
+
+  const nameOf = (host: Fiber) => {
+    const el = collectAll().found.find((f) => f.host === host || f.host.stateNode === host.stateNode)
+    return el ? describe(el.element) : 'the list'
+  }
+
+  // Pages one list from where it is, outward in both directions (the nearer end first),
+  // until the target renders, both ends are reached, or the budget is spent. A list that
+  // does not have it is scrolled back to where it was; one that does is left in place.
   const pageList = async (
     first: Scrollable,
+    skipped: Scrollable[],
     has: () => boolean,
-    deadline: number,
   ): Promise<{ found: boolean; note: string }> => {
     const { host } = first
-    const start = metricsOf(first)
-    const name = () => {
-      const el = collectAll().found.find((f) => f.host === host || f.host.stateNode === host.stateNode)
-      return el ? describe(el.element) : 'the list'
-    }
-    if (!start) return { found: false, note: `${name()} has no readable scroll position` }
-    const size = Math.max(
-      1,
-      ((isHorizontal(first) ? start.view?.width : start.view?.height) ?? 400) * 0.9,
-    )
+    const name = nameOf(host)
+    const first0 = metricsOf(first)
+    if (!first0) return { found: false, note: `${name} has no readable scroll position` }
+    const start: Metrics = first0
+    const size = Math.max(1, ((isHorizontal(first) ? start.view?.width : start.view?.height) ?? 400) * 0.9)
+    const deadline = performance.now() + PAGE_MS
     let pages = 0
-    let last: Metrics = start
+    let lowest = start.offset
+    let highest = start.offset
+    let max = start.max
+    let stop = 'both ends'
+    const readRows = () => {
+      const now = scrollableAgain(host)
+      const rows = collectAll().found.filter((f) => {
+        if (!f.onScreen) return false
+        for (let x = f.scroller; x; x = x.parent) if (x.host === host) return true
+        return false
+      }).length
+      return { metrics: now ? metricsOf(now) : null, rows }
+    }
     const go = async (offset: number) => {
       const now = scrollableAgain(host)
       if (!now) return false
-      last = (await scrolled(now, () => (scrollToOffset(now, offset), offset))) ?? last
+      await scrolled(now, () => (scrollToOffset(now, offset), offset))
       pages++
+      const m = await awaitRows(readRows, has)
+      if (m) {
+        lowest = Math.min(lowest, m.offset)
+        highest = Math.max(highest, m.offset)
+        max = m.max
+      }
       return has()
     }
-    const room = () => pages < PAGE_LIMIT && Date.now() < deadline
-    const done = (found: boolean) => ({
-      found,
-      note: `scroll:true paged ${name()} through ${pages} page(s), to offset ${Math.round(last.offset)} of ${last.max == null ? '?' : Math.round(last.max)}${found ? '' : ', without finding it'}`,
-    })
-    while (room()) {
-      const now = scrollableAgain(host)
-      const m = now && metricsOf(now)
-      if (!m) break
-      const next = Math.min(m.max ?? Infinity, m.offset + size)
-      if (next - m.offset < 1) break
-      if (await go(next)) return done(true)
+    // One direction: true when the row rendered. A budget share ends it early.
+    const sweep = async (dir: 1 | -1, until: number, limit: number): Promise<boolean> => {
+      const from = pages
+      while (true) {
+        if (pages - from >= limit || performance.now() >= until) {
+          stop = pages >= PAGE_LIMIT ? `the ${PAGE_LIMIT}-page limit` : `the ${PAGE_MS} ms budget`
+          return false
+        }
+        const m = readRows().metrics
+        if (!m) return false
+        const next = dir === 1 ? Math.min(m.max ?? Infinity, m.offset + size) : Math.max(0, m.offset - size)
+        if (Math.abs(next - m.offset) < 1) {
+          // At the end: rows measured late (or onEndReached) may have grown the content.
+          const grown = await awaitRows(readRows, has, 400)
+          if (has()) return true
+          if (dir === 1 && grown && (grown.max ?? 0) - m.offset >= 1) continue
+          return false
+        }
+        if (await go(next)) return true
+      }
     }
-    if (pages < PAGE_LIMIT)
-      for (let at = 0; at < start.offset && room(); at += size)
-        if (await go(Math.min(at, start.offset))) return done(true)
-    return done(false)
+    let found = false
+    try {
+      const downFirst = start.max == null || start.max - start.offset <= start.offset
+      const order: (1 | -1)[] = downFirst ? [1, -1] : [-1, 1]
+      const now = performance.now()
+      for (const [i, dir] of order.entries()) {
+        const share = i === 0 ? now + PAGE_MS / 2 : deadline
+        const limit = i === 0 ? PAGE_LIMIT / 2 : PAGE_LIMIT - pages
+        // The second direction starts back at the start offset.
+        if (i === 1 && pages) await go(start.offset)
+        if (await sweep(dir, share, limit)) return (found = true), done()
+      }
+    } finally {
+      if (!found) {
+        const now = scrollableAgain(host)
+        if (now) {
+          await scrolled(now, () => (scrollToOffset(now, start.offset), start.offset))
+          await settle()
+        }
+      }
+    }
+    return done()
+    function done() {
+      const where = `up to offset ${Math.round(lowest)} and down to offset ${Math.round(highest)} of ${max == null ? '?' : Math.round(max)}`
+      const left = skipped.length ? `. Not paged: ${skipped.map((s) => nameOf(s.host)).join(', ')}` : ''
+      return {
+        found,
+        note: found
+          ? ''
+          : `{scroll:true} paged ${name} ${pages} page(s), ${where}, without rendering a match, then scrolled back to offset ${Math.round(start.offset)}. Stopped at: ${stop}${left}`,
+      }
+    }
   }
 
-  // For a target no rendered row matches: pages the virtualized lists on screen, looking for it.
-  const pageFor = async (target: Target): Promise<{ found: boolean; note: string }> => {
-    const has = () => matchTarget(collect().filter((f) => !f.hidden), target).length > 0
-    const lists = virtualLists(collectAll().scrollables, env.window())
-    if (!lists.length) return { found: false, note: '' }
-    const deadline = Date.now() + PAGE_MS
-    const notes: string[] = []
-    for (const list of lists) {
-      const result = await pageList(list, has, deadline)
-      notes.push(result.note)
-      if (result.found) return { found: true, note: notes.join('; ') }
-    }
-    return { found: false, note: notes.join('; ') }
+  // For a target no rendered row matches: pages the main virtualized list on screen, looking for it.
+  const pageFor = async (has: () => boolean): Promise<{ found: boolean; note: string }> => {
+    const { list, skipped } = pagingList(collectAll().scrollables, env.window())
+    if (!list)
+      return { found: false, note: '{scroll:true} found no FlatList, SectionList or FlashList on screen to page' }
+    return pageList(list, skipped, has)
   }
 
   // The element a target means, scrolled into view first when it is off
@@ -202,8 +257,13 @@ export function createScreen(env: {
     const pick = () =>
       resolveTarget(collect(), target, prefer, { ...options, offscreen: options.scroll })
     let note = ''
-    if (options.scroll && !matchTarget(collect(), target).length) {
-      const paged = await pageFor(target)
+    if (options.scroll && typeof target === 'object' && target.at !== undefined)
+      throw new Error(
+        '{at:[x,y]} is a point on the screen and can\'t be scrolled to; drop {scroll:true} or target by text or testID',
+      )
+    const has = rendered(target, options.index)
+    if (options.scroll && !has()) {
+      const paged = await pageFor(has)
       note = paged.note
       if (!paged.found) {
         try {
@@ -309,8 +369,9 @@ export function createScreen(env: {
       const again = reread(found)
       const now = valueOf(again)
       const result = { value: now, element: again.element }
-      // An uncontrolled control keeps no value prop to read back.
-      if (before !== undefined && now !== value)
+      // A Slider's `value` is often only its start value, and an uncontrolled control keeps none to read back.
+      const same = typeof now === 'number' && typeof value === 'number' ? Math.abs(now - value) < 1e-6 : now === value
+      if (before !== undefined && !same && !(found.change && isSlider(found.change)))
         return {
           ...result,
           warning: `the control still shows ${JSON.stringify(now)}; the app did not apply ${JSON.stringify(value)}`,
@@ -422,6 +483,6 @@ export function createScreen(env: {
     },
 
     waitFor: (target: Target, options?: WaitForOptions) =>
-      waitForTarget(collect, target, options, reveal, () => pageFor(target)),
+      waitForTarget(collect, target, options, reveal),
   }
 }

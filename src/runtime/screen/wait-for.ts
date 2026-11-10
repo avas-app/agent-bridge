@@ -14,6 +14,9 @@ export type WaitForResult = { ms: number; element?: ScreenElement }
 
 const POLL_MS = 50
 
+const NO_PAGING =
+  'waitFor does not page lists for rows they have not rendered; wait for the list, then use press, fill or setValue with {scroll:true}'
+
 function nearMissNote(found: Found[], target: Target): string {
   const text = typeof target === 'string' ? target : target.text
   const near = text ? nearMisses(found, text) : []
@@ -31,7 +34,6 @@ function nearMissNote(found: Found[], target: Target): string {
  * With `scroll`, a match that is rendered but off screen counts too, and is
  * passed to `reveal` to be scrolled into view. `gone` with `scroll` is refused:
  * scrolling can only move a match onto the screen, never make it go away.
- * With `scroll` and no match at first, `page` looks through the virtualized lists once.
  * Checks after every React commit and every 50 ms; throws after `timeoutMs`
  * (default 5000, under the client's 10 s call timeout).
  */
@@ -40,7 +42,6 @@ export function waitForTarget(
   target: Target,
   options: WaitForOptions = {},
   reveal?: (found: Found) => Promise<Found>,
-  page?: () => Promise<{ found: boolean; note: string }>,
 ): Promise<WaitForResult> {
   if (options.gone && options.scroll)
     return Promise.reject(
@@ -52,9 +53,6 @@ export function waitForTarget(
   return new Promise((resolve, reject) => {
     let queued = false
     let finished = false
-    let paging = false
-    let paged = false
-    let pageNote = ''
     const finish = () => {
       finished = true
       unsubscribe()
@@ -62,7 +60,7 @@ export function waitForTarget(
     }
     const check = () => {
       queued = false
-      if (finished || paging) return
+      if (finished) return
       try {
         const found = collect()
         const reachable = found.filter((f) => !f.hidden)
@@ -75,19 +73,6 @@ export function waitForTarget(
         if (hit && !hit.onScreen && reveal) {
           finish()
           reveal(hit).then((f) => resolve({ ms: ms(), element: f.element }), reject)
-        } else if (!hit && !options.gone && options.scroll && page && !paged) {
-          paged = paging = true
-          page().then(
-            (r) => {
-              pageNote = r.note
-              paging = false
-              check()
-            },
-            (error) => {
-              finish()
-              reject(error)
-            },
-          )
         } else if (options.gone ? !hit : hit) {
           finish()
           resolve(hit ? { ms: ms(), element: hit.element } : { ms: ms() })
@@ -96,7 +81,7 @@ export function waitForTarget(
           const what = options.gone ? 'to disappear' : 'to appear'
           reject(
             new Error(
-              `Timed out after ${timeoutMs} ms waiting for ${showTarget(target)} ${what}. On screen: ${onScreenSummary(found)}${nearMissNote(found, target)}${pageNote ? `. ${pageNote}` : ''}`,
+              `Timed out after ${timeoutMs} ms waiting for ${showTarget(target)} ${what}. On screen: ${onScreenSummary(found)}${nearMissNote(found, target)}${options.scroll && !options.gone ? `. ${NO_PAGING}` : ''}`,
             ),
           )
         }
