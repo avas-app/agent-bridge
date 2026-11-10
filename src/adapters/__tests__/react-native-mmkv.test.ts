@@ -53,3 +53,78 @@ describe('mmkvTools', () => {
     expect(run(mmkvTools({ storage }), 'mmkv.restore')).toBe(0)
   })
 })
+
+describe('mmkv journal', () => {
+  const journalOf = (tools: Tools) => (tools['mmkv.restore'] as { journal: () => unknown }).journal()
+  const adopt = (tools: Tools, data: unknown) =>
+    (tools['mmkv.restore'] as { adopt: (d: unknown) => unknown }).adopt(data)
+
+  test('journals string writes and deletes, and a reload adopts them so restore undoes them', () => {
+    const storage = fakeMmkv('remove')
+    storage.data.set('token', 'real')
+    storage.data.set('gone', 'x')
+    const tools = mmkvTools({ storage })
+    run(tools, 'mmkv.set', 'storage', 'token', 'fake')
+    run(tools, 'mmkv.set', 'storage', 'fresh', 'new')
+    run(tools, 'mmkv.delete', 'storage', 'gone')
+    const journal = journalOf(tools)
+    expect(journal).toEqual({
+      storage: {
+        token: { original: 'real', written: 'fake' },
+        fresh: { original: null, written: 'new' },
+        gone: { original: 'x', written: null },
+      },
+    })
+    // A reload: same storage, new instance objects, so no in-memory undo state.
+    const reloaded = mmkvTools({ storage: { ...storage } })
+    const pendingBefore = (reloaded['mmkv.restore'] as { pending: () => unknown }).pending()
+    expect(pendingBefore).toBe(false)
+    const result = adopt(reloaded, journal) as { adopted: string[] }
+    expect(result.adopted.sort()).toEqual(['storage:fresh', 'storage:gone', 'storage:token'])
+    expect(storage.data.get('token')).toBe('fake')
+    run(reloaded, 'mmkv.restore')
+    expect(storage.data.get('token')).toBe('real')
+    expect(storage.data.has('fresh')).toBe(false)
+    expect(storage.data.get('gone')).toBe('x')
+  })
+
+  test('leaves a key the app changed since, and a key already back to its original', () => {
+    const storage = fakeMmkv('remove')
+    storage.data.set('a', 'real-a')
+    storage.data.set('b', 'real-b')
+    const tools = mmkvTools({ storage })
+    run(tools, 'mmkv.set', 'storage', 'a', 'fake-a')
+    run(tools, 'mmkv.set', 'storage', 'b', 'fake-b')
+    const journal = journalOf(tools)
+    storage.data.set('a', 'app-wrote-this')
+    storage.data.set('b', 'real-b')
+    const reloaded = mmkvTools({ storage: { ...storage } })
+    expect(adopt(reloaded, journal)).toEqual({ adopted: [], already: ['storage:b'], changed: ['storage:a'] })
+    run(reloaded, 'mmkv.restore')
+    expect(storage.data.get('a')).toBe('app-wrote-this')
+  })
+
+  test('keeps the journal original when the new load already saved the fake value', () => {
+    const storage = fakeMmkv('remove')
+    storage.data.set('t', 'real')
+    const journal = journalOf((() => {
+      const t = mmkvTools({ storage })
+      run(t, 'mmkv.set', 'storage', 't', 'fake')
+      return t
+    })())
+    const reloaded = mmkvTools({ storage: { ...storage } })
+    run(reloaded, 'mmkv.set', 'storage', 't', 'fake2')
+    adopt(reloaded, journal)
+    run(reloaded, 'mmkv.restore')
+    expect(storage.data.get('t')).toBe('real')
+  })
+
+  test('asks to retry an instance that is not registered yet; skips numbers', () => {
+    const storage = fakeMmkv('remove')
+    const tools = mmkvTools({ storage })
+    run(tools, 'mmkv.set', 'storage', 'n', 5)
+    expect(journalOf(tools)).toBeUndefined()
+    const data = { late: { k: { original: null, written: 'v' } } }
+    expect(adopt(tools, data)).toMatchObject({ retry: data })
+  })
+})

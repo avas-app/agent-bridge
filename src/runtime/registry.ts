@@ -1,7 +1,7 @@
 import type { CallMessage, ResultMessage, ToolInfo } from '../shared/protocol'
 import type { LogCapture } from './logs'
 import { toJson } from './to-json'
-import { pendingByArea } from './tools/restore'
+import { INTERNAL_TOOLS, journalRev, pendingByArea } from './tools/restore'
 import type { ToolDefinition, ToolFn, Tools } from './types'
 
 function unwrap(definition: ToolDefinition): {
@@ -20,6 +20,7 @@ export function createRegistry(
 ) {
   const list = (): ToolInfo[] =>
     Object.entries(getTools())
+      .filter(([name]) => !INTERNAL_TOOLS.includes(name))
       .map(([name, definition]) => ({
         name,
         description: unwrap(definition).description,
@@ -33,7 +34,7 @@ export function createRegistry(
     const end = logs?.begin(call.tool)
     const result = await run(call, from).finally(end)
     const errors = logs?.takeErrors()
-    const stamped = loadId ? { ...result, loadId, ...pending() } : result
+    const stamped = loadId ? { ...result, loadId, ...pending(), ...journal() } : result
     return errors?.length ? { ...stamped, logs: errors } : stamped
   }
 
@@ -41,6 +42,11 @@ export function createRegistry(
   function pending(): { pending?: string[] } {
     const areas = Object.keys(pendingByArea(getTools()))
     return areas.length ? { pending: areas } : {}
+  }
+
+  function journal(): { journal?: number } {
+    const rev = journalRev(getTools())
+    return rev ? { journal: rev } : {}
   }
 
   async function run(call: CallMessage, from: string): Promise<ResultMessage> {

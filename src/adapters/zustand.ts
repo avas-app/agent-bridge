@@ -1,5 +1,5 @@
 import { toJson } from '../runtime/to-json'
-import type { Tools } from '../runtime/types'
+import type { AdoptResult, Tools } from '../runtime/types'
 
 /** Anything with zustand's store shape. */
 export type StoreLike = {
@@ -9,6 +9,53 @@ export type StoreLike = {
    * syntax, so zustand's overloads (replace: false | true) still fit.
    */
   setState(partial: Record<string, unknown>, replace?: boolean): void
+  /** Present on stores made with zustand's `persist` middleware. */
+  persist?: {
+    getOptions?: () => { partialize?: (state: never) => unknown }
+    hasHydrated?: () => boolean
+    onFinishHydration?: (fn: () => void) => () => void
+  }
+}
+
+const HYDRATION_WAIT_MS = 2000
+// Module state, not shared: only this adapter's own tools read it.
+let rev = 0
+
+type Image = Record<string, unknown>
+type StoreJournal = { original: Image; after: Image }
+
+/** The persisted part of a state, as plain JSON; undefined when it can't be one. */
+function image(store: StoreLike, state: unknown): Image | undefined {
+  try {
+    const partialize = store.persist?.getOptions?.().partialize
+    const part = partialize ? partialize(state as never) : state
+    if (!isObject(part) || Array.isArray(part)) return undefined
+    const plain = Object.fromEntries(Object.entries(part).filter(([, v]) => typeof v !== 'function'))
+    return JSON.parse(JSON.stringify(plain)) as Image
+  } catch {
+    return undefined
+  }
+}
+
+const same = (a: unknown, b: unknown): boolean => {
+  if (Object.is(a, b)) return true
+  if (!isObject(a) || !isObject(b) || Array.isArray(a) !== Array.isArray(b)) return false
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)])
+  return [...keys].every((k) => same(a[k], b[k]))
+}
+
+async function hydrated(store: StoreLike): Promise<boolean> {
+  const p = store.persist
+  if (!p?.hasHydrated || p.hasHydrated()) return true
+  return new Promise((resolve) => {
+    const off = p.onFinishHydration?.(() => finish(true))
+    const timer = setTimeout(() => finish(false), HYDRATION_WAIT_MS)
+    function finish(ok: boolean) {
+      clearTimeout(timer)
+      off?.()
+      resolve(ok)
+    }
+  })
 }
 
 // State from before the agent's first change, per store object, so tools
@@ -189,6 +236,7 @@ export function storeTools(
     return store
   }
   const beforeChange = (store: StoreLike) => {
+    rev += 1
     if (!snapshots.has(store)) snapshots.set(store, store.getState())
   }
 
@@ -255,6 +303,7 @@ export function storeTools(
         'Keep a store as it is now: drops its pending snapshot, so bridge.restore leaves it alone and the next store.set or store.call snapshots again from this state. Use it after repairing a value that was already wrong when the snapshot was taken. Returns { store, committed } (committed: false when nothing was pending).',
       run: (name: string) => {
         const store = get(name)
+        rev += 1
         return { store: name, committed: snapshots.delete(store) }
       },
     },
@@ -262,6 +311,44 @@ export function storeTools(
       maxArgs: 0,
       // Per store, its snapshot against now (secrets redacted), so an agent can
       // tell what a restore will put back before it does.
+      journalRev: () => rev,
+      // Persisted stores only: others are rebuilt from scratch on reload.
+      journal: (): Record<string, StoreJournal> | undefined => {
+        const out: Record<string, StoreJournal> = {}
+        for (const [name, store] of Object.entries(stores)) {
+          if (!store.persist || !snapshots.has(store)) continue
+          const original = image(store, snapshots.get(store))
+          const after = image(store, store.getState())
+          if (original && after && !same(original, after)) out[name] = { original, after }
+        }
+        return Object.keys(out).length ? out : undefined
+      },
+      adopt: async (raw: unknown): Promise<AdoptResult> => {
+        const data = raw as Record<string, StoreJournal>
+        const result: AdoptResult = { adopted: [], already: [], changed: [] }
+        const retry: Record<string, StoreJournal> = {}
+        for (const [name, entry] of Object.entries(data)) {
+          const store = stores[name]
+          if (!store || !(await hydrated(store))) {
+            retry[name] = entry
+            continue
+          }
+          const current = image(store, store.getState())
+          const saved = snapshots.has(store) ? image(store, snapshots.get(store)) : undefined
+          // The new load may already have saved the agent's value as its snapshot.
+          const savedFake = !!saved && same(saved, entry.after)
+          if (!savedFake && current && same(current, entry.original)) result.already.push(name)
+          else if (savedFake || (current && same(current, entry.after))) {
+            const next: Record<string, unknown> = { ...(store.getState() as Image) }
+            for (const k of Object.keys(entry.after)) if (!(k in entry.original)) delete next[k]
+            snapshots.set(store, { ...next, ...entry.original })
+            rev += 1
+            result.adopted.push(name)
+          } else result.changed.push(name)
+        }
+        if (Object.keys(retry).length) result.retry = retry
+        return result
+      },
       pending: ({ detail }: { detail?: boolean } = {}) => {
         const changed = Object.entries(stores).filter(([, s]) => snapshots.has(s))
         if (!changed.length) return false
@@ -281,6 +368,7 @@ export function storeTools(
       run: () =>
         Object.entries(stores).flatMap(([name, store]) => {
           if (!snapshots.has(store)) return []
+          rev += 1
           restore(store, snapshots.get(store))
           snapshots.delete(store)
           return [name]

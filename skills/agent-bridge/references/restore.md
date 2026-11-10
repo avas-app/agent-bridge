@@ -13,8 +13,14 @@ then undoes active scenarios (newest first), so the next run starts from the
 real state. With `session stop --keep`, a later restore will still apply what
 is pending.
 
-A JS reload throws away every pending restore; the session warns
-`app reloaded; N pending restores lost`. Redo your setup when you see it.
+A JS reload throws away the app's undo state. In a session, what lives in
+storage is kept: `mmkv.set`/`mmkv.delete` of string values and `store.set`/
+`store.call` on a persisted zustand store (one made with `persist`) are still
+undone by `bridge.restore` after the reload, and the next call says
+`app reloaded; kept N undos across the reload (...)`. A value the app changed
+after your write is left alone and named. Everything else (stores that are not
+persisted, queries, mocks, `onRestore`) is lost: the session warns
+`app reloaded; N pending restores lost: ...`. Redo that setup when you see it.
 
 ## Mocked queries
 

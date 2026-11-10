@@ -1,0 +1,5 @@
+---
+"@avasapp/agent-bridge": minor
+---
+
+`bridge.restore` can now undo MMKV and persisted-store changes after the app reloads or crashes, when you are in a session. The session keeps what `mmkv.set` and `mmkv.delete` (string values) and `store.set`/`store.call` on a zustand store with `persist` changed, and hands it to the new runtime after the reload, so a fake token you wrote before `app.reload` is still removed by `bridge.restore` and `session stop`. Nothing is rewritten at reload time: the app boots on your value. The next call reports `kept N undos across the reload`, and names values the app changed since your write, which are left alone. Other restores (stores without `persist`, queries, mocks, `onRestore`) are still lost with the usual warning. The journal stays in the session's memory and is never logged. New adapter hooks `journal`, `adopt` and `journalRev` on a `*.restore` tool let your own area opt in; `bridge.journal` and `bridge.adopt` are internal and hidden from the tool list.

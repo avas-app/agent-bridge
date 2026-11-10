@@ -44,6 +44,8 @@ export type ResultMessage = (
   loadId?: string
   /** Areas (`store`, `query`, ...) whose `*.restore` has something to undo. */
   pending?: string[]
+  /** Goes up when something persistent changed that a restore could undo; a session then reads bridge.journal. */
+  journal?: number
 }
 
 export type ToolInfo = { name: string; description?: string }

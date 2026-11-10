@@ -7,7 +7,11 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import WebSocket from 'ws'
+import { createStore } from 'zustand/vanilla'
 
+import { mmkvTools } from '../../../adapters/react-native-mmkv'
+import { storeTools } from '../../../adapters/zustand'
+import { restoreTools } from '../../../runtime/tools/restore'
 import { createRegistry } from '../../../runtime/registry'
 import { bridgeTools } from '../../../runtime/tools/bridge'
 import type { Tools } from '../../../runtime/types'
@@ -46,6 +50,8 @@ async function fakeApp(
     pending?: boolean
     /** The name the app gives the bridge. Default "Fake App". */
     name?: string
+    /** Extra tools, rebuilt (so their in-memory undo state is gone) on every reload. */
+    extra?: (getTools: () => Tools) => Tools
   } = {},
 ) {
   let deviceId = firstId
@@ -61,6 +67,7 @@ async function fakeApp(
       const announce = id !== deviceId
       deviceId = id
       loadId = load
+      extra = options.extra?.(getAll) ?? {}
       registry = make()
       if (announce) send('hello:reply', info())
     },
@@ -104,12 +111,13 @@ async function fakeApp(
   }
   type Registry = ReturnType<typeof createRegistry>
   let registry: Registry
-  const make = (): Registry =>
-    createRegistry(
-      () => ({ ...bridgeTools(() => registry.list()), ...tools }),
-      undefined,
-      loadId,
-    )
+  const getAll = (): Tools => ({
+    ...bridgeTools(() => registry.list()),
+    ...tools,
+    ...extra,
+  })
+  let extra: Tools = options.extra?.(getAll) ?? {}
+  const make = (): Registry => createRegistry(getAll, undefined, loadId)
   registry = make()
   const info = (): DeviceInfo => ({
     deviceId,
@@ -1039,4 +1047,92 @@ describe('session CLI', () => {
     expect(out.stderr).toContain('No app is connected')
     expect(listSessions()).toEqual([])
   })
+})
+
+describe('restores across a reload', () => {
+  // What survives an app reload: MMKV storage and a persisted store's storage.
+  const disk = new Map<string, string>()
+  const mem = () => {
+    const kv = {
+      getAllKeys: () => [...disk.keys()].filter((k) => k.startsWith('kv:')).map((k) => k.slice(3)),
+      getString: (k: string) => disk.get(`kv:${k}`),
+      set: (k: string, v: string | number | boolean) => void disk.set(`kv:${k}`, String(v)),
+      remove: (k: string) => disk.delete(`kv:${k}`),
+    }
+    type Auth = { token: string }
+    const auth = createStore<Auth>()(() => ({ token: disk.get('auth') ?? 'real-store' }))
+    auth.subscribe((s) => void disk.set('auth', s.token))
+    ;(auth as unknown as { persist: unknown }).persist = {
+      getOptions: () => ({}),
+      hasHydrated: () => true,
+    }
+    return { kv, auth }
+  }
+  const withStorage = (getTools: () => Tools): Tools => {
+    const { kv, auth } = mem()
+    return {
+      ...mmkvTools({ kv }),
+      ...storeTools({ auth }),
+      ...restoreTools(getTools),
+    }
+  }
+
+  test('a reload keeps the undo for MMKV and a persisted store; stop restores them', async () => {
+    disk.clear()
+    disk.set('kv:token', 'real')
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withStorage } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    // The new load booted on the fake values; nothing is undone yet.
+    expect(disk.get('kv:token')).toBe('fake')
+    expect(disk.get('auth')).toBe('fake-store')
+
+    const next = await bridge.timed('demo.echo', 1)
+    expect(next.notice).toContain('kept 2 undos across the reload')
+    expect(next.notice).not.toContain('lost')
+    expect(await bridge.call('bridge.pending')).toMatchObject({ mmkv: true, store: expect.anything() })
+    expect(disk.get('kv:token')).toBe('fake')
+
+    const stopped = await daemon.stop()
+    expect(stopped?.ok).toBe(true)
+    expect(disk.get('kv:token')).toBe('real')
+    expect(disk.get('auth')).toBe('real-store')
+  }, 15_000)
+
+  test('a value the app changed since is left alone and said so', async () => {
+    disk.clear()
+    disk.set('kv:token', 'real')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withStorage } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl2', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl2', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    disk.set('kv:token', 'app-refreshed')
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const next = await bridge.timed('demo.echo', 1)
+    expect(next.notice).toContain('left alone, the app changed them since: kv:token')
+    await daemon.stop()
+    expect(disk.get('kv:token')).toBe('app-refreshed')
+  }, 15_000)
 })

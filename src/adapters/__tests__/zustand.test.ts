@@ -259,3 +259,68 @@ describe('store pending edge cases', () => {
     expect(current.phone).toBe('hidden')
   })
 })
+
+describe('store journal', () => {
+  type S = { token: string; theme: string; setTheme: (t: string) => void }
+  // zustand's persist middleware is faked: only the parts the adapter reads.
+  const make = (state: Partial<S>, hydrated = true) => {
+    const store = createStore<S>()((set) => ({
+      token: 'real',
+      theme: 'light',
+      setTheme: (theme) => set({ theme }),
+      ...state,
+    }))
+    return Object.assign(store, {
+      persist: {
+        getOptions: () => ({ partialize: (s: S) => ({ token: s.token }) }),
+        hasHydrated: () => hydrated,
+        onFinishHydration: () => () => {},
+      },
+    })
+  }
+  const part = (tools: Tools) => tools['store.restore'] as {
+    journal: () => unknown
+    adopt: (d: unknown) => Promise<unknown>
+  }
+
+  test('journals only the persisted part of a persisted store', () => {
+    const auth = make({})
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake', theme: 'dark' })
+    expect(part(tools).journal()).toEqual({
+      auth: { original: { token: 'real' }, after: { token: 'fake' } },
+    })
+  })
+
+  test('does not journal a store without persist', () => {
+    const plain = createStore<{ a: number }>()(() => ({ a: 1 }))
+    const tools = storeTools({ plain })
+    run(tools, 'store.set', 'plain', { a: 2 })
+    expect(part(tools).journal()).toBeUndefined()
+  })
+
+  test('after a reload, adopt re-arms the snapshot so restore puts the original back', async () => {
+    const auth = make({})
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    const reloaded = make({ token: 'fake', theme: 'light' })
+    const tools2 = storeTools({ auth: reloaded })
+    expect(await part(tools2).adopt(journal)).toMatchObject({ adopted: ['auth'] })
+    expect(reloaded.getState().token).toBe('fake')
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBe('real')
+    expect(typeof reloaded.getState().setTheme).toBe('function')
+  })
+
+  test('leaves a store the app changed since, and waits for one that is not hydrated', async () => {
+    const auth = make({})
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    const changed = storeTools({ auth: make({ token: 'app-token' }) })
+    expect(await part(changed).adopt(journal)).toMatchObject({ changed: ['auth'] })
+    const cold = storeTools({ auth: make({ token: 'fake' }, false) }, {})
+    expect(await part(cold).adopt(journal)).toMatchObject({ retry: journal })
+  })
+})
