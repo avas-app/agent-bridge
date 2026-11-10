@@ -155,7 +155,7 @@ describe('press through accessibility actions', () => {
 
   test('the nearest ancestor with an activate action handles a press inside it', async () => {
     const { screen, calls } = setupActions()
-    expect(await screen.press('thumb')).toMatchObject({ testID: 'thumb', via: 'accessibilityAction:activate' })
+    expect(await screen.press('thumb')).toMatchObject({ testID: 'thumb', via: 'ancestor:accessibilityAction:activate' })
     expect(calls).toEqual([['track', 'activate']])
   })
 
@@ -190,5 +190,96 @@ describe('fill ambiguity', () => {
     await expect(screen.fill('Name', 'x')).rejects.toThrow(/\["Name","<text>",\{"index":1\}\]/)
     await screen.fill('Name', 'x', { index: 1 })
     expect(calls.map((c) => c[0])).toContain('changeText')
+  })
+})
+
+describe('press and text ownership', () => {
+  function setupScreen() {
+    const calls: string[] = []
+    const root = tree(
+      host(),
+      // A screen-wide tap-to-dismiss-keyboard wrapper around a form and a button.
+      pressable(
+        { onPress: () => calls.push('dismiss') },
+        rnText('Sign in'),
+        textInput({ placeholder: 'Email', value: '', onChangeText: () => {} }),
+        rnText('Forgot your password?'),
+        pressable({ onPress: () => calls.push('submit'), testID: 'go' }, rnText('Go')),
+      ),
+      // A normal card: text inside owns the press, nothing nested.
+      pressable({ onPress: () => calls.push('card'), testID: 'card' }, rnText('Open card')),
+    )
+    return { screen: createScreen({ roots: () => [root], window: () => WINDOW }), calls }
+  }
+
+  test('a pressable holding inputs or other pressables is not one big button', () => {
+    const { screen } = setupScreen()
+    const { elements } = screen.snapshot()
+    const buttons = elements.filter((e) => e.kind === 'button' && e.text).map((e) => e.text)
+    expect(buttons).toEqual(['Go', 'Open card'])
+    expect(elements.map((e) => e.text).filter(Boolean)).toContain('Forgot your password?')
+  })
+
+  test('pressing loose text under it says the handler was an ancestor\'s', async () => {
+    const { screen, calls } = setupScreen()
+    const result = await screen.press('Forgot your password?')
+    expect(result).toMatchObject({ via: 'ancestor' })
+    expect(calls).toEqual(['dismiss'])
+  })
+
+  test('text inside a plain button still presses that button, with no via', async () => {
+    const { screen, calls } = setupScreen()
+    const result = await screen.press('Open card')
+    expect(result).not.toHaveProperty('via')
+    expect(calls).toEqual(['card'])
+  })
+})
+
+describe('fill details', () => {
+  function setupFill() {
+    const calls: unknown[][] = []
+    const native: string[] = []
+    const handlers = {
+      onFocus: () => calls.push(['focus']),
+      onKeyPress: (e: { nativeEvent: { key: string } }) => calls.push(['key', e.nativeEvent.key]),
+      onChangeText: (t: string) => calls.push(['changeText', t]),
+      onSubmitEditing: () => calls.push(['submit']),
+      onEndEditing: () => calls.push(['end']),
+      onBlur: () => calls.push(['blur']),
+    }
+    const uncontrolled = textInput({ ...handlers, testID: 'free', defaultValue: 'old' })
+    // The host instance of an uncontrolled input takes native text.
+    ;(uncontrolled.child as { stateNode: Record<string, unknown> }).stateNode.setNativeProps = (p: { text: string }) =>
+      native.push(p.text)
+    const controlled = textInput({ ...handlers, testID: 'bound', value: 'x' })
+    const root = tree(host(), uncontrolled, controlled)
+    return { screen: createScreen({ roots: () => [root], window: () => WINDOW }), calls, native }
+  }
+
+  test('an uncontrolled input gets its native text set, and reports the real value', async () => {
+    const { screen, native } = setupFill()
+    const r = await screen.fill('free', 'new')
+    expect(native).toEqual(['new'])
+    expect(r.element.value).toBe('new')
+  })
+
+  test('a controlled input does not get native text', async () => {
+    const { screen, native } = setupFill()
+    await screen.fill('bound', 'y')
+    expect(native).toEqual([])
+  })
+
+  test('onEndEditing fires after submit and before blur; "" clears', async () => {
+    const { screen, calls } = setupFill()
+    await screen.fill('bound', '', { submit: true })
+    expect(calls.map((c) => c[0])).toEqual(['focus', 'changeText', 'submit', 'end', 'blur'])
+    expect(calls[1]).toEqual(['changeText', ''])
+  })
+
+  test('{type:true} types one character at a time', async () => {
+    const { screen, calls } = setupFill()
+    await screen.fill('bound', 'abc', { type: true })
+    expect(calls.filter((c) => c[0] === 'changeText').map((c) => c[1])).toEqual(['a', 'ab', 'abc'])
+    expect(calls.filter((c) => c[0] === 'key').map((c) => c[1])).toEqual(['a', 'b', 'c'])
   })
 })

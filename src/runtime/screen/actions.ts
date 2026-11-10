@@ -26,11 +26,32 @@ const event = (nativeEvent: Record<string, unknown>, target?: unknown) => ({
 
 let eventCount = 0
 
-/** Types `text` into an input. Returns the text it filled (after `maxLength`). */
+/** Whether the input keeps its own text: no `value` prop on it or the host under it. */
+export const isUncontrolled = (found: Found) =>
+  !!found.input && !('value' in (propsOf(found.input) ?? {})) && !('value' in (propsOf(found.host) ?? {}))
+
+// An input with no `value` prop keeps its text natively, so write it there.
+function setNativeText(found: Found, text: string) {
+  for (const fiber of [found.host, found.input]) {
+    const node = fiber?.stateNode as Record<string, unknown> | null | undefined
+    if (node && typeof node.setNativeProps === 'function') {
+      ;(node.setNativeProps as (p: object) => void)({ text })
+      return
+    }
+  }
+  const dom = found.host.stateNode as { value?: unknown } | null
+  if (dom && typeof dom === 'object' && 'value' in dom) dom.value = text
+}
+
+/**
+ * Types `text` into an input, replacing what is there ("" clears it). `type`
+ * enters one character at a time, as a keyboard does. Returns the text it
+ * filled (after `maxLength`).
+ */
 export function fillInput(
   found: Found,
   text: string,
-  options: { submit?: boolean } = {},
+  options: { submit?: boolean; type?: boolean } = {},
 ): string {
   const input = found.input
   if (!input) throw new Error(`${describe(found.element)} is not a text input`)
@@ -39,14 +60,27 @@ export function fillInput(
   const { maxLength } = found
   const value =
     maxLength === undefined ? text : text.slice(0, Math.max(0, maxLength))
+  const uncontrolled = isUncontrolled(found)
   // react-dom reads event.target.value; React Native reads nativeEvent.text.
+  const change = (next: string) => {
+    const target = { value: next }
+    if (uncontrolled) setNativeText(found, next)
+    handler(input, 'onChangeText')?.(next)
+    eventCount += 1
+    handler(input, 'onChange')?.(event({ text: next, eventCount }, target))
+  }
   const target = { value }
   handler(input, 'onFocus')?.(event({ text: value }, target))
-  handler(input, 'onChangeText')?.(value)
-  eventCount += 1
-  handler(input, 'onChange')?.(event({ text: value, eventCount }, target))
+  if (options.type && value) {
+    const chars = [...value]
+    chars.forEach((key, i) => {
+      handler(input, 'onKeyPress')?.(event({ key }))
+      change(chars.slice(0, i + 1).join(''))
+    })
+  } else change(value)
   if (options.submit)
     handler(input, 'onSubmitEditing')?.(event({ text: value }, target))
+  handler(input, 'onEndEditing')?.(event({ text: value }, target))
   handler(input, 'onBlur')?.(event({ text: value }, target))
   return value
 }
@@ -65,7 +99,7 @@ const disabledProps = (fiber: Fiber) => {
 function pressTargetOf(found: Found, action: string | undefined) {
   if (action === undefined) return pressFiberOf(found)
   const fiber = actionFiberOf(found, action)
-  return fiber && { fiber, via: 'accessibilityAction' as const }
+  return fiber && { fiber, via: 'accessibilityAction' as const, ancestor: fiber !== found.actions }
 }
 
 /**
@@ -89,7 +123,8 @@ export function pressElement(
         : `${describe(found.element)} has no accessibility action ${JSON.stringify(action)}${has}`,
     )
   }
-  const { fiber, via } = target
+  const { fiber, via, ancestor } = target
+  const from = ancestor ? 'ancestor:' : ''
   if (!options.force && (found.element.disabled || disabledProps(fiber)))
     throw new Error(
       `${describe(found.element)} is disabled; pass {"force":true} as the last argument to press anyway`,
@@ -97,7 +132,7 @@ export function pressElement(
   if (via === 'accessibilityAction') {
     const actionName = action ?? 'activate'
     handler(fiber, 'onAccessibilityAction')?.(event({ actionName }))
-    return `accessibilityAction:${actionName}`
+    return `${from}accessibilityAction:${actionName}`
   }
   const { x, y } = center(found.element.rect)
   const e = () =>
@@ -113,5 +148,5 @@ export function pressElement(
   handler(fiber, 'onPressIn')?.(e())
   handler(fiber, 'onPress')?.(e())
   handler(fiber, 'onPressOut')?.(e())
-  return 'onPress'
+  return ancestor ? 'ancestor' : 'onPress'
 }

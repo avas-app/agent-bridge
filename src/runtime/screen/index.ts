@@ -1,7 +1,7 @@
 // The screen tools' logic, given a way to read the fiber roots and the window
 // size. tools/screen.ts wires it to React Native.
 import type { Fiber } from '../find-text-core'
-import { fillInput, pressElement } from './actions'
+import { fillInput, isUncontrolled, pressElement } from './actions'
 import {
   collectScreen,
   focused,
@@ -149,7 +149,7 @@ export function createScreen(env: {
     async fill(
       target: Target,
       text: string,
-      options: { submit?: boolean; index?: number; scroll?: boolean } = {},
+      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean } = {},
     ): Promise<{ filled: string; element: ScreenElement }> {
       const found = await resolve(target, (f) => !!f.input, {
         index: options.index,
@@ -158,7 +158,9 @@ export function createScreen(env: {
       })
       const filled = fillInput(found, String(text), options)
       await settle()
-      return { filled, element: reread(found).element }
+      const element = reread(found).element
+      // An uncontrolled input has no value prop to read back: its text is what was typed.
+      return { filled, element: isUncontrolled(found) ? { ...element, value: filled } : element }
     },
 
     async press(

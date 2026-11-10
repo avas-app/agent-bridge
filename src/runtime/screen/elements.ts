@@ -258,6 +258,23 @@ export function actionNamesOf(p: Props): string[] | null {
 /** Screen readers send `activate` on a double tap: a swipe-to-confirm with no onPress. */
 const activates = (rec: Found) => !!rec.actions && !!rec.element.actions?.includes('activate')
 
+/** Whether the control wraps an input, or several controls of its own (a card has at most one action). */
+function wrapsControls(rec: Rec): boolean {
+  const own = rec.press && propsOf(rec.press)?.onPress
+  const seen = new Set<unknown>()
+  const stack = rec.fiber.child ? [rec.fiber.child] : []
+  while (stack.length) {
+    const f = stack.pop() as Fiber
+    if (f.sibling) stack.push(f.sibling)
+    if (f.child) stack.push(f.child)
+    const p = propsOf(f)
+    if (!p) continue
+    if (isInputProps(p)) return true
+    if (isFn(p.onPress) && p.onPress !== own) seen.add(p.onPress)
+  }
+  return seen.size >= 2
+}
+
 const interesting = (p: Props) =>
   isFn(p.onPress) ||
   actionNamesOf(p) !== null ||
@@ -493,8 +510,11 @@ export function collectScreen(
   }
 
   // Buttons own the text beneath them; inputs don't (a field's label stays text).
+  // A pressable that wraps inputs or other controls is a layout wrapper (tap to
+  // dismiss the keyboard), not a button: its loose text stays text.
   const buttonOf = (rec: Rec | null) => {
-    for (let r = rec; r; r = r.parent) if (r.press || activates(r)) return r
+    for (let r = rec; r; r = r.parent)
+      if (r.press || activates(r)) return wrapsControls(r) ? null : r
     return null
   }
 
@@ -660,14 +680,18 @@ export type PressVia = 'onPress' | 'accessibilityAction'
  * The fiber `press` should call and how: the element's own `onPress`, else its
  * `activate` accessibility action, else the nearest ancestor with either.
  */
-export function pressFiberOf(found: Found): { fiber: Fiber; via: PressVia } | null {
-  if (found.press) return { fiber: found.press, via: 'onPress' }
-  if (activates(found)) return { fiber: found.actions as Fiber, via: 'accessibilityAction' }
+export function pressFiberOf(
+  found: Found,
+): { fiber: Fiber; via: PressVia; ancestor: boolean } | null {
+  if (found.press) return { fiber: found.press, via: 'onPress', ancestor: false }
+  if (activates(found))
+    return { fiber: found.actions as Fiber, via: 'accessibilityAction', ancestor: false }
   for (let f = found.fiber.return; f; f = f.return) {
     const p = propsOf(f)
     if (!p) continue
-    if (isFn(p.onPress)) return { fiber: f, via: 'onPress' }
-    if (actionNamesOf(p)?.includes('activate')) return { fiber: f, via: 'accessibilityAction' }
+    if (isFn(p.onPress)) return { fiber: f, via: 'onPress', ancestor: true }
+    if (actionNamesOf(p)?.includes('activate'))
+      return { fiber: f, via: 'accessibilityAction', ancestor: true }
   }
   return null
 }

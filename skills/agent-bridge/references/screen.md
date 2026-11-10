@@ -16,7 +16,7 @@ npx @avasapp/agent-bridge call screen.waitFor '["Section title", {"scroll":true}
 ```
 
 `press` and `fill` return once the app has rendered the result, so the next
-check sees it. `fill` skips the keyboard: autocorrect and native-only input
+check sees it. `fill` also takes `{"submit":true}` and `{"type":true}` (per-character, for debounced search); `""` clears. A press that hit an ancestor's handler says `via: "ancestor"`: check it did what you meant. `fill` skips the keyboard: autocorrect and native-only input
 behaviour need one real typing step from agent-device.
 
 A swipe-to-confirm or slider with no `onPress` shows as a button (or a view)
