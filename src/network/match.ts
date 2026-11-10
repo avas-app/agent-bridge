@@ -99,17 +99,27 @@ export function compileMatch(match: MockMatch): Compiled {
     if (typeof path !== 'string' || !path.startsWith('/'))
       throw new Error('path is just the path, starting with "/", e.g. "/orders/:id"; use url to pin a host')
     if (/[?#]/.test(path)) throw new Error('path has no query or hash; the query is ignored, use url to match it')
-    const route = compileRoute('', path, { trailingSlash: true })
-    tests.push((_m, url) => route.regex.test(url))
+    if (/\s/.test(path)) throw new Error('path has no spaces; write a space as %20')
+    const route = compileRoute('', path, { loose: true })
+    const decoded = (u: string) => {
+      try {
+        return decodeURI(u)
+      } catch {
+        return u
+      }
+    }
+    // The URL as sent or percent-decoded, so "/café" also matches "/caf%C3%A9".
+    tests.push((_m, url) => route.regex.test(url) || route.regex.test(decoded(url)))
     parts.push(`path ${path} (whole path, any host)`)
   }
 
   const probeTests: Array<(p: Probe) => boolean> = []
   if (spec.body !== undefined) {
     const body = spec.body
-    if (!body || typeof body !== 'object' || (!Array.isArray(body) && !Object.keys(body).length))
+    // Checked on the JSON copy: { a: undefined } is empty once serialised and would match everything.
+    const frozen = (body && typeof body === 'object' ? JSON.parse(JSON.stringify(body)) : undefined) as unknown
+    if (!frozen || typeof frozen !== 'object' || (!Array.isArray(frozen) && !Object.keys(frozen).length))
       throw new Error('body must be a non-empty JSON object or an array to look for in the request body')
-    const frozen = JSON.parse(JSON.stringify(body)) as unknown
     probeTests.push((p) => {
       const json = p.json()
       return json !== undefined && subset(frozen, json)

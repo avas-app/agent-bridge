@@ -100,7 +100,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     if (isSkipped(state, url)) return callOriginal(input, init)
 
     const method = String(init?.method ?? req.method ?? 'GET').toUpperCase()
-    const requestBody = bodyText(init?.body)
+    let requestBody = bodyText(init?.body)
     const entry = startEntry(state, {
       method,
       url,
@@ -152,8 +152,13 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     }
 
     // A Request object's body can only be read asynchronously, so a body check waits for it.
+    // A binary one is never read: it can't match JSON, and the log has no use for it.
     const bodyKnown =
-      init?.body !== undefined || !req.clone || method === 'GET' || method === 'HEAD'
+      init?.body !== undefined ||
+      !req.clone ||
+      method === 'GET' ||
+      method === 'HEAD' ||
+      !isTextual(headersRecord(init?.headers ?? req.headers)['content-type'])
     const candidates = matchingMocks(state, method, url, bodyKnown ? { text: requestBody } : undefined)
     if (!candidates.length) return passOn()
 
@@ -166,6 +171,7 @@ export function patchFetch(state: NetworkState): (() => void) | null {
             .then(() => req.clone!().text())
             .catch(() => undefined)
           setRequestBody(entry, body)
+          requestBody = body
         }
         return mockRequest(
           method,

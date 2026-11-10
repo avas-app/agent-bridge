@@ -171,6 +171,8 @@ export function patchXhr(state: NetworkState): (() => void) | null {
     if (!meta || meta.internal || isSkipped(state, meta.url))
       return send.call(this, body)
 
+    // An abort() before send() cancels nothing; only one after it does.
+    meta.aborted = false
     const { method, url } = meta
     const text = bodyText(body)
     const entry = startEntry(state, {

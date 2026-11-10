@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
 
 import type { ToolFn, Tools } from '../../runtime/types'
-import { networkTools } from '../index'
+import { mock, networkTools } from '../index'
 import { resetNetworkState } from '../state'
 import type { LogEntry } from '../types'
 import { FakeRNXHR, FakeXHR, nativeFetch, server, xhrFetch } from './fakes'
@@ -59,6 +59,23 @@ for (const kind of ['web', 'rn'] as const) {
       expect(isMocked(await get('/orders/5'))).toBe(false)
       expect(isMocked(await get('/orders/5/6/items'))).toBe(false)
       expect(await get('/files/a/b.png')).toEqual({ mocked: true, file: true })
+    })
+
+    test('path edge cases: a colon inside a segment, trailing slash, root, encoding, spaces', async () => {
+      mockIt({ path: '/v1/items:batchGet' })
+      expect(isMocked(await get('/v1/items:batchGet'))).toBe(true)
+      expect(isMocked(await get('/v1/items:other'))).toBe(false)
+      mockIt({ path: '/slash/' })
+      expect(isMocked(await get('/slash'))).toBe(true)
+      expect(isMocked(await get('/slash/'))).toBe(true)
+      mockIt({ path: '/cafés' })
+      expect(isMocked(await get('/caf%C3%A9s'))).toBe(true)
+      expect(() => mockIt({ path: '/my orders' })).toThrow('spaces')
+      resetNetworkState()
+      tools = networkTools()
+      mockIt({ path: '/' })
+      expect(isMocked(await (await fetch(API)).json())).toBe(true)
+      expect(isMocked(await get('/'))).toBe(true)
     })
 
     test('path and method together', async () => {
@@ -127,6 +144,91 @@ for (const kind of ['web', 'rn'] as const) {
       expect(await post('/graphql', { operationName: 'Other', query: 'q' })).toEqual({ real: `${API}/graphql` })
     })
 
+    test('net.mockFromLog warns when a POST body was not kept, and reads the name from a long preview', async () => {
+      await fetch(new Request(`${API}/graphql`, { method: 'POST', body: JSON.stringify({ operationName: 'GetUser' }) }))
+      await tick()
+      const unread = run(tools, 'net.mockFromLog', (run(tools, 'net.log') as LogEntry[])[0]!.id) as {
+        match: { graphql?: string }
+        warning?: string
+      }
+      expect(unread.match.graphql).toBeUndefined()
+      expect(unread.warning).toContain('every request to that URL')
+
+      await post('/graphql', { operationName: 'Big', query: 'x'.repeat(1_100_000) })
+      await tick()
+      const big = run(tools, 'net.mockFromLog', (run(tools, 'net.log') as LogEntry[])[0]!.id) as {
+        match: { graphql?: string }
+        warning?: string
+      }
+      expect(big.match.graphql).toBe('Big')
+      expect(big.warning).toBeUndefined()
+
+      await get('/plain')
+      await tick()
+      const plain = run(tools, 'net.mockFromLog', (run(tools, 'net.log') as LogEntry[])[0]!.id) as { warning?: string }
+      expect(plain.warning).toBeUndefined()
+    })
+
+    test('an XHR aborted before send() is still sent', async () => {
+      const xhr = new globalThis.XMLHttpRequest()
+      const done = new Promise<void>((resolve) => {
+        xhr.onloadend = () => resolve()
+      })
+      xhr.open('GET', `${API}/early-abort`)
+      xhr.abort()
+      xhr.send(null)
+      await Promise.race([done, tick(200).then(() => Promise.reject(new Error('never finished')))])
+      expect(server.hits).toContain(`GET ${API}/early-abort`)
+    })
+
+    test('a binary Request body is not read for a body mock, nor logged', async () => {
+      mockIt({ body: { a: 1 } })
+      const binary = new Request(`${API}/upload`, {
+        method: 'PUT',
+        body: new Uint8Array([1, 2, 3]),
+        headers: { 'content-type': 'application/octet-stream' },
+      })
+      let reads = 0
+      const clone = binary.clone.bind(binary)
+      binary.clone = () => {
+        reads += 1
+        return clone()
+      }
+      expect(isMocked(await (await fetch(binary)).json())).toBe(false)
+      await tick()
+      expect(reads).toBe(0)
+      expect((run(tools, 'net.log') as LogEntry[])[0]!.requestBody).toBeUndefined()
+    })
+
+    test('strict mode names the operation of a fetch(Request) whose body was read for a mock', async () => {
+      mockIt({ graphql: 'Other' })
+      run(tools, 'net.strict', true)
+      await fetch(new Request(`${API}/graphql`, { method: 'POST', body: JSON.stringify({ operationName: 'GetUser' }) }))
+      const { blocked } = run(tools, 'net.strict') as { blocked: Array<{ operation?: string }> }
+      expect(blocked.map((b) => b.operation)).toEqual(['GetUser'])
+    })
+
+    test('strict mode only blames mocks whose body did not match', async () => {
+      mock({ path: '/h', body: { a: 1 } }, () => undefined)
+      const wrong = mockIt({ path: '/h', body: { a: 2 } })
+      run(tools, 'net.strict', true)
+      const errors = spyOn(console, 'error').mockImplementation(() => {})
+      const res = await fetch(`${API}/h`, { method: 'POST', body: JSON.stringify({ a: 1 }) })
+      const message = ((await res.json()) as { error: string }).error
+      errors.mockRestore()
+      expect(message).toContain('no mock for')
+      expect(message).toContain(`(${wrong.id} matched`)
+    })
+
+    test('a handler mock with times: 1 answers one of two requests in flight', async () => {
+      mock({ path: '/h1' }, async () => {
+        await tick(20)
+        return { json: { mocked: true } }
+      }, { times: 1 })
+      const both = await Promise.all([get('/h1'), get('/h1')])
+      expect(both.filter(isMocked)).toHaveLength(1)
+    })
+
     test('times is not over-spent by two requests at once', async () => {
       mockIt({ path: '/once', body: { a: 1 } }, { json: { mocked: true } }, { times: 1 })
       const asked = () => new Request(`${API}/once`, { method: 'POST', body: JSON.stringify({ a: 1 }) })
@@ -148,6 +250,7 @@ for (const kind of ['web', 'rn'] as const) {
       expect(() => mockIt({ path: 'https://x.example/orders' })).toThrow('path')
       expect(() => mockIt({ graphql: 5 })).toThrow('graphql')
       expect(() => mockIt({ body: 'x' })).toThrow('body')
+      expect(() => mockIt({ body: { a: undefined } })).toThrow('body')
     })
 
     test('net.mock and net.mocks say what a mock matches', () => {
@@ -157,6 +260,12 @@ for (const kind of ['web', 'rn'] as const) {
       expect(mockIt({ graphql: 'GetUser' }).matches).toBe('any method, GraphQL operation "GetUser"')
       const listed = run(tools, 'net.mocks') as Array<{ id: string; matches: string }>
       expect(listed.find((m) => m.id === r.id)?.matches).toBe(r.matches)
+    })
+
+    test('shadows: a new mock with times is not certain to shadow', () => {
+      const first = mockIt('/limited')
+      expect(mockIt('/limited', { json: {} }, { times: 1 }).shadows).toBeUndefined()
+      expect(mockIt('/limited').shadows).toContain(first.id)
     })
 
     test('shadows: a plain mock covers narrower ones, a narrow one covers nothing', () => {
@@ -220,6 +329,26 @@ describe('net.waitFor', () => {
     const entry = await waitFor('/lag', { timeoutMs: 1000 })
     expect(entry.pending).toBeUndefined()
     await pending
+  })
+
+  test('a GET with ?operationName= matches a graphql wait', async () => {
+    await get('/graphql?operationName=GetUser&variables=%7B%7D')
+    expect((await waitFor({ graphql: 'GetUser' }, { timeoutMs: 200 })).url).toContain('operationName=GetUser')
+  })
+
+  test('waits for the response body to be read, not just the headers', async () => {
+    resetNetworkState()
+    g.fetch = async () =>
+      ({
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        clone: () => ({ text: () => new Promise<string>((r) => setTimeout(() => r('{"late":true}'), 60)) }),
+      }) as unknown as Response
+    tools = networkTools()
+    void fetch(`${API}/slowbody`)
+    const entry = await waitFor('/slowbody', { timeoutMs: 1000 })
+    expect(entry.responseBody).toBe('{"late":true}')
+    expect(entry.truncated).toBeUndefined()
   })
 
   test('times out with what it looked for', async () => {

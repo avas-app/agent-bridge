@@ -1,5 +1,5 @@
 /** Headers whose values are credentials: net.entry cuts them unless asked for the whole. */
-const SECRET = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key)$/
+const SECRET = /auth|cookie|token|secret|session|password|passwd|signature|api-?key|credential|jwt/i
 
 const lower = (headers: Record<string, string>): Record<string, string> =>
   Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]))
@@ -19,7 +19,9 @@ export function redactHeaders(headers: Record<string, string>): Record<string, s
       out[name] = value
       continue
     }
-    const keep = Math.min(8, Math.floor(value.length / 2))
+    // "Bearer xyz" keeps the scheme word; anything else at most 4 chars and a quarter of the value.
+    const scheme = /^authorization$|^proxy-authorization$/i.test(name) ? /^[A-Za-z]+(?= \S)/.exec(value)?.[0] : undefined
+    const keep = scheme ? scheme.length + 1 : Math.min(4, Math.floor(value.length / 4))
     out[name] = `${value.slice(0, keep)}… (+${value.length - keep} chars)`
   }
   return out

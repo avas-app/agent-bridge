@@ -394,7 +394,8 @@ export const mockOrder = (a: Mock, b: Mock) =>
 export function shadowedMocks(state: NetworkState, added: Mock): Mock[] {
   if (typeof added.response === 'function') return []
   return state.mocks.filter((old) => {
-    if (old === added || old.source !== 'agent' || mockOrder(added, old) >= 0)
+    // A mock with `times` runs out and then the old one answers, so it is not certain.
+    if (old === added || old.source !== 'agent' || mockOrder(added, old) >= 0 || added.times !== undefined)
       return false
     if (old.matchKey === added.matchKey) return true
     return (
@@ -445,7 +446,8 @@ export async function answer(
       typeof mock.response === 'function'
         ? await mock.response(await request())
         : mock.response
-    if (!response) continue
+    // A handler can take a while: another request may have spent `times` meanwhile.
+    if (!response || !state.mocks.includes(mock)) continue
     mock.hits += 1
     if (mock.times !== undefined && mock.hits >= mock.times)
       removeMocks(state, (m) => m === mock)
@@ -544,7 +546,10 @@ export function blockedResponse(
     return null
   const operation = operationName(mockRequest(method, url, {}, body))
   const key = operation ? `${method} ${url} (${operation})` : `${method} ${url}`
-  const near = state.mocks.filter((m) => m.needsBody && m.test(method, url)).map((m) => m.id)
+  const probe = mockRequest(method, url, {}, body)
+  const near = state.mocks
+    .filter((m) => m.needsBody && m.test(method, url) && !m.testBody(probe))
+    .map((m) => m.id)
   const seen = state.blocked.get(key)
   if (seen) seen.count += 1
   else state.blocked.set(key, { method, url, count: 1, ...(operation && { operation }) })

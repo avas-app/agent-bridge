@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 
 import type { ToolFn, Tools } from '../../runtime/types'
+import { redactHeaders } from '../headers'
 import { networkTools } from '../index'
 import { resetNetworkState } from '../state'
 import type { LogEntry } from '../types'
@@ -55,7 +56,7 @@ for (const kind of ['web', 'rn'] as const) {
       await tick()
       const id = lastId()
       const cut = entry(id)
-      expect(cut.requestHeaders?.authorization).toBe(`Bearer e… (+${BEARER.length - 8} chars)`)
+      expect(cut.requestHeaders?.authorization).toBe(`Bearer … (+${BEARER.length - 7} chars)`)
       expect(cut.requestHeaders?.cookie).not.toContain('secretsecret')
       expect(cut.responseHeaders?.['set-cookie']).not.toContain('1234567890abcdef')
       expect(cut.responseHeaders?.['x-trace']).toBe('abc')
@@ -93,6 +94,59 @@ for (const kind of ['web', 'rn'] as const) {
     })
   })
 }
+
+describe('redactHeaders', () => {
+  const secrets: Record<string, string> = {
+    apikey: 'sb_publishable_0123456789abcdef',
+    'x-auth-token': 'tok_live_0123456789abcdef',
+    'x-amz-security-token': 'FwoGZXIvYXdzEBYaDExample0123456789',
+    'x-access-token': 'ya29.a0AfH6SMExample0123456',
+    'x-csrf-token': 'csrf0123456789abcdef',
+    'x-goog-api-key': 'AIzaSyExample0123456789abcdef',
+    'api-key': 'abcdef0123456789',
+    'x-session-token': 'sess0123456789abcdef',
+    'x-api-key': 'abcdef0123456789',
+    'x-signature': 'sha256=0123456789abcdef',
+    'x-hub-signature-256': 'sha256=0123456789abcdef',
+    'x-client-secret': 'shhh0123456789abcdef',
+    'x-password': 'hunter2hunter2hunter2',
+    'x-session-id': 'sess0123456789abcdef',
+    cookie: 'sid=abcd1234efgh',
+    'set-cookie': 'sid=abcd1234efgh; HttpOnly',
+    'proxy-authorization': 'Basic dXNlcjpwYXNzd29yZA==',
+  }
+
+  test.each(Object.entries(secrets))('%s is cut', (name, value) => {
+    const shown = redactHeaders({ [name]: value })[name]!
+    const kept = shown.split('…')[0]!
+    expect(kept.length).toBeLessThanOrEqual(Math.max(4, 'Basic '.length))
+    expect(kept.length).toBeLessThanOrEqual(value.length / 4 + 6)
+    expect(shown).toContain('… (+')
+    expect(shown).not.toContain(value.slice(8, 16))
+  })
+
+  test('names match in any case and anywhere in the name', () => {
+    expect(redactHeaders({ 'X-My-Auth': 'abcdefgh12345678' })['X-My-Auth']).toContain('… (+')
+    expect(redactHeaders({ 'X-SUPABASE-APIKEY': 'abcdefgh12345678' })['X-SUPABASE-APIKEY']).toContain('… (+')
+  })
+
+  test('Authorization keeps the scheme word only', () => {
+    expect(redactHeaders({ authorization: 'Bearer abc.def.ghi' }).authorization).toBe('Bearer … (+11 chars)')
+    expect(redactHeaders({ authorization: 'Basic dXNlcjpwYXNz' }).authorization).toBe('Basic … (+12 chars)')
+    expect(redactHeaders({ authorization: 'rawtokenrawtoken1' }).authorization).toBe('rawt… (+13 chars)')
+  })
+
+  test('short values keep at most a quarter, so a short secret is not shown', () => {
+    expect(redactHeaders({ 'x-api-key': 'abcdefgh' })['x-api-key']).toBe('ab… (+6 chars)')
+    expect(redactHeaders({ 'x-api-key': 'abc' })['x-api-key']).toBe('… (+3 chars)')
+    expect(redactHeaders({ 'x-api-key': '' })['x-api-key']).toBe('… (+0 chars)')
+  })
+
+  test('ordinary headers pass through', () => {
+    const plain = { accept: 'application/json', 'content-type': 'text/plain', 'x-trace': 'abc', 'user-agent': 'okhttp' }
+    expect(redactHeaders(plain)).toEqual(plain)
+  })
+})
 
 describe('log size', () => {
   test('logSize sets how many requests are kept', async () => {

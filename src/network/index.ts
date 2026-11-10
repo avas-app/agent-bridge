@@ -259,12 +259,14 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
         const find = () => {
           unreadable = 0
           for (const e of state.log) {
-            if (e.pending || (sinceId !== undefined && e.id <= sinceId)) continue
+            // The body is read after the headers; an entry whose body is still coming isn't finished.
+            if (e.pending || fullResponse(e).state === 'pending') continue
+            if (sinceId !== undefined && e.id <= sinceId) continue
             if (status !== undefined && e.status !== status) continue
             if (!compiled.test(e.method, e.url)) continue
             if (!compiled.needsBody) return e
             const body = requestBodyForMatch(e)
-            if (body === undefined) unreadable += 1
+            if (body === undefined && e.requestBody !== undefined) unreadable += 1
             else if (compiled.testBody(mockRequest(e.method, e.url, {}, body))) return e
           }
           return undefined
@@ -288,7 +290,7 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
     },
     'net.mockFromLog': {
       description:
-        'Mock the same method and URL as a logged request (id from net.log) with its status and whole response body, optionally changed by patch: JSON objects merge deeply, other values replace. [id, patch?, options?] options as net.mock. Returns { id, matches, match, response }; on a GraphQL request the mock only matches that operationName.',
+        'Mock the same method and URL as a logged request (id from net.log) with its status and whole response body, optionally changed by patch: JSON objects merge deeply, other values replace. [id, patch?, options?] options as net.mock. Returns { id, matches, match, response }; on a GraphQL request the mock only matches that operationName; `warning` appears when a POST body was not kept and the mock may answer other operations too.',
       run: (
         id: number,
         patch?: unknown,
@@ -326,7 +328,14 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
         }
         // A GraphQL endpoint is one URL for every operation: keep this mock to the logged one.
         const sent = requestBodyForMatch(entry)
-        const graphql = operationName(mockRequest(entry.method, entry.url, {}, sent))
+        let graphql = operationName(mockRequest(entry.method, entry.url, {}, sent))
+        // A body too long to keep whole still shows its start; operationName usually comes first.
+        if (!graphql && sent === undefined && entry.requestBody !== undefined)
+          graphql = /"operationName":"((?:[^"\\]|\\.)*)"/.exec(entry.requestBody)?.[1]
+        const unread =
+          !graphql && !['GET', 'HEAD'].includes(entry.method) && sent === undefined
+            ? 'This request\'s body was not kept, so the mock matches every request to that URL, whatever its GraphQL operation. Check it, or unmock and use net.mock with graphql.'
+            : undefined
         const match = {
           url: { regex: `^${escapeRegex(entry.url)}$` },
           method: entry.method,
@@ -336,6 +345,7 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
           ...addAgentMock(match, response, mockOptions),
           match: { url: entry.url, method: entry.method, ...(graphql && { graphql }) },
           response,
+          ...(unread && { warning: unread }),
         }
       },
     },
