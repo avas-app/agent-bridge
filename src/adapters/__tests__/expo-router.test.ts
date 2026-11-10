@@ -149,6 +149,31 @@ describe('routerTools', () => {
     })
   })
 
+  test('a query in the href that the route does not carry gets a warning', async () => {
+    const { router, navigation } = fakeApp(
+      {
+        '/': tabs('index'),
+        '/inbox': tabs('inbox'),
+        '/inbox?filter=unread': tabs('inbox'),
+        '/inbox?filter=read': tabs('inbox', { filter: 'read' }),
+      },
+      '/inbox',
+    )
+    const tools = routerTools(router, { navigation })
+    expect(await run(tools, 'router.navigate', '/inbox?filter=unread')).toMatchObject({
+      warning: expect.stringContaining('filter'),
+    })
+    expect(await run(tools, 'router.navigate', '/inbox?filter=read')).not.toHaveProperty('warning')
+  })
+
+  test('a container that is not ready says so instead of reporting "/" and a redirect', async () => {
+    const { router, navigation } = fakeApp({ '/': tabs('index'), '/inbox': tabs('inbox') }, '/')
+    const tools = routerTools(router, { navigation: { ...navigation, isReady: () => false } })
+    const result = await run(tools, 'router.navigate', '/inbox')
+    expect(result).toMatchObject({ warning: expect.stringContaining('not mounted') })
+    expect(JSON.stringify(result)).not.toContain('redirected')
+  })
+
   test('navigating to an unmatched href fails when it lands on +not-found', async () => {
     const { router, navigation } = fakeApp(
       {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { createScreen } from '..'
+import type { Fiber } from '../../find-text-core'
 import { WINDOW, composite, host, pressable, rnText, textInput, tree } from './fake-tree'
 
 function setup() {
@@ -281,5 +282,135 @@ describe('fill details', () => {
     await screen.fill('bound', 'abc', { type: true })
     expect(calls.filter((c) => c[0] === 'changeText').map((c) => c[1])).toEqual(['a', 'ab', 'abc'])
     expect(calls.filter((c) => c[0] === 'key').map((c) => c[1])).toEqual(['a', 'b', 'c'])
+  })
+})
+
+const link = (content: string, onPress: () => void) => {
+  const t = rnText(content, { onPress })
+  ;(t.child as Fiber).type = 'RCTText'
+  return t
+}
+const buttons = (screen: ReturnType<typeof createScreen>) =>
+  screen.snapshot().elements.filter((e) => e.kind === 'button' && e.text).map((e) => e.text)
+const screenOf = (...kids: Fiber[]) => {
+  const root = tree(host(), ...kids)
+  return createScreen({ roots: () => [root], window: () => WINDOW })
+}
+
+describe('what counts as a wrapper around controls', () => {
+  test('a button made of wrapper components with different onPress closures keeps its text', () => {
+    const save = tree(
+      composite({ onPress: () => {} }),
+      tree(composite({ onPress: () => {} }), pressable({ onPress: () => {} }, rnText('Save'))),
+    )
+    expect(buttons(screenOf(save))).toEqual(['Save'])
+  })
+
+  test('a card with one icon button inside keeps its title', () => {
+    const icon = tree(composite({ onPress: () => {} }), pressable({ onPress: () => {} }))
+    const card = pressable({ onPress: () => {} }, rnText('Title'), icon)
+    expect(buttons(screenOf(card))).toEqual(['Title'])
+  })
+
+  test('a row with inline text links keeps its label', () => {
+    const row = pressable(
+      { onPress: () => {} },
+      rnText('Accept the'),
+      link('terms', () => {}),
+      link('privacy policy', () => {}),
+    )
+    expect(buttons(screenOf(row))).toContain('Accept the')
+  })
+
+  test('a backdrop around Cancel and OK is a wrapper even when Cancel shares its handler', async () => {
+    const calls: string[] = []
+    const close = () => calls.push('close')
+    const backdrop = pressable(
+      { onPress: close },
+      pressable({ onPress: close }, rnText('Cancel')),
+      pressable({ onPress: () => calls.push('confirm') }, rnText('OK')),
+    )
+    const screen = screenOf(backdrop)
+    expect(buttons(screen)).toEqual(['OK'])
+    await screen.press('OK')
+    expect(calls).toEqual(['confirm'])
+  })
+
+  test('a switch and a button inside a pressable make it a wrapper', () => {
+    const sw = host({ value: true, onValueChange: () => {}, accessibilityRole: 'switch' })
+    const wrap = pressable(
+      { onPress: () => {} },
+      rnText('Settings'),
+      sw,
+      pressable({ onPress: () => {} }, rnText('Done')),
+    )
+    expect(buttons(screenOf(wrap))).toEqual(['Done'])
+  })
+})
+
+describe('fill on Fabric and with value: undefined', () => {
+  const fabric = (native: string[]) => {
+    const input = textInput({ testID: 'f', defaultValue: 'old', onChangeText: () => {} })
+    ;(input.child as { stateNode: unknown }).stateNode = {
+      getBoundingClientRect: () => ({ x: 20, y: 200, width: 120, height: 40 }),
+      checkVisibility: () => true,
+      node: {},
+      canonical: { publicInstance: { setNativeProps: (p: { text: string }) => native.push(p.text) } },
+    }
+    return screenOf(input)
+  }
+
+  test('writes the text through the Fabric public instance', async () => {
+    const native: string[] = []
+    const r = await fabric(native).fill('f', 'new')
+    expect(native).toEqual(['new'])
+    expect(r.element.value).toBe('new')
+    expect(r).not.toHaveProperty('warning')
+  })
+
+  test('does not claim a value when nothing could be written, and warns', async () => {
+    const input = textInput({ testID: 'f', defaultValue: 'old', onChangeText: () => {} })
+    const r = await screenOf(input).fill('f', 'new')
+    expect(r.element.value).toBe('old')
+    expect(r).toMatchObject({ warning: expect.stringContaining('native') })
+  })
+
+  test('a wrapper passing value={undefined} is still uncontrolled', async () => {
+    const native: string[] = []
+    const input = textInput({ testID: 'u', value: undefined, onChangeText: () => {} })
+    ;(input.child as { stateNode: Record<string, unknown> }).stateNode.setNativeProps = (p: { text: string }) =>
+      native.push(p.text)
+    await screenOf(input).fill('u', 'z')
+    expect(native).toEqual(['z'])
+  })
+})
+
+describe('fill {type:true}', () => {
+  test('lets the app render between characters, and sends Enter for a newline', async () => {
+    const calls: string[] = []
+    const input = textInput({
+      testID: 't',
+      value: '',
+      onKeyPress: (e: { nativeEvent: { key: string } }) => calls.push(`key:${e.nativeEvent.key}`),
+      onChangeText: (t: string) => {
+        calls.push(`text:${t}`)
+        setTimeout(() => calls.push('rendered'), 0)
+      },
+    })
+    await screenOf(input).fill('t', 'a\nb', { type: true })
+    expect(calls.slice(0, 5)).toEqual(['key:a', 'text:a', 'rendered', 'key:Enter', 'text:a\n'])
+  })
+
+  test('keeps an emoji in one piece', async () => {
+    const keys: string[] = []
+    const input = textInput({
+      testID: 't',
+      value: '',
+      onKeyPress: (e: { nativeEvent: { key: string } }) => keys.push(e.nativeEvent.key),
+      onChangeText: () => {},
+    })
+    await screenOf(input).fill('t', '👍🏽x', { type: true })
+    expect(keys.at(-1)).toBe('x')
+    expect(keys.length).toBeLessThanOrEqual(2)
   })
 })

@@ -258,21 +258,42 @@ export function actionNamesOf(p: Props): string[] | null {
 /** Screen readers send `activate` on a double tap: a swipe-to-confirm with no onPress. */
 const activates = (rec: Found) => !!rec.actions && !!rec.element.actions?.includes('activate')
 
-/** Whether the control wraps an input, or several controls of its own (a card has at most one action). */
+const TEXT_HOSTS = /^RCT(Virtual)?Text$/
+
+const isControl = (p: Props) => isFn(p.onPress) || isFn(p.onValueChange) || activatesProps(p)
+const activatesProps = (p: Props) => !!actionNamesOf(p)?.includes('activate')
+
+/**
+ * Whether the control wraps an input, or two or more other controls (a card
+ * has at most one action). The control's own wrapper chain (Button over
+ * Pressable over View) counts once, and so does each nested control's; inline
+ * `<Text onPress>` links don't count.
+ */
 function wrapsControls(rec: Rec): boolean {
-  const own = rec.press && propsOf(rec.press)?.onPress
-  const seen = new Set<unknown>()
+  const skip = new Set<Fiber>()
+  const markChain = (from: Fiber) => {
+    for (let f: Fiber | null = from; f; f = f.child) {
+      skip.add(f)
+      if (f.tag === HOST_COMPONENT) break
+    }
+  }
+  markChain(rec.fiber)
+  let controls = 0
   const stack = rec.fiber.child ? [rec.fiber.child] : []
   while (stack.length) {
     const f = stack.pop() as Fiber
     if (f.sibling) stack.push(f.sibling)
     if (f.child) stack.push(f.child)
     const p = propsOf(f)
-    if (!p) continue
+    if (!p || skip.has(f)) continue
     if (isInputProps(p)) return true
-    if (isFn(p.onPress) && p.onPress !== own) seen.add(p.onPress)
+    if (!isControl(p)) continue
+    const own = firstHost(f)
+    if (isFn(p.onPress) && !isFn(p.onValueChange) && own && TEXT_HOSTS.test(String(own.type))) continue
+    markChain(f)
+    if (++controls >= 2) return true
   }
-  return seen.size >= 2
+  return false
 }
 
 const interesting = (p: Props) =>
@@ -512,9 +533,14 @@ export function collectScreen(
   // Buttons own the text beneath them; inputs don't (a field's label stays text).
   // A pressable that wraps inputs or other controls is a layout wrapper (tap to
   // dismiss the keyboard), not a button: its loose text stays text.
+  const wrapper = new Map<Rec, boolean>()
   const buttonOf = (rec: Rec | null) => {
     for (let r = rec; r; r = r.parent)
-      if (r.press || activates(r)) return wrapsControls(r) ? null : r
+      if (r.press || activates(r)) {
+        let wraps = wrapper.get(r)
+        if (wraps === undefined) wrapper.set(r, (wraps = wrapsControls(r)))
+        return wraps ? null : r
+      }
     return null
   }
 
