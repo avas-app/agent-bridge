@@ -9,17 +9,34 @@ const run = (tools: Tools, name: string, ...args: unknown[]) => {
   return (typeof t === 'function' ? t : (t.run as ToolFn))(...args)
 }
 
-function fake(): AsyncStorageLike & { data: Map<string, string> } {
+function fake() {
   const data = new Map<string, string>()
-  const later = <T>(v: T) => new Promise<T>((r) => setTimeout(() => r(v), 1))
-  return {
+  const delays: { getItem?: number[]; setItem?: number[] } = {}
+  let reads = 0
+  // Each call takes 1 ms unless a delay is queued for it, so calls can finish out of order.
+  const later = <T>(v: () => T, queue?: number[]) =>
+    new Promise<T>((r) => setTimeout(() => r(v()), queue?.shift() ?? 1))
+  const api: AsyncStorageLike & {
+    data: Map<string, string>
+    delays: typeof delays
+    reads: number
+  } = {
     data,
-    getAllKeys: () => later([...data.keys()]),
-    getItem: (k) => later(data.get(k) ?? null),
-    setItem: async (k, v) => void (await later(data.set(k, v))),
-    removeItem: async (k) => void (await later(data.delete(k))),
-    multiGet: (ks) => later(ks.map((k) => [k, data.get(k) ?? null] as const)),
+    delays,
+    get reads() {
+      return reads
+    },
+    getAllKeys: () => later(() => [...data.keys()]),
+    getItem: (k) => {
+      reads += 1
+      // The value is read when the call lands, as a real store does.
+      return later(() => data.get(k) ?? null, delays.getItem)
+    },
+    setItem: (k, v) => later(() => void data.set(k, v), delays.setItem),
+    removeItem: (k) => later(() => void data.delete(k)),
+    multiGet: (ks) => later(() => ks.map((k) => [k, data.get(k) ?? null] as const)),
   }
+  return api
 }
 
 describe('asyncStorageTools', () => {
@@ -67,10 +84,71 @@ describe('asyncStorageTools', () => {
   test('two writes at once to one key still restore the first original', async () => {
     const storage = fake()
     storage.data.set('k', 'orig')
+    // The first read is slow and the first write lands before the second read would start.
+    storage.delays.getItem = [20]
     const tools = asyncStorageTools(storage)
-    await Promise.all([run(tools, 'asyncStorage.set', 'k', 'one'), run(tools, 'asyncStorage.set', 'k', 'two')])
+    await Promise.all([
+      run(tools, 'asyncStorage.set', 'k', 'one'),
+      run(tools, 'asyncStorage.set', 'k', 'two'),
+    ])
+    expect(storage.reads).toBe(1)
     await run(tools, 'asyncStorage.restore')
     expect(storage.data.get('k')).toBe('orig')
+  })
+
+  test('a key written during a restore stays pending and is restored next time', async () => {
+    const storage = fake()
+    storage.data.set('a', 'a0')
+    storage.data.set('b', 'b0')
+    const tools = asyncStorageTools(storage)
+    await run(tools, 'asyncStorage.set', 'a', 'a1')
+    storage.delays.setItem = [30]
+    const restoring = run(tools, 'asyncStorage.restore')
+    await new Promise((r) => setTimeout(r, 5))
+    await run(tools, 'asyncStorage.set', 'b', 'b1')
+    await restoring
+    expect((tools['asyncStorage.restore'] as { pending: () => boolean }).pending()).toBe(true)
+    await run(tools, 'asyncStorage.restore')
+    expect(Object.fromEntries(storage.data)).toEqual({ a: 'a0', b: 'b0' })
+  })
+
+  test('restore leaves a key the app has written since, and says so', async () => {
+    const storage = fake()
+    storage.data.set('refresh', 'old')
+    storage.data.set('theme', 'light')
+    const tools = asyncStorageTools(storage)
+    await run(tools, 'asyncStorage.set', 'refresh', 'agent')
+    await run(tools, 'asyncStorage.set', 'theme', 'dark')
+    storage.data.set('refresh', 'rotated-by-app')
+    expect(await run(tools, 'asyncStorage.restore')).toEqual({ restored: 1, skipped: ['refresh'] })
+    expect(Object.fromEntries(storage.data)).toEqual({ refresh: 'rotated-by-app', theme: 'light' })
+    expect((tools['asyncStorage.restore'] as { pending: () => boolean }).pending()).toBe(false)
+  })
+
+  test('a rejected snapshot read changes nothing and leaves nothing pending', async () => {
+    const storage = fake()
+    storage.data.set('k', 'v')
+    const getItem = storage.getItem
+    storage.getItem = async () => {
+      throw new Error('read failed')
+    }
+    const tools = asyncStorageTools(storage)
+    await expect(run(tools, 'asyncStorage.set', 'k', 'x')).rejects.toThrow('read failed')
+    expect(storage.data.get('k')).toBe('v')
+    expect((tools['asyncStorage.restore'] as { pending: () => boolean }).pending()).toBe(false)
+    storage.getItem = getItem
+    expect(await run(tools, 'asyncStorage.restore')).toBe(0)
+  })
+
+  test('set rejects a missing key or value before reading or writing', async () => {
+    const storage = fake()
+    const tools = asyncStorageTools(storage)
+    await expect(run(tools, 'asyncStorage.set', 'k')).rejects.toThrow('needs a value')
+    await expect(run(tools, 'asyncStorage.set', 'k', null)).rejects.toThrow('use the delete tool')
+    await expect(run(tools, 'asyncStorage.set', undefined, 'v')).rejects.toThrow('key name')
+    await expect(run(tools, 'asyncStorage.delete')).rejects.toThrow('key name')
+    expect(storage.reads).toBe(0)
+    expect(storage.data.size).toBe(0)
   })
 
   test('a key that fails to restore stays pending and restore throws', async () => {

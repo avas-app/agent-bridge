@@ -22,6 +22,7 @@ export function builtinTools(
     ...bridgeTools(listTools),
     ...appTools(
       selectReload(globalThis as ExpoHost, () => DevSettings.reload()),
+      getTools,
     ),
     ...logTools(logs),
     ...restoreTools(getTools),

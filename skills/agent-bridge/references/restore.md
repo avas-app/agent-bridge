@@ -14,7 +14,7 @@ real state. With `session stop --keep`, a later restore will still apply what
 is pending.
 
 A JS reload throws away every pending restore; the session warns
-`app reloaded; N pending restores lost`. Redo your setup when you see it.
+`app reloaded; N pending restores lost`, and `app.reload` names them in its reply (`lost`). Redo your setup when you see it. AsyncStorage and SecureStore values stay on disk across a reload with their old values gone, so run `bridge.restore` before `app.reload`. A key the app wrote after the agent did is left alone and returned under `skipped`.
 
 ## Mocked queries
 

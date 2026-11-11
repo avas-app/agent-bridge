@@ -6,7 +6,7 @@
 npx @avasapp/agent-bridge call query.pin '[["features"], <data>]'       # stays through refetches
 npx @avasapp/agent-bridge call store.call '["settings", "setTheme", "dark"]'
 npx @avasapp/agent-bridge call router.navigate /inbox
-npx @avasapp/agent-bridge call router.current
+npx @avasapp/agent-bridge call router.current                            # React Navigation apps: nav.navigate Inbox, nav.current
 npx @avasapp/agent-bridge call router.dismiss                            # closes a route-based modal
 ```
 

@@ -100,6 +100,13 @@ export function renderBridgeFile(o: BridgeFileInput): string {
   }
   if (o.expoRouter) L.push(`import { router, useNavigationContainerRef } from 'expo-router'`)
   if (o.reactQuery) L.push(`import { useContext } from 'react'`)
+  if (o.reactNavigation)
+    L.push(
+      '',
+      '// Pass the ref you give to <NavigationContainer ref={…}>, then uncomment navTools below.',
+      `// import { navTools } from '@avasapp/agent-bridge/react-navigation'`,
+      `// import { navigationRef } from './path-to-your-navigation-ref'`,
+    )
   if (o.realtimeTools?.length)
     L.push('', ...o.realtimeTools.map((t) => `import { ${t.name} } from '${t.from}'`))
 
@@ -129,7 +136,8 @@ export function renderBridgeFile(o: BridgeFileInput): string {
     L.push(
       '',
       '// AsyncStorage is left out: it often holds tokens, and asyncStorage.get returns',
-      '// values as they are. Uncomment these and asyncStorageTools below if it holds none.',
+      '// values as they are. Uncomment these and asyncStorageTools below if it holds none,',
+      '// passing the storage the app uses (a createAsyncStorage(name) instance, if it has one).',
       `// See ${DOCS}/adapters.md`,
       `// import { asyncStorageTools } from '@avasapp/agent-bridge/async-storage'`,
       `// import AsyncStorage from '@react-native-async-storage/async-storage'`,
@@ -139,7 +147,8 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       '',
       '// SecureStore is left out: it holds secrets. secureStore.get hides values unless',
       '// the agent asks for {full:true}. Uncomment these and secureStoreTools below,',
-      '// passing the keys the app uses so secureStore.list can show them.',
+      '// passing the keys the app uses so secureStore.list can show them, and the same',
+      '// options the app passes to SecureStore (keychainService, requireAuthentication).',
       `// See ${DOCS}/adapters.md`,
       `// import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'`,
       `// import * as SecureStore from 'expo-secure-store'`,
@@ -222,15 +231,12 @@ export function renderBridgeFile(o: BridgeFileInput): string {
   if (o.asyncStorage) L.push('      // ...asyncStorageTools(AsyncStorage),')
   if (o.secureStore) L.push(`      // ...secureStoreTools(SecureStore, ['authToken']),`)
   if (o.realtime.length) L.push('      // ...realtimeDevTools,')
-  if (o.reactNavigation) {
-    const params = o.ts ? 'name: string, params?: object' : 'name, params'
+  if (o.reactNavigation)
     L.push(
-      '      // React Navigation has no adapter. With your container ref',
-      '      // (createNavigationContainerRef from @react-navigation/native), tools like these work:',
-      `      // 'nav.navigate': (${params}) => navigationRef.navigate(name, params),`,
-      `      // 'nav.current': () => navigationRef.getCurrentRoute(),`,
+      '      // React Navigation: uncomment this and the imports above, with the ref you pass to',
+      '      // <NavigationContainer ref={…}> (createNavigationContainerRef from @react-navigation/native).',
+      '      // ...navTools(navigationRef),',
     )
-  }
   L.push(
     `      // Your own tools: any function, JSON in and out, e.g. 'cart.clear': () => clearCart(),`,
     '    },',

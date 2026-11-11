@@ -1,4 +1,5 @@
 import type { Tools } from '../runtime/types'
+import { type KeyUndo, change, describeRestore, restore, toStored } from './storage-undo'
 
 /** The AsyncStorage surface this adapter uses. */
 export type AsyncStorageLike = {
@@ -14,13 +15,8 @@ export type AsyncStorageLike = {
 const LIST_LIMIT = 50
 const VALUE_CHARS = 200
 
-// Each key's value from before the agent first wrote it (null when it did not
-// exist), per storage, so tools rebuilt on every render still find it. The
-// promise is stored first so two writes to one key can't both snapshot.
-const originals = new WeakMap<
-  AsyncStorageLike,
-  Map<string, Promise<string | null>>
->()
+// Pending changes per storage, so tools rebuilt on every render still find them.
+const originals = new WeakMap<AsyncStorageLike, KeyUndo>()
 
 const clip = (value: string | null) =>
   value !== null && value.length > VALUE_CHARS
@@ -29,19 +25,20 @@ const clip = (value: string | null) =>
 
 /** Read and write AsyncStorage. Values are returned as they are: wire a storage without secrets. */
 export function asyncStorageTools(storage: AsyncStorageLike): Tools {
-  const beforeChange = async (key: string) => {
-    let saved = originals.get(storage)
-    if (!saved) originals.set(storage, (saved = new Map()))
-    if (saved.has(key)) return void (await saved.get(key))
-    const read = storage.getItem(key)
-    saved.set(key, read)
-    try {
-      await read
-    } catch (error) {
-      saved.delete(key)
-      throw error
-    }
-  }
+  let undo = originals.get(storage)
+  if (!undo) originals.set(storage, (undo = new Map()))
+  const pending = undo
+  const apply = (key: string, value: string | null) =>
+    change(
+      pending,
+      key,
+      {
+        read: () => storage.getItem(key),
+        write: (v) => storage.setItem(key, v),
+        remove: () => storage.removeItem(key),
+      },
+      value,
+    )
 
   return {
     'asyncStorage.list': {
@@ -75,49 +72,25 @@ export function asyncStorageTools(storage: AsyncStorageLike): Tools {
       description:
         'Set a value. Objects, arrays, numbers and booleans are stored as JSON strings.',
       run: async (key: string, value: unknown) => {
-        await beforeChange(key)
-        await storage.setItem(
-          key,
-          typeof value === 'string' ? value : JSON.stringify(value),
-        )
+        await apply(key, toStored('asyncStorage.set', key, value))
         return true
       },
     },
     'asyncStorage.delete': {
       description: 'Delete a key.',
       run: async (key: string) => {
-        await beforeChange(key)
-        await storage.removeItem(key)
+        if (typeof key !== 'string' || !key)
+          throw new Error('asyncStorage.delete needs the key name as a non-empty string')
+        await apply(key, null)
         return true
       },
     },
     'asyncStorage.restore': {
-      pending: () => (originals.get(storage)?.size ?? 0) > 0,
+      pending: () => pending.size > 0,
       description:
-        'Undo the agent: put back keys changed with asyncStorage.set or asyncStorage.delete, deleting ones that did not exist. Returns how many.',
-      run: async () => {
-        const saved = originals.get(storage)
-        if (!saved) return 0
-        let restored = 0
-        const failed: string[] = []
-        for (const [key, pending] of [...saved]) {
-          try {
-            const value = await pending
-            if (value === null) await storage.removeItem(key)
-            else await storage.setItem(key, value)
-            saved.delete(key)
-            restored += 1
-          } catch {
-            failed.push(key)
-          }
-        }
-        if (failed.length)
-          throw new Error(
-            `Restored ${restored}, could not restore: ${failed.join(', ')}. They stay pending; run it again.`,
-          )
-        originals.delete(storage)
-        return restored
-      },
+        'Undo the agent: put back keys changed with asyncStorage.set or asyncStorage.delete, deleting ones that did not exist. Returns how many; a key the app has written since is left alone and returned in {skipped}. Lost when the JS reloads: restore before app.reload.',
+      run: async () =>
+        describeRestore(await restore(pending, (id) => id), 'Those keys'),
     },
   }
 }

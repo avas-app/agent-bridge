@@ -106,6 +106,10 @@ npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'   # {"gone": 
 npx @avasapp/agent-bridge call router.navigate /inbox
 ```
 
+Check `tools` for `router.*` (expo-router) or `nav.*` (React Navigation). `nav.*`
+takes route names (`nav.navigate Inbox`, `nav.popTo Home`), and paths only if the
+app passed `linking`; read the returned `warning`.
+
 `press` and `fill` return once the app has rendered the result, so the next
 check sees it. Arguments are a JSON array (or a single JSON value): the array is
 spread into the tool's arguments.

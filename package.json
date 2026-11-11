@@ -46,6 +46,10 @@
       "types": "./dist/adapters/expo-router.d.cts",
       "default": "./entries/expo-router.cjs"
     },
+    "./react-navigation": {
+      "types": "./dist/adapters/react-navigation.d.cts",
+      "default": "./entries/react-navigation.cjs"
+    },
     "./react-native-webview": {
       "types": "./dist/adapters/react-native-webview.d.cts",
       "default": "./entries/react-native-webview.cjs"
@@ -122,9 +126,7 @@
   },
   "peerDependencies": {
     "@tanstack/query-core": ">=5",
-    "@react-native-async-storage/async-storage": ">=1",
     "expo": ">=52",
-    "expo-secure-store": ">=13",
     "react": ">=18",
     "react-native": ">=0.76",
     "react-native-webview": ">=13"
@@ -133,13 +135,7 @@
     "@tanstack/query-core": {
       "optional": true
     },
-    "@react-native-async-storage/async-storage": {
-      "optional": true
-    },
     "expo": {
-      "optional": true
-    },
-    "expo-secure-store": {
       "optional": true
     },
     "react-native-webview": {
