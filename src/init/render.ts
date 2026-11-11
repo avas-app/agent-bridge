@@ -33,6 +33,9 @@ export type BridgeFileInput = {
   mmkv?: Imported[]
   asyncStorage?: boolean
   secureStore?: boolean
+  /** @reduxjs/toolkit or redux is a dependency. */
+  redux?: boolean
+  jotai?: boolean
   realtime: RealtimeTodo[]
   /** Realtime tools the app already exports, wired live. */
   realtimeTools?: Imported[]
@@ -51,6 +54,10 @@ export const ASYNC_STORAGE_WHY =
   'AsyncStorage often holds tokens and asyncStorage.get returns values as they are: wire it only if it holds no secrets'
 export const SECURE_STORE_WHY =
   'SecureStore holds secrets: secureStore.get hides values unless the agent asks for {full:true}, but secureStore.set can still overwrite them'
+export const REDUX_WHY =
+  'the Redux state often holds tokens: add `redact` for those slices and paths, and wrap the root reducer in bridgeReducer() before wiring it'
+export const JOTAI_WHY =
+  'atoms often hold tokens: list only the atoms you want the agent to read and set, and add `redact` for secret ones'
 export const REALTIME_WHY =
   'the adapter must wrap the client where it is created, before the app subscribes'
 export const NETWORK_PROMPT =
@@ -153,6 +160,26 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       `// import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'`,
       `// import * as SecureStore from 'expo-secure-store'`,
     )
+  if (o.redux)
+    L.push(
+      '',
+      '// Redux is left out: the state often holds tokens. Add `redact` for those slices,',
+      '// wrap the root reducer in bridgeReducer() (outside persistReducer) where the store',
+      '// is created, then uncomment these and reduxTools below.',
+      `// See ${DOCS}/adapters.md`,
+      `// import { reduxTools } from '@avasapp/agent-bridge/redux'`,
+      `// import { store } from '../store'`,
+    )
+  if (o.jotai)
+    L.push(
+      '',
+      '// Jotai is left out: atoms often hold tokens. List the atoms the agent may read and',
+      '// set, add `redact` for secret ones, then uncomment these and jotaiTools below.',
+      `// See ${DOCS}/adapters.md`,
+      `// import { jotaiTools } from '@avasapp/agent-bridge/jotai'`,
+      `// import { getDefaultStore } from 'jotai'`,
+      `// import { userAtom } from '../atoms'`,
+    )
   for (const todo of o.realtime) {
     const r = REALTIME[todo.kind]
     L.push(
@@ -230,6 +257,8 @@ export function renderBridgeFile(o: BridgeFileInput): string {
   }
   if (o.asyncStorage) L.push('      // ...asyncStorageTools(AsyncStorage),')
   if (o.secureStore) L.push(`      // ...secureStoreTools(SecureStore, ['authToken']),`)
+  if (o.redux) L.push(`      // ...reduxTools(store, { redact: { auth: ['token'] } }),`)
+  if (o.jotai) L.push('      // ...jotaiTools(getDefaultStore(), { user: userAtom }),')
   if (o.realtime.length) L.push('      // ...realtimeDevTools,')
   if (o.reactNavigation)
     L.push(

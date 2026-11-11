@@ -102,6 +102,8 @@ describe('generated files per app', () => {
       'react-native-mmkv',
       'async-storage',
       'secure-store',
+      'redux',
+      'jotai',
       '@react-navigation/native',
     ])
     expect(bare.files['src/dev/agent-bridge.js']).toContain("// import { storage } from '../storage'")

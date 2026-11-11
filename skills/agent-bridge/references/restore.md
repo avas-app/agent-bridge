@@ -38,6 +38,14 @@ with `store.set` snapshots the broken one.
   keeps the current value and drops the snapshot.
 - `store.set <store> {}` arms the snapshot before you drive the UI.
 
+`redux.*` and `jotai.*` work the same way, under their own names. Redux snapshots
+the whole state on the first `redux.set` or `redux.dispatch` and restore puts
+all of it back (through redux-persist too: the saved copy follows), so changes
+the app made in other slices after that are lost too; `redux.commit` drops the
+snapshot. Jotai snapshots each atom on its first `jotai.set`; `jotai.commit
+<atom>` drops one. With an async `atomWithStorage`, `jotai.get` the atom before
+the first set, or the snapshot may be its initial value.
+
 ## WebViews
 
 `webview.press`, `fill` and `send` change the page and app, and restore does

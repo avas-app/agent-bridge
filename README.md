@@ -47,6 +47,8 @@ import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { mmkvTools } from '@avasapp/agent-bridge/react-native-mmkv'
 // import { asyncStorageTools } from '@avasapp/agent-bridge/async-storage'
 // import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'
+// import { reduxTools } from '@avasapp/agent-bridge/redux'
+// import { jotaiTools } from '@avasapp/agent-bridge/jotai'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
 import { networkTools } from '@avasapp/agent-bridge/network'
 import { router, useNavigationContainerRef } from 'expo-router'
@@ -67,6 +69,9 @@ export function AgentBridge() {
         { redact: { auth: ['accessToken', 'refreshToken', 'user.phone'] } },
       ),
       ...mmkvTools({ storage }),
+      // Redux and Jotai state often holds tokens: add `redact` before wiring them.
+      // ...reduxTools(store, { redact: { auth: ['token'] } }),
+      // ...jotaiTools(getDefaultStore(), { user: userAtom }),
       // AsyncStorage and SecureStore often hold tokens: wire them only if you accept that.
       // ...asyncStorageTools(AsyncStorage),
       // ...secureStoreTools(SecureStore, ['authToken'], { keychainService: 'auth' }),
@@ -106,7 +111,7 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 - [Built-in tools and restore](docs/built-in-tools.md)
 - [The CLI, flows and the client](docs/cli.md)
 - [Scenarios](docs/scenarios.md): signed-in state, strict network, fixtures, gates
-- [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, AsyncStorage, SecureStore, Expo Router, React Navigation, network
+- [Adapters](docs/adapters.md): TanStack Query, Zustand, Redux, Jotai, MMKV, AsyncStorage, SecureStore, Expo Router, React Navigation, network
 - [WebViews](docs/webviews.md)
 - [Realtime](docs/realtime.md): Ably, socket.io, any other library
 - [Security and release builds](docs/security.md)

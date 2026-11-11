@@ -4,6 +4,8 @@
 | --- | --- | --- |
 | `@avasapp/agent-bridge/tanstack-query` | `query.list` `get` `set` `pin` `unpin` `unpinAll` `refetch` `invalidate` `restore` | your `QueryClient` |
 | `@avasapp/agent-bridge/zustand` | `store.list` `get` `set` `call` `restore` | your stores |
+| `@avasapp/agent-bridge/redux` | `redux.list` `get` `dispatch` `set` `commit` `restore` | your Redux or Redux Toolkit store, and `bridgeReducer()` around its root reducer |
+| `@avasapp/agent-bridge/jotai` | `jotai.list` `get` `set` `commit` `restore` | a Jotai store and the atoms you name |
 | `@avasapp/agent-bridge/react-native-mmkv` | `mmkv.list` `keys` `get` `set` `delete` `restore` | your MMKV instances |
 | `@avasapp/agent-bridge/async-storage` | `asyncStorage.list` `get` `set` `delete` `restore` | your AsyncStorage |
 | `@avasapp/agent-bridge/secure-store` | `secureStore.list` `get` `set` `delete` `restore` | `expo-secure-store` and the keys your app uses |
@@ -14,6 +16,19 @@
 | `@avasapp/agent-bridge/ably` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your Ably `Realtime` client, see [Realtime](realtime.md) |
 | `@avasapp/agent-bridge/socket.io` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your socket.io `Socket` |
 | `@avasapp/agent-bridge/realtime` | `realtime.channels` `log` `emit` `mute` `unmute` `restore` | two lines in your own subscribe function |
+
+**Redux and Jotai.** They have their own prefixes (`redux.*`, `jotai.*`), so mounting them next to `storeTools` never clashes with `store.*`, and each has its own snapshot and `restore`. Both snapshot on the agent's first change (`redux.set`/`redux.dispatch`, `jotai.set`), `bridge.restore` puts it back, `*.commit` drops a snapshot, and `bridge.pending` shows what a restore would change. `redact` is by slice or atom name: `{ auth: ['token', 'user.phone'] }`, `{ session: true }` for a whole slice or atom, or a hook `(name, path, value)` that is also called for the whole value with path `''`.
+
+`reduxTools(store, { redact })` works with `configureStore` or `createStore`. `redux.get` reads the whole state or a path from a slice (`redux.get auth user.name`, with `{pick}` and `{keys}` as in `store.get`). `redux.dispatch '{"type":"cart/add","payload":"apple"}'` sends a plain action through your reducers and middleware (no thunks; types starting `@@agent-bridge/` are reserved) and returns `{changed: [slices]}`. `redux.set auth '{"token":"abc"}'` merges into a slice without running your reducers. `set` and `restore` replace the state through one action that `bridgeReducer` handles, so wrap the root reducer where the store is created. In release builds `bridgeReducer` returns the reducer unchanged. Without the wrapper they fail with that instruction and change nothing.
+
+```ts
+const store = configureStore({ reducer: bridgeReducer(rootReducer) })
+// in AgentBridge: tools: { ...reduxTools(store, { redact: { auth: ['token'] } }) }
+```
+
+With redux-persist, put `bridgeReducer` outermost: `bridgeReducer(persistReducer(config, rootReducer))`. A restore replaces the whole state, `_persist` included, and the persisted copy follows it, so the saved copy returns to the original too. State listeners, sagas and listener middleware see the replace action, not the actions that were undone, so side effects they started are not undone. Restore replaces the whole state: changes the app made in other slices after the agent's first change are lost too.
+
+`jotaiTools(store, { user: userAtom, count: countAtom }, { redact })` takes the store your app uses (`getDefaultStore()`, or the one under your `Provider`) and the atoms to expose by name. `jotai.list` returns each as `read-write` or `read-only` (a derived atom with no `write`). `jotai.get user name` reads a value or a path and awaits async atoms. `jotai.set count 5` sets a writable atom and returns its new value; a read-only atom is refused. A writable derived atom is set and restored through its own `write`. An atom is snapshotted on its first `jotai.set`; `jotai.restore` sets each back, newest first, and if one fails the rest are still restored and the error names it. Atoms whose write is an action (`atom(null, (get, set, arg) => …)`) have no value to restore, so leave them out and use your own tool. With `atomWithStorage`, set and restore write through to the storage. If its storage is async (AsyncStorage), read the atom with `jotai.get` before the first `set`, so the snapshot is the stored value and not the initial one.
 
 `asyncStorage.list` returns `{total, keys}` with each value cut to 200 characters (`{limit}` defaults to 50, `{prefix}` filters keys); `asyncStorage.get` returns the whole string. Pass the storage object the app uses: AsyncStorage v3's `createAsyncStorage('name')` instances are separate from the default export. Both storages are async, and `*.restore` waits for each write. A restore puts back each key the agent changed to what it held before the agent's first write to it, and deletes keys that did not exist; keys it can't put back stay pending and the call throws. A key the app has written since the agent did (a rotated token, a persisted blob) is left alone and returned as `{restored, skipped: [keys]}`. These originals live in memory: **restore before reloading**. A JS reload loses them while the values stay on disk, and `app.reload` replies with `lost` naming the restores still pending. `set` needs a key and a value (use `delete` to remove one).
 

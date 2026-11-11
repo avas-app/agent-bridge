@@ -1,0 +1,5 @@
+---
+"@avasapp/agent-bridge": minor
+---
+
+Two new adapters. `@avasapp/agent-bridge/redux` (`reduxTools(store, {redact})`) gives `redux.list`, `get` (the state or a path, with `pick` and `keys`), `dispatch` (a plain `{type, payload}` action), `set` (merge into a slice), `commit` and `restore`. Wrap your root reducer in `bridgeReducer()` so `set` and `restore` can replace the state (outside redux-persist's `persistReducer`; in release builds it returns your reducer unchanged). Without it they fail and say so. `@avasapp/agent-bridge/jotai` (`jotaiTools(store, {name: atom}, {redact})`) gives `jotai.list` (each atom `read-write` or `read-only`), `get`, `set`, `commit` and `restore`. Both snapshot on the agent's first change, `bridge.restore` and `bridge.pending` include them, and `redact` is by slice or atom name (`{auth: ['token']}`, or `{session: true}` for all of it). They use their own prefixes, so they never clash with `store.*`. `agent-bridge init` adds both, commented out, when it finds `@reduxjs/toolkit`, `redux` or `jotai`.
