@@ -49,6 +49,10 @@ export type AdoptResult = {
   error?: string
   /** Entries that were not the expected shape and were dropped. */
   invalid?: string[]
+  /** Entries left alone because they belong to another storage instance than the one now registered. */
+  skipped?: string[]
+  /** Values that do not survive a JSON round trip, so the journal could not keep them. */
+  notKept?: string[]
 }
 
 /** Tools by name. Namespace them with a dot, e.g. `query.pin`. */

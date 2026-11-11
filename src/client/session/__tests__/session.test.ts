@@ -1304,6 +1304,37 @@ describe('restores across a reload', () => {
     expect(disk.get('auth')).toBe('real-store')
   }, 15_000)
 
+  test('a store key that is not plain JSON is named in the reload notice', async () => {
+    disk.clear()
+    const withSet = (getTools: () => Tools): Tools => {
+      const store = createStore<{ token: string; seen: Set<string>; bump: () => void }>()((set) => ({
+        token: disk.get('auth') ?? 'real-store',
+        seen: new Set(['a']),
+        bump: () => set({ token: 'fake-store', seen: new Set(['b']) }),
+      }))
+      store.subscribe((s) => void disk.set('auth', s.token))
+      ;(store as unknown as { persist: unknown }).persist = { getOptions: () => ({}), hasHydrated: () => true }
+      return { ...storeTools({ auth: store }), ...restoreTools(getTools) }
+    }
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withSet } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl3', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl3', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    await bridge.call('store.call', 'auth', 'bump')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const next = await bridge.timed('bridge.pending')
+    expect(next.notice).toContain('not kept across reload')
+    expect(next.notice).toContain('auth:seen')
+    expect(next.notice).toContain('kept 1 undo')
+  }, 15_000)
+
   const setup = async (name: string, extraOpts: Record<string, unknown> = {}, daemonOpts: Record<string, unknown> = {}) => {
     disk.clear()
     disk.set('kv:token', 'real')

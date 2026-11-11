@@ -22,20 +22,42 @@ const HYDRATION_WAIT_MS = 2000
 let rev = 0
 
 type Image = Record<string, unknown>
-type StoreJournal = { original: Image; after: Image }
+// `original` and `after` hold only the keys the agent changed, as plain JSON;
+// `skipped` names changed keys that could not be kept that way.
+type StoreJournal = { original: Image; after: Image; skipped?: string[] }
 
-/** The persisted part of a state, as plain JSON; undefined when it can't be one. */
-function image(store: StoreLike, state: unknown): Image | undefined {
+/** True when the value comes back equal from JSON: no Set, Map, Date, class instance or function inside. */
+function survivesJson(v: unknown, depth = 0): boolean {
+  if (v === null || typeof v === 'string' || typeof v === 'boolean') return true
+  if (typeof v === 'number') return Number.isFinite(v)
+  if (depth > 50 || !isObject(v)) return false
+  if (Array.isArray(v)) return v.every((x) => survivesJson(x, depth + 1))
+  const proto = Object.getPrototypeOf(v)
+  if (proto !== Object.prototype && proto !== null) return false
+  return Object.values(v).every((x) => survivesJson(x, depth + 1))
+}
+
+/** The persisted keys of a state: what partialize returns, minus functions. */
+function persisted(store: StoreLike, state: unknown): { raw: Image; refused: Set<string> } | undefined {
   try {
     const partialize = store.persist?.getOptions?.().partialize
     const part = partialize ? partialize(state as never) : state
     if (!isObject(part) || Array.isArray(part)) return undefined
-    const plain = Object.fromEntries(Object.entries(part).filter(([, v]) => typeof v !== 'function'))
-    return JSON.parse(JSON.stringify(plain)) as Image
+    const raw = Object.fromEntries(Object.entries(part).filter(([, v]) => typeof v !== 'function'))
+    const refused = new Set<string>()
+    // A key partialize renames or derives can't be written back to the state under that name.
+    if (partialize && isObject(state))
+      for (const [k, v] of Object.entries(raw)) if (!(k in state) || !Object.is(state[k], v)) refused.add(k)
+    return { raw, refused }
   } catch {
     return undefined
   }
 }
+
+const differs = (a: unknown, b: unknown) =>
+  survivesJson(a) && survivesJson(b) ? !same(a, b) : !Object.is(a, b)
+
+const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as unknown
 
 const same = (a: unknown, b: unknown): boolean => {
   if (Object.is(a, b)) return true
@@ -317,9 +339,24 @@ export function storeTools(
         const out: Record<string, StoreJournal> = {}
         for (const [name, store] of Object.entries(stores)) {
           if (!store.persist || !snapshots.has(store)) continue
-          const original = image(store, snapshots.get(store))
-          const after = image(store, store.getState())
-          if (original && after && !same(original, after)) out[name] = { original, after }
+          const before = persisted(store, snapshots.get(store))
+          const now = persisted(store, store.getState())
+          if (!before || !now) continue
+          const entry: StoreJournal = { original: {}, after: {} }
+          const skipped: string[] = []
+          for (const k of new Set([...Object.keys(before.raw), ...Object.keys(now.raw)])) {
+            const a = before.raw[k]
+            const b = now.raw[k]
+            if (!differs(a, b)) continue
+            if (before.refused.has(k) || now.refused.has(k) || !survivesJson(a) || !survivesJson(b)) {
+              skipped.push(k)
+              continue
+            }
+            if (k in before.raw) entry.original[k] = json(a)
+            if (k in now.raw) entry.after[k] = json(b)
+          }
+          if (skipped.length) entry.skipped = skipped
+          if (skipped.length || Object.keys(entry.original).length || Object.keys(entry.after).length) out[name] = entry
         }
         return Object.keys(out).length ? out : undefined
       },
@@ -334,7 +371,13 @@ export function storeTools(
         const names = Object.keys(data)
         for (const [name, entry] of Object.entries(data)) {
           const store = stores[name]
-          if (!isObject(entry) || !isObject(entry.original) || !isObject(entry.after)) {
+          const skipped = (entry as { skipped?: unknown } | null)?.skipped
+          if (
+            !isObject(entry) ||
+            !isObject(entry.original) ||
+            !isObject(entry.after) ||
+            (skipped !== undefined && !(Array.isArray(skipped) && skipped.every((k) => typeof k === 'string')))
+          ) {
             (result.invalid ??= []).push(name)
             continue
           }
@@ -342,18 +385,34 @@ export function storeTools(
             retry[name] = entry
             continue
           }
-          const current = image(store, store.getState())
-          const saved = snapshots.has(store) ? image(store, snapshots.get(store)) : undefined
-          // The new load may already have saved the agent's value as its snapshot.
-          const savedFake = !!saved && same(saved, entry.after)
-          if (!savedFake && current && same(current, entry.original)) result.already.push(name)
-          else if (savedFake || (current && same(current, entry.after))) {
-            const next: Record<string, unknown> = { ...(store.getState() as Image) }
-            for (const k of Object.keys(entry.after)) if (!(k in entry.original)) delete next[k]
-            snapshots.set(store, { ...next, ...entry.original })
+          for (const k of skipped ?? []) (result.notKept ??= []).push(`${name}:${k}`)
+          const now = persisted(store, store.getState())
+          const saved = snapshots.has(store) ? persisted(store, snapshots.get(store)) : undefined
+          const eq = (x: Image, y: Image, k: string) => (k in x) === (k in y) && (!(k in x) || same(x[k], y[k]))
+          const back: string[] = []
+          for (const k of new Set([...Object.keys(entry.original), ...Object.keys(entry.after)])) {
+            const label = `${name}:${k}`
+            if (!now || now.refused.has(k) || (k in now.raw && !survivesJson(now.raw[k]))) {
+              (result.notKept ??= []).push(label)
+              continue
+            }
+            // The new load may already have saved the agent's value as its snapshot.
+            const savedFake = !!saved && (!(k in saved.raw) || survivesJson(saved.raw[k])) && eq(saved.raw, entry.after, k)
+            if (!savedFake && eq(now.raw, entry.original, k)) result.already.push(label)
+            else if (savedFake || eq(now.raw, entry.after, k)) {
+              back.push(k)
+              result.adopted.push(label)
+            } else result.changed.push(label)
+          }
+          if (back.length) {
+            const next: Record<string, unknown> = { ...((snapshots.get(store) ?? store.getState()) as Image) }
+            for (const k of back) {
+              if (k in entry.original) next[k] = entry.original[k]
+              else delete next[k]
+            }
+            snapshots.set(store, next)
             rev += 1
-            result.adopted.push(name)
-          } else result.changed.push(name)
+          }
         }
         if (Object.keys(retry).length) result.retry = retry
         return result

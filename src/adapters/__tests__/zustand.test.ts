@@ -306,7 +306,7 @@ describe('store journal', () => {
     const journal = part(tools).journal()
     const reloaded = make({ token: 'fake', theme: 'light' })
     const tools2 = storeTools({ auth: reloaded })
-    expect(await part(tools2).adopt(journal)).toMatchObject({ adopted: ['auth'] })
+    expect(await part(tools2).adopt(journal)).toMatchObject({ adopted: ['auth:token'] })
     expect(reloaded.getState().token).toBe('fake')
     run(tools2, 'store.restore')
     expect(reloaded.getState().token).toBe('real')
@@ -319,8 +319,79 @@ describe('store journal', () => {
     run(tools, 'store.set', 'auth', { token: 'fake' })
     const journal = part(tools).journal()
     const changed = storeTools({ auth: make({ token: 'app-token' }) })
-    expect(await part(changed).adopt(journal)).toMatchObject({ changed: ['auth'] })
+    expect(await part(changed).adopt(journal)).toMatchObject({ changed: ['auth:token'] })
     const cold = storeTools({ auth: make({ token: 'fake' }, false) }, {})
     expect(await part(cold).adopt(journal)).toMatchObject({ retry: journal })
+  })
+
+  type Wide = Record<string, unknown> & { setX: () => void }
+  const wide = (state: Record<string, unknown>, partialize?: (s: Wide) => unknown, hydrated = true) => {
+    const store = createStore<Wide>()(() => ({ setX: () => {}, ...state }) as Wide)
+    return Object.assign(store, {
+      persist: {
+        getOptions: () => ({ partialize }),
+        hasHydrated: () => hydrated,
+        onFinishHydration: () => () => {},
+      },
+    })
+  }
+
+  test('a key that is not JSON is not journaled and is named as not kept', async () => {
+    const day = new Date(0)
+    const auth = wide({ token: 'real', seen: new Set(['a']), day })
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake', seen: new Set(['b']), day: new Date(5) })
+    const journal = part(tools).journal()
+    expect(journal).toEqual({
+      auth: { original: { token: 'real' }, after: { token: 'fake' }, skipped: ['seen', 'day'] },
+    })
+    const reloaded = wide({ token: 'fake', seen: new Set(['b']), day: new Date(5) })
+    const tools2 = storeTools({ auth: reloaded })
+    expect(await part(tools2).adopt(journal)).toMatchObject({
+      adopted: ['auth:token'],
+      notKept: ['auth:seen', 'auth:day'],
+    })
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBe('real')
+    expect((reloaded.getState().seen as Set<string>).has('b')).toBe(true)
+  })
+
+  test('restore writes only the keys the agent changed; a boot-time write to another key survives', async () => {
+    const auth = wide({ token: 'real', launchCount: 1, seen: new Set(['a']) })
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    const reloaded = wide({ token: 'fake', launchCount: 2, seen: new Set(['a']) })
+    const seenBefore = reloaded.getState().seen
+    const tools2 = storeTools({ auth: reloaded })
+    expect(await part(tools2).adopt(journal)).toMatchObject({ adopted: ['auth:token'] })
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBe('real')
+    expect(reloaded.getState().launchCount).toBe(2)
+    expect(reloaded.getState().seen).toBe(seenBefore)
+  })
+
+  test('journals only what partialize returns, mapped back only when the key is the same value', async () => {
+    const keep = (s: Wide) => ({ token: s.token })
+    const auth = wide({ token: 'real', theme: 'light' }, keep)
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake', theme: 'dark' })
+    expect(part(tools).journal()).toEqual({
+      auth: { original: { token: 'real' }, after: { token: 'fake' } },
+    })
+  })
+
+  test('a partialize that renames keys is refused and named', async () => {
+    const rename = (s: Wide) => ({ saved: s.token })
+    const auth = wide({ token: 'real' }, rename)
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    expect(journal).toEqual({ auth: { original: {}, after: {}, skipped: ['saved'] } })
+    const reloaded = wide({ token: 'fake' }, rename)
+    const tools2 = storeTools({ auth: reloaded })
+    expect(await part(tools2).adopt(journal)).toMatchObject({ adopted: [], notKept: ['auth:saved'] })
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBe('fake')
   })
 })

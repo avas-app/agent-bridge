@@ -8,6 +8,8 @@ type AdoptReply = Record<
     already?: string[]
     changed?: string[]
     invalid?: string[]
+    skipped?: string[]
+    notKept?: string[]
     retry?: unknown
     error?: string
   }
@@ -114,6 +116,8 @@ export function createJournal(
         const already: string[] = []
         const changed: string[] = []
         const invalid: string[] = []
+        const skipped: string[] = []
+        const notKept: string[] = []
         for (const area of Object.keys(sent)) {
           const part = reply[area]
           if (!part) continue
@@ -121,6 +125,8 @@ export function createJournal(
           already.push(...(part.already ?? []))
           changed.push(...(part.changed ?? []))
           invalid.push(...(part.invalid ?? []))
+          skipped.push(...(part.skipped ?? []))
+          notKept.push(...(part.notKept ?? []))
           if (part.retry !== undefined) {
             carry[area] = part.retry
             reasons[area] = part.error ?? 'not ready'
@@ -130,6 +136,8 @@ export function createJournal(
           bits.push(`kept ${adopted.length} undo${adopted.length === 1 ? '' : 's'} across the reload (${adopted.join(', ')}); bridge.restore still puts them back`)
         if (already.length) bits.push(`already back to the original: ${already.join(', ')}`)
         if (changed.length) bits.push(`left alone, the app changed them since: ${changed.join(', ')}`)
+        if (skipped.length) bits.push(`left alone, a different storage instance than the one you wrote: ${skipped.join(', ')}`)
+        if (notKept.length) bits.push(`not kept across reload (not plain JSON, or renamed by partialize): ${notKept.join(', ')}`)
         if (invalid.length) bits.push(`ignored, not a value this session saved: ${invalid.join(', ')}`)
       }
       if (Object.keys(carry).length) {

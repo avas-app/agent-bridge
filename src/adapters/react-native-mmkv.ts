@@ -2,6 +2,8 @@ import type { AdoptResult, Tools } from '../runtime/types'
 
 /** The MMKV surface this adapter uses. v3 has `delete`, v4 has `remove`. */
 export type MMKVLike = {
+  /** MMKV v2 and v3 instances carry their `id`; v4 does not. Used only to tell instances apart. */
+  id?: string
   getAllKeys: () => string[]
   getString: (key: string) => string | undefined
   set: (key: string, value: string | number | boolean) => void
@@ -23,8 +25,10 @@ const written = new WeakMap<MMKVLike, Map<string, string | null | 'native'>>()
 // Module state, not shared: only this adapter's own tools read it.
 let rev = 0
 
-type JournalEntry = { original: string | null; written: string | null }
+type JournalEntry = { original: string | null; written: string | null; id?: string }
 type Journal = Record<string, Record<string, JournalEntry>>
+
+const idOf = (mmkv: MMKVLike) => (typeof mmkv.id === 'string' ? mmkv.id : undefined)
 
 const isPlain = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v)
@@ -115,7 +119,8 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
           for (const [key, original] of saved ?? []) {
             const now = written.get(mmkv)?.get(key)
             if (original === null || now === undefined || now === 'native') continue
-            ;(out[name] ??= {})[key] = { original: original ?? null, written: now }
+            const id = idOf(mmkv)
+            ;(out[name] ??= {})[key] = { original: original ?? null, written: now, ...(id !== undefined && { id }) }
           }
         }
         return Object.keys(out).length ? out : undefined
@@ -138,11 +143,21 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
             const label = `${name}:${key}`
             const e = entry as Partial<JournalEntry> | null
             const text = (v: unknown) => v === null || typeof v === 'string'
-            if (!isPlain(e) || !text(e.original) || !text(e.written)) {
+            if (!isPlain(e) || !text(e.original) || !text(e.written) || (e.id !== undefined && typeof e.id !== 'string')) {
               (result.invalid ??= []).push(label)
               continue
             }
+            const now = idOf(mmkv)
+            if (e.id !== undefined && now !== undefined && e.id !== now) {
+              (result.skipped ??= []).push(label)
+              continue
+            }
             const exists = mmkv.contains?.(key) ?? mmkv.getAllKeys().includes(key)
+            // An absent key proves nothing about a delete unless the same instance is confirmed.
+            if (!exists && e.written === null && !(e.id !== undefined && e.id === now)) {
+              result.already.push(label)
+              continue
+            }
             const current = exists ? (mmkv.getString(key) ?? undefined) : null
             // The new load may already have saved the agent's value as the original.
             const saved = originals.get(mmkv)
