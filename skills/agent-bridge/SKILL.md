@@ -103,7 +103,7 @@ npx @avasapp/agent-bridge call screen.snapshot                       # buttons, 
 npx @avasapp/agent-bridge call screen.press '"add-plant"'            # by testID, label or text
 npx @avasapp/agent-bridge call screen.fill '["plant-name", "Fern"]'  # runs the input's handlers
 npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'   # {"gone": true} waits for it to go
-npx @avasapp/agent-bridge call router.navigate /inbox
+npx @avasapp/agent-bridge call router.navigate /inbox   # React Navigation apps: nav.navigate Inbox
 ```
 
 `press` and `fill` return once the app has rendered the result, so the next

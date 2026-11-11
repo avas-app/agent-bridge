@@ -101,7 +101,7 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 - [Built-in tools and restore](docs/built-in-tools.md)
 - [The CLI, flows and the client](docs/cli.md)
 - [Scenarios](docs/scenarios.md): signed-in state, strict network, fixtures, gates
-- [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, Expo Router, network
+- [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, Expo Router, React Navigation, network
 - [WebViews](docs/webviews.md)
 - [Realtime](docs/realtime.md): Ably, socket.io, any other library
 - [Security and release builds](docs/security.md)
