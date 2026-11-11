@@ -25,6 +25,8 @@ export const LIBRARIES = {
   webview: 'react-native-webview',
   zustand: 'zustand',
   mmkv: 'react-native-mmkv',
+  asyncStorage: '@react-native-async-storage/async-storage',
+  secureStore: 'expo-secure-store',
   ably: 'ably',
   socketIo: 'socket.io-client',
   reactNavigation: '@react-navigation/native',

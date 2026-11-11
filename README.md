@@ -45,6 +45,8 @@ import { expoTransport } from '@avasapp/agent-bridge/expo'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { mmkvTools } from '@avasapp/agent-bridge/react-native-mmkv'
+import { asyncStorageTools } from '@avasapp/agent-bridge/async-storage'
+import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
 import { networkTools } from '@avasapp/agent-bridge/network'
 import { router, useNavigationContainerRef } from 'expo-router'
@@ -65,6 +67,8 @@ export function AgentBridge() {
         { redact: { auth: ['accessToken', 'refreshToken', 'user.phone'] } },
       ),
       ...mmkvTools({ storage }),
+      ...asyncStorageTools(AsyncStorage),
+      ...secureStoreTools(SecureStore, ['authToken']),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...networkTools(),
       // Your own tools: any function, JSON in and out.
@@ -101,7 +105,7 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 - [Built-in tools and restore](docs/built-in-tools.md)
 - [The CLI, flows and the client](docs/cli.md)
 - [Scenarios](docs/scenarios.md): signed-in state, strict network, fixtures, gates
-- [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, Expo Router, network
+- [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, AsyncStorage, SecureStore, Expo Router, network
 - [WebViews](docs/webviews.md)
 - [Realtime](docs/realtime.md): Ably, socket.io, any other library
 - [Security and release builds](docs/security.md)

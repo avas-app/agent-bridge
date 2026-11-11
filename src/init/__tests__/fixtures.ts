@@ -177,6 +177,8 @@ export const BARE_JS: Tree = {
   'package.json': pkg({
     '@react-navigation/native': '^7.0.0',
     'react-native-mmkv': '^3.0.0',
+    '@react-native-async-storage/async-storage': '^2.0.0',
+    'expo-secure-store': '^15.0.0',
     react: '19.2.0',
     'react-native': '0.86.0',
   }),

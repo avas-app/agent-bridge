@@ -66,6 +66,14 @@
       "types": "./dist/adapters/socket-io.d.cts",
       "default": "./entries/socket.io.cjs"
     },
+    "./async-storage": {
+      "types": "./dist/adapters/async-storage.d.cts",
+      "default": "./entries/async-storage.cjs"
+    },
+    "./secure-store": {
+      "types": "./dist/adapters/secure-store.d.cts",
+      "default": "./entries/secure-store.cjs"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",
@@ -93,6 +101,8 @@
     "tanstack-query",
     "zustand",
     "mmkv",
+    "async-storage",
+    "secure-store",
     "realtime",
     "ably",
     "socket.io",
@@ -112,7 +122,9 @@
   },
   "peerDependencies": {
     "@tanstack/query-core": ">=5",
+    "@react-native-async-storage/async-storage": ">=1",
     "expo": ">=52",
+    "expo-secure-store": ">=13",
     "react": ">=18",
     "react-native": ">=0.76",
     "react-native-webview": ">=13"
@@ -121,7 +133,13 @@
     "@tanstack/query-core": {
       "optional": true
     },
+    "@react-native-async-storage/async-storage": {
+      "optional": true
+    },
     "expo": {
+      "optional": true
+    },
+    "expo-secure-store": {
       "optional": true
     },
     "react-native-webview": {

@@ -7,7 +7,7 @@ npx @avasapp/agent-bridge session stop             # runs bridge.restore
 npx @avasapp/agent-bridge session stop --keep      # leaves the app as is; warns about anything still pending
 ```
 
-`bridge.restore` unpins queries, puts back store and MMKV values, removes
+`bridge.restore` unpins queries, puts back store, MMKV, AsyncStorage and SecureStore values, removes
 network mocks, unmutes realtime channels and ends a faked connection state,
 then undoes active scenarios (newest first), so the next run starts from the
 real state. With `session stop --keep`, a later restore will still apply what

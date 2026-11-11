@@ -12,6 +12,8 @@ const appEntries = {
   'realtime/index': 'src/realtime/index.ts',
   'adapters/ably': 'src/adapters/ably.ts',
   'adapters/socket-io': 'src/adapters/socket-io.ts',
+  'adapters/async-storage': 'src/adapters/async-storage.ts',
+  'adapters/secure-store': 'src/adapters/secure-store.ts',
 }
 
 const noopEntries = {
@@ -26,6 +28,8 @@ const noopEntries = {
   'noop/realtime': 'src/noop/realtime.ts',
   'noop/ably': 'src/noop/ably.ts',
   'noop/socket-io': 'src/noop/socket-io.ts',
+  'noop/async-storage': 'src/noop/async-storage.ts',
+  'noop/secure-store': 'src/noop/secure-store.ts',
 }
 
 export default defineConfig([
