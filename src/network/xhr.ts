@@ -1,5 +1,6 @@
 import { signalMockAnswered } from '../shared/mock-signal'
 import { bodyText, errorMessage } from './body'
+import { parseHeaderBlock } from './headers'
 import {
   answer,
   blockedResponse,
@@ -65,6 +66,7 @@ function track(xhr: XMLHttpRequest, entry: Entry): void {
       error,
       responseBody: text,
       contentType: xhr.getResponseHeader?.('content-type') ?? undefined,
+      responseHeaders: error ? undefined : parseHeaderBlock(xhr.getAllResponseHeaders?.()),
     })
     // Blobs and array buffers aren't logged, so they can't become a mock either.
     if (!error && text === undefined) markResponse(entry, 'none')
@@ -169,16 +171,23 @@ export function patchXhr(state: NetworkState): (() => void) | null {
     if (!meta || meta.internal || isSkipped(state, meta.url))
       return send.call(this, body)
 
+    // An abort() before send() cancels nothing; only one after it does.
+    meta.aborted = false
     const { method, url } = meta
     const text = bodyText(body)
     const entry = startEntry(state, {
       method,
       url,
       requestBody: text,
+      requestHeaders: meta.headers,
     })
     // No mock answered: the network, or strict mode's error response.
     const passOn = () => {
-      const blocked = blockedResponse(state, method, url)
+      if (meta.aborted) {
+        finishEntry(entry, { error: 'aborted' })
+        return
+      }
+      const blocked = blockedResponse(state, method, url, text)
       if (!blocked) {
         track(this, entry)
         return send.call(this, body)
@@ -189,7 +198,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
         entry,
         isOffline(blocked)
           ? { error: `${OFFLINE_MESSAGE} (strict network)` }
-          : { status, responseBody: out, contentType: contentTypeOf(headers) },
+          : { status, responseBody: out, contentType: contentTypeOf(headers), responseHeaders: headers },
       )
       // Answered after send returns, as a real response would be.
       void Promise.resolve().then(() => {
@@ -197,7 +206,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
       })
     }
 
-    const candidates = matchingMocks(state, method, url)
+    const candidates = matchingMocks(state, method, url, { text })
     if (!candidates.length) return passOn()
 
     const request = async () => mockRequest(method, url, meta.headers, text)
@@ -217,7 +226,7 @@ export function patchXhr(state: NetworkState): (() => void) | null {
           entry,
           offline
             ? { error: `${OFFLINE_MESSAGE} (mocked offline)` }
-            : { status, responseBody: out, contentType: contentTypeOf(headers) },
+            : { status, responseBody: out, contentType: contentTypeOf(headers), responseHeaders: headers },
         )
         respond(this, hit.response, url)
       },

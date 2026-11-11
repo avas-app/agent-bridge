@@ -3,15 +3,18 @@ import { signalMocksRemoved } from '../shared/mock-signal'
 import { type ApiRoutes, apiRoutes, type MockApiOptions } from './api'
 import { truncateBody } from './body'
 import { patchFetch } from './fetch'
+import { compileMatch, operationName } from './match'
 import {
   addMock,
   deriveDevHost,
   fullResponse,
   type Mock,
   mockOrder,
+  mockRequest,
   networkState,
   publicEntry,
   removeMocks,
+  requestBodyForMatch,
   shadowedMocks,
   strictRule,
   strictRules,
@@ -99,6 +102,8 @@ export function strictNetwork(options: StrictOptions = {}): () => void {
 export type NetworkToolsOptions = {
   /** Extra URLs never to log or mock: substrings or RegExps. */
   skip?: Array<string | RegExp>
+  /** How many requests `net.log` keeps. Default 100. */
+  logSize?: number
 }
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -150,6 +155,7 @@ const describeMock = (m: Mock, full?: boolean) => ({
   id: m.id,
   source: m.source,
   match: describeMatch(m.match),
+  matches: m.matches,
   ...describeResponse(m.response, full),
   times: m.times,
   hits: m.hits,
@@ -162,6 +168,11 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
   installNetwork()
   const state = networkState()
   if (options.skip) state.skip = options.skip
+  if (options.logSize !== undefined) {
+    if (!Number.isInteger(options.logSize) || options.logSize < 1)
+      throw new Error('logSize must be a whole number of at least 1')
+    state.logSize = options.logSize
+  }
   const isAgent = (m: Mock) => m.source === 'agent'
   const logged = (id: number) => {
     const entry = state.log.find((e) => e.id === id)
@@ -175,7 +186,9 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
   ) => {
     const added = addMock(state, 'agent', match, response, { times, delayMs, priority })
     const shadows = shadowedMocks(state, added).map((m) => m.id)
-    return shadows.length ? { id: added.id, shadows } : { id: added.id }
+    return shadows.length
+      ? { id: added.id, matches: added.matches, shadows }
+      : { id: added.id, matches: added.matches }
   }
 
   return {
@@ -213,12 +226,13 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
     },
     'net.entry': {
       description:
-        'One logged request by id, with its request and response bodies whole (not cut at ~2 KB). Ids come from net.log.',
-      run: (id: number) => publicEntry(logged(id), true),
+        'One logged request by id, with its request and response bodies whole (not cut at ~2 KB) and its request and response headers (lower-case names). Authorization, Cookie, Set-Cookie, Proxy-Authorization and X-Api-Key values are cut to a short prefix; { full: true } as the second argument shows them whole. Ids come from net.log.',
+      run: (id: number, options: { full?: boolean } = {}) =>
+        publicEntry(logged(id), true, options?.full ? 'full' : 'cut'),
     },
     'net.mock': {
       description:
-        'Answer matching requests with a canned response until unmocked. match: "/path" or { url: string | { regex }, method? }. response: { status?, json?, body?, headers? } or { offline: true }. options: { times?, delayMs?, priority? }. The newest mock is tried first, so a later broad mock shadows an earlier specific one; give the specific one a higher priority (default 0, ties newest first; negative makes a fallback); agent mocks still come before the app mocks. The result lists `shadows` when the new mock will be tried before an agent mock it also matches.',
+        'Answer matching requests with a canned response until unmocked. match: "/path" (any URL containing it) or { url?: string | { regex }, path?: "/orders/:id" (the whole path on any host, query ignored; :name is one segment, * the rest), method?, body?: JSON subset the JSON request body must contain (objects by key, arrays by length and position), graphql?: "OperationName" (operationName in the JSON body or ?operationName=) }; every key given must match and one of url, path, body, graphql is required. The result has `matches`, which says in words what the mock matches. response: { status?, json?, body?, headers? } or { offline: true }. options: { times?, delayMs?, priority? }. The newest mock is tried first, so a later broad mock shadows an earlier specific one; give the specific one a higher priority (default 0, ties newest first; negative makes a fallback); agent mocks still come before the app mocks. The result lists `shadows` when the new mock will be tried before an agent mock it also matches.',
       run: (
         match: MockMatch,
         response: MockResponse,
@@ -229,9 +243,54 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
         return addAgentMock(match, response, mockOptions)
       },
     },
+    'net.waitFor': {
+      description:
+        'Wait until a request matching `match` (as net.mock: "/path" or { url?, path?, method?, body?, graphql? }) has finished, and return its entry like net.entry. Finished requests already in the log count, so pass { sinceId } (a log id from net.log) to ignore older ones. [match, { timeoutMs?: 5000, status?, sinceId? }]. A request that failed, was mocked or blocked still counts; status narrows it. Body and graphql checks need the request body: JSON up to 1 MB, and a Request object\'s body only when a mock read it. Times out with an error saying what it looked at.',
+      run: (
+        match: MockMatch,
+        waitOptions: { timeoutMs?: number; status?: number; sinceId?: number } = {},
+      ) => {
+        const compiled = compileMatch(match)
+        const { timeoutMs = 5000, status, sinceId } = waitOptions ?? {}
+        if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 120_000)
+          throw new Error('timeoutMs must be between 1 and 120000')
+        const deadline = Date.now() + timeoutMs
+        let unreadable = 0
+        const find = () => {
+          unreadable = 0
+          for (const e of state.log) {
+            // The body is read after the headers; an entry whose body is still coming isn't finished.
+            if (e.pending || fullResponse(e).state === 'pending') continue
+            if (sinceId !== undefined && e.id <= sinceId) continue
+            if (status !== undefined && e.status !== status) continue
+            if (!compiled.test(e.method, e.url)) continue
+            if (!compiled.needsBody) return e
+            const body = requestBodyForMatch(e)
+            if (body === undefined && e.requestBody !== undefined) unreadable += 1
+            else if (compiled.testBody(mockRequest(e.method, e.url, {}, body))) return e
+          }
+          return undefined
+        }
+        return (async () => {
+          for (;;) {
+            const found = find()
+            if (found) return publicEntry(found, true, 'cut')
+            if (Date.now() >= deadline) break
+            await new Promise((resolve) => setTimeout(resolve, 25))
+          }
+          throw new Error(
+            `Timed out after ${timeoutMs} ms waiting for a finished request matching ${compiled.matches}${
+              status !== undefined ? ` with status ${status}` : ''
+            }${
+              unreadable ? ` (${unreadable} matched the URL but their body was not kept)` : ''
+            }; ${state.log.length} requests are logged`,
+          )
+        })()
+      },
+    },
     'net.mockFromLog': {
       description:
-        'Mock the same method and URL as a logged request (id from net.log) with its status and whole response body, optionally changed by patch: JSON objects merge deeply, other values replace. [id, patch?, options?] options as net.mock. Returns { id, match, response }.',
+        'Mock the same method and URL as a logged request (id from net.log) with its status and whole response body, optionally changed by patch: JSON objects merge deeply, other values replace. [id, patch?, options?] options as net.mock. Returns { id, matches, match, response }; on a GraphQL request the mock only matches that operationName; `warning` appears when a POST body was not kept and the mock may answer other operations too.',
       run: (
         id: number,
         patch?: unknown,
@@ -267,13 +326,32 @@ export function networkTools(options: NetworkToolsOptions = {}): Tools {
           response.body = body
           if (contentType) response.headers = { 'content-type': contentType }
         }
-        const match = { url: { regex: `^${escapeRegex(entry.url)}$` }, method: entry.method }
-        return { ...addAgentMock(match, response, mockOptions), match: { url: entry.url, method: entry.method }, response }
+        // A GraphQL endpoint is one URL for every operation: keep this mock to the logged one.
+        const sent = requestBodyForMatch(entry)
+        let graphql = operationName(mockRequest(entry.method, entry.url, {}, sent))
+        // A body too long to keep whole still shows its start; operationName usually comes first.
+        if (!graphql && sent === undefined && entry.requestBody !== undefined)
+          graphql = /"operationName":"((?:[^"\\]|\\.)*)"/.exec(entry.requestBody)?.[1]
+        const unread =
+          !graphql && !['GET', 'HEAD'].includes(entry.method) && sent === undefined
+            ? 'This request\'s body was not kept, so the mock matches every request to that URL, whatever its GraphQL operation. Check it, or unmock and use net.mock with graphql.'
+            : undefined
+        const match = {
+          url: { regex: `^${escapeRegex(entry.url)}$` },
+          method: entry.method,
+          ...(graphql && { graphql }),
+        }
+        return {
+          ...addAgentMock(match, response, mockOptions),
+          match: { url: entry.url, method: entry.method, ...(graphql && { graphql }) },
+          response,
+          ...(unread && { warning: unread }),
+        }
       },
     },
     'net.mocks': {
       description:
-        'Active mocks, agent and app, in the order they are tried. Response json and body over ~2 KB are cut like net.log (json shown as its cut JSON text, "… (+N chars)"), with truncated: true; { full: true } returns them whole.',
+        'Active mocks, agent and app, in the order they are tried, each with `matches` in words. Response json and body over ~2 KB are cut like net.log (json shown as its cut JSON text, "… (+N chars)"), with truncated: true; { full: true } returns them whole.',
       run: (options: { full?: boolean } = {}) =>
         [...state.mocks].sort(mockOrder).map((m) => describeMock(m, options.full)),
     },
