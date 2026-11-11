@@ -148,4 +148,17 @@ describe('socketIoTools', () => {
     expect(onDisconnect).toHaveBeenCalledTimes(2)
     expect(a.mock.calls).toEqual([['fake']])
   })
+
+  test('logs what the app emits, without the ack callback, and still sends it', () => {
+    const { socket, tools, connect } = setup()
+    connect()
+    const send = mock()
+    ;(socket as unknown as { packet: unknown }).packet = send
+    socket.emit('chat:send', { text: 'hi' }, () => {})
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(run(tools, 'realtime.log')).toEqual([
+      expect.objectContaining({ channel: 'chat:send', data: { text: 'hi' }, sent: true, injected: false }),
+    ])
+  })
 })

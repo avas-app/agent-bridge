@@ -45,6 +45,8 @@ export type NetworkState = {
   strictAgent: StrictRule | false | null
   /** Requests strict mode failed, by "METHOD url". */
   blocked: Map<string, { method: string; url: string; count: number }>
+  /** From `device.offline`: every request fails like offline, mocks included. */
+  deviceOffline?: boolean
 }
 
 export type StrictRule = {
@@ -357,11 +359,17 @@ export function shadowedMocks(state: NetworkState, added: Mock): Mock[] {
   })
 }
 
+/** Makes every request fail like offline (mocks included) until false. */
+export function setDeviceOffline(offline: boolean): void {
+  networkState().deviceOffline = offline
+}
+
 export function matchingMocks(
   state: NetworkState,
   method: string,
   url: string,
 ): Mock[] {
+  if (state.deviceOffline) return []
   return state.mocks.filter((m) => m.test(method, url)).sort(mockOrder)
 }
 
@@ -471,6 +479,7 @@ export function blockedResponse(
   method: string,
   url: string,
 ): MockResponse | null {
+  if (state.deviceOffline) return { offline: true }
   const rules = strictRules(state)
   if (!rules.length || rules.some((r) => r.allow.some((test) => test(url))))
     return null

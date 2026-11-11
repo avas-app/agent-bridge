@@ -1,4 +1,4 @@
-import { fakeableConnection, realtimeAdapter, tapListeners } from '../realtime/patch'
+import { fakeableConnection, realtimeAdapter, tapListeners, tapOutgoing } from '../realtime/patch'
 import { createRealtimeTap } from '../realtime/tap'
 
 // oxlint-disable-next-line no-explicit-any -- socket.io listeners take any arguments
@@ -9,6 +9,7 @@ export type SocketLike = {
   on(event: string, listener: Listener): unknown
   off(event?: string, listener?: Listener): unknown
   connected?: boolean
+  emit?(event: string, ...args: never[]): unknown
 }
 
 export type SocketIoToolsOptions = {
@@ -65,6 +66,16 @@ export const socketIoTools = realtimeAdapter(
       channel: ([event]) =>
         typeof event === 'string' && !RESERVED.has(event) ? event : undefined,
       message: 'args',
+    })
+    // `send` goes through emit; an ack callback is not part of the message.
+    tapOutgoing(tap, socket, {
+      methods: 'emit',
+      channel: ([event]) =>
+        typeof event === 'string' && !RESERVED.has(event) ? event : undefined,
+      describe: ([, ...args]) => {
+        const values = args.filter((a) => typeof a !== 'function')
+        return { data: values.length === 1 ? values[0] : values }
+      },
     })
     return tap
   },

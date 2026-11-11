@@ -66,6 +66,10 @@
       "types": "./dist/adapters/socket-io.d.cts",
       "default": "./entries/socket.io.cjs"
     },
+    "./device": {
+      "types": "./dist/adapters/device.d.cts",
+      "default": "./entries/device.cjs"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",

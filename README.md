@@ -104,6 +104,7 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 - [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, Expo Router, network
 - [WebViews](docs/webviews.md)
 - [Realtime](docs/realtime.md): Ably, socket.io, any other library
+- [Device events](docs/device-events.md): deep links, app state, offline, push notifications, the clock
 - [Security and release builds](docs/security.md)
 - [Benchmarks](docs/benchmarks.md)
 

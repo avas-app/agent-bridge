@@ -1,5 +1,5 @@
 import type { Tools } from '../runtime/types'
-import type { RealtimeConnection, RealtimeTap } from './tap'
+import type { MessageSummary, RealtimeConnection, RealtimeTap } from './tap'
 
 // oxlint-disable-next-line no-explicit-any -- patched methods take whatever the library takes
 type AnyFn = (...args: any[]) => unknown
@@ -99,6 +99,40 @@ export function tapListeners<M>(
       let result: unknown
       for (const hit of hits) result = remove.apply(this, [...hit.key, hit.wrapped])
       return result
+    }
+  }
+}
+
+export type TapOutgoingOptions = {
+  /** Methods that send, e.g. "emit" or "publish". */
+  methods: string | string[]
+  /** The channel a call is for, from its arguments. Return undefined to leave the call unlogged. */
+  channel: (args: unknown[]) => string | undefined
+  /** What to log for the call. */
+  describe: (args: unknown[]) => MessageSummary
+}
+
+/**
+ * Logs what the app sends through `target`'s methods in `realtime.log`
+ * (`sent: true`). The call itself always goes through untouched.
+ */
+export function tapOutgoing(
+  tap: Pick<RealtimeTap<never>, 'sent'>,
+  target: object,
+  options: TapOutgoingOptions,
+): void {
+  const methods = target as Methods
+  for (const name of list(options.methods)) {
+    const send = methods[name]
+    if (typeof send !== 'function') continue
+    methods[name] = function (this: unknown, ...args: unknown[]) {
+      try {
+        const channel = options.channel(args)
+        if (channel !== undefined) tap.sent(channel, options.describe(args))
+      } catch {
+        // Logging must never change what the app sends.
+      }
+      return send.apply(this, args)
     }
   }
 }

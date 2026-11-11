@@ -1,0 +1,5 @@
+---
+"@avasapp/agent-bridge": minor
+---
+
+New opt-in `@avasapp/agent-bridge/device` entry with `deviceTools({ NetInfo, Notifications, navigation, time })`. `device.openUrl` delivers an incoming deep link to the app's Linking listeners (and makes `getInitialURL` return it), returning the route the app ended on when you pass the navigation container. `device.appState` fires AppState change listeners and sets `AppState.currentState`. `device.offline` makes every `fetch` and XHR fail like no network, mocks included, and tells NetInfo. `device.notification` calls expo-notifications' received or (with `{tapped: true}`) response listeners. `device.setTime` (with `time: true`) shifts `Date.now()` and `new Date()`. `device.restore` undoes all of it and `bridge.pending` lists what is set. The Ably and socket.io adapters now also log what the app sends (`channel.publish`, `socket.emit`) in `realtime.log` with `sent: true`; `createRealtimeTap` gets `sent()` and `@avasapp/agent-bridge/realtime` exports `tapOutgoing` for custom taps.
