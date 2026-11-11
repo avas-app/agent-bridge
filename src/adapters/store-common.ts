@@ -15,7 +15,7 @@ export function toPath(part: unknown): Path {
   )
     return part
   throw new Error(
-    `A store path is a dotted string or an array of segments, got ${JSON.stringify(part)}`,
+    `A path is a dotted string or an array of segments, got ${JSON.stringify(part)}`,
   )
 }
 
@@ -33,7 +33,7 @@ type GetOptions = { pick?: unknown[]; keys?: boolean }
 
 // store.get("s", "a", "b.c", ["d"], { pick }): everything between the name
 // and a trailing options object is the path.
-export function readState(state: unknown, given: unknown[]): unknown {
+export function readState(state: unknown, given: unknown[], tool = 'store.get'): unknown {
   // null and undefined mean no path or options.
   const args = given.filter((a) => a != null)
   const last = args.at(-1)
@@ -42,12 +42,12 @@ export function readState(state: unknown, given: unknown[]): unknown {
   const unknown = Object.keys(options).filter((k) => k !== 'pick' && k !== 'keys')
   if (unknown.length)
     throw new Error(
-      `Unknown store.get option ${unknown.map((k) => `"${k}"`).join(', ')}. Options: pick, keys`,
+      `Unknown ${tool} option ${unknown.map((k) => `"${k}"`).join(', ')}. Options: pick, keys`,
     )
   const value = at(state, (isOptions ? args.slice(0, -1) : args).flatMap(toPath))
   if (options.pick !== undefined) {
     if (!Array.isArray(options.pick))
-      throw new Error('store.get pick is an array of paths')
+      throw new Error(`${tool} pick is an array of paths`)
     return Object.fromEntries(
       options.pick.map((p) => [
         Array.isArray(p) ? p.join('.') : String(p),
@@ -165,4 +165,20 @@ export function redactNamed(
   const rule = redact[name]
   if (rule === true) return REDACTED
   return rule ? redactValue({ [name]: rule }, name, value, '') : value
+}
+
+const warned = new Set<string>()
+
+/** Warns once per rule when a redact key names no slice or atom, since it would silently hide nothing. */
+export function warnUnknownRedact(
+  redact: NamedRedact | undefined,
+  known: string[],
+  adapter: string,
+): void {
+  if (!redact || typeof redact === 'function') return
+  for (const key of Object.keys(redact)) {
+    if (known.includes(key) || warned.has(`${adapter}:${key}`)) continue
+    warned.add(`${adapter}:${key}`)
+    console.warn(`[agent-bridge] ${adapter} redact key "${key}" matches no ${adapter === 'redux' ? 'slice' : 'atom'}, so it hides nothing. Known: ${known.join(', ')}`)
+  }
 }

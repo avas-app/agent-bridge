@@ -167,6 +167,7 @@
     "ably": "^2.29.0",
     "happy-dom": "^20.14.5",
     "jotai": "^3.0.2",
+    "redux-persist": "^6.0.0",
     "socket.io-client": "^4.8.4",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",

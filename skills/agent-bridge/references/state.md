@@ -46,8 +46,10 @@ npx @avasapp/agent-bridge call jotai.set '["count", 5]'                # writabl
 ```
 
 `redux.set` and restore need the app to wrap its root reducer in
-`bridgeReducer()`; without it they fail and say so. `redux.dispatch` sends plain
-actions only. Redacted slices, atoms and paths print as `"[redacted]"`.
+`bridgeReducer()` (inside `persistReducer` with redux-persist); without it they
+fail and say so. `redux.set` merges into object slices only. `redux.dispatch`
+sends plain actions only. `jotai.set` refuses atoms whose value isn't the one
+sent (action atoms, `atomWithReducer`). Redacted slices, atoms and paths print as `"[redacted]"`.
 
 ## Argument shapes
 

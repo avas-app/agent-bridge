@@ -55,7 +55,7 @@ export const ASYNC_STORAGE_WHY =
 export const SECURE_STORE_WHY =
   'SecureStore holds secrets: secureStore.get hides values unless the agent asks for {full:true}, but secureStore.set can still overwrite them'
 export const REDUX_WHY =
-  'the Redux state often holds tokens: add `redact` for those slices and paths, and wrap the root reducer in bridgeReducer() before wiring it'
+  'the Redux state often holds tokens: add `redact` for those slices and paths, and wrap the root reducer in bridgeReducer() (inside persistReducer) before wiring it'
 export const JOTAI_WHY =
   'atoms often hold tokens: list only the atoms you want the agent to read and set, and add `redact` for secret ones'
 export const REALTIME_WHY =
@@ -164,7 +164,7 @@ export function renderBridgeFile(o: BridgeFileInput): string {
     L.push(
       '',
       '// Redux is left out: the state often holds tokens. Add `redact` for those slices,',
-      '// wrap the root reducer in bridgeReducer() (outside persistReducer) where the store',
+      '// wrap the root reducer in bridgeReducer() (inside persistReducer) where the store',
       '// is created, then uncomment these and reduxTools below.',
       `// See ${DOCS}/adapters.md`,
       `// import { reduxTools } from '@avasapp/agent-bridge/redux'`,
@@ -175,6 +175,7 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       '',
       '// Jotai is left out: atoms often hold tokens. List the atoms the agent may read and',
       '// set, add `redact` for secret ones, then uncomment these and jotaiTools below.',
+      '// Use the store your app uses: a <Provider> without a store prop has its own, out of reach here.',
       `// See ${DOCS}/adapters.md`,
       `// import { jotaiTools } from '@avasapp/agent-bridge/jotai'`,
       `// import { getDefaultStore } from 'jotai'`,

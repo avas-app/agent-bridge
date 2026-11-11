@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import { atom, createStore } from 'jotai'
+import { atomWithReducer, atomWithStorage, createJSONStorage } from 'jotai/utils'
 
 import type { ToolFn, Tools } from '../../runtime/types'
 import { jotaiTools } from '../jotai'
@@ -96,7 +97,7 @@ describe('jotaiTools', () => {
     expect(store.get(countAtom)).toBe(0)
   })
 
-  test('commit keeps one atom, or all', async () => {
+  test('commit keeps one atom', async () => {
     const { store, atoms, countAtom } = setup()
     const tools = jotaiTools(store, atoms)
     await run(tools, 'jotai.set', 'count', 3)
@@ -137,5 +138,96 @@ describe('jotaiTools', () => {
     expect(store.get(countAtom)).toBe(0)
     store.set = orig
     expect(await run(tools, 'jotai.restore')).toEqual(['user'])
+  })
+
+  test('restore puts back a stored atomWithStorage value, not its initial value', async () => {
+    const mem = new Map<string, string>([['k', JSON.stringify('STORED')]])
+    const storage = createJSONStorage<string>(() => ({
+      getItem: (key) => mem.get(key) ?? null,
+      setItem: (key, v) => void mem.set(key, v),
+      removeItem: (key) => void mem.delete(key),
+    }))
+    const stored = atomWithStorage('k', 'INIT', storage)
+    const store = createStore()
+    const tools = jotaiTools(store, { stored })
+    await run(tools, 'jotai.set', 'stored', 'AGENT')
+    expect(mem.get('k')).toBe(JSON.stringify('AGENT'))
+    await run(tools, 'jotai.restore')
+    expect(store.get(stored)).toBe('STORED')
+    expect(mem.get('k')).toBe(JSON.stringify('STORED'))
+  })
+
+  test('an action atom is refused, and nothing stays pending', async () => {
+    const { store, atoms } = setup()
+    const calls: unknown[] = []
+    const logout = atom(null, (_get, _set, arg: unknown) => void calls.push(arg))
+    const tools = jotaiTools(store, { ...atoms, logout })
+    await fails(() => run(tools, 'jotai.set', 'logout', 5)).toThrow(/action|did not take/)
+    expect(await pending(tools)).toBe(false)
+    await run(tools, 'jotai.restore')
+    expect(calls).toEqual([5])
+  })
+
+  test('a reducer atom whose value is not the one sent is refused', async () => {
+    const store = createStore()
+    const r = atomWithReducer(10, (prev: number, action: number) => prev + action)
+    const tools = jotaiTools(store, { r })
+    await fails(() => run(tools, 'jotai.set', 'r', 3)).toThrow(/did not take/)
+    expect(await pending(tools)).toBe(false)
+  })
+
+  test('a writable async atom snapshots its value, not a Promise', async () => {
+    const store = createStore()
+    const base = atom(1)
+    const w = atom(async (get) => get(base), (_get, set, v: number) => set(base, v))
+    const tools = jotaiTools(store, { w })
+    await run(tools, 'jotai.set', 'w', 7)
+    expect(store.get(base)).toBe(7)
+    await run(tools, 'jotai.restore')
+    expect(store.get(base)).toBe(1)
+  })
+
+  test('restore skips an atom the app changed since, and says so', async () => {
+    const { store, atoms, countAtom } = setup()
+    const tools = jotaiTools(store, atoms)
+    await run(tools, 'jotai.set', 'count', 2)
+    store.set(countAtom, 99)
+    expect(await run(tools, 'jotai.restore')).toEqual({ restored: [], skipped: ['count'] })
+    expect(store.get(countAtom)).toBe(99)
+    expect(await pending(tools)).toBe(false)
+  })
+
+  test('a restore write that does not take is reported, and the snapshot stays', async () => {
+    const store = createStore()
+    const raw = atom(0)
+    let locked = false
+    const a = atom((get) => get(raw), (_get, set, v: number) => void (locked || set(raw, v)))
+    const tools = jotaiTools(store, { a })
+    await run(tools, 'jotai.set', 'a', 5)
+    locked = true
+    await fails(() => run(tools, 'jotai.restore')).toThrow(/Could not restore a/)
+    expect(await pending(tools)).toBe(true)
+    locked = false
+    expect(await run(tools, 'jotai.restore')).toEqual(['a'])
+    expect(store.get(raw)).toBe(0)
+  })
+
+  test('snapshots are kept by name, so a renamed or removed atom is reported by name', async () => {
+    const { store, atoms } = setup()
+    await run(jotaiTools(store, atoms), 'jotai.set', 'count', 2)
+    const { count: _gone, ...rest } = atoms
+    const tools = jotaiTools(store, rest)
+    expect(Object.keys((await pending(tools, true)) as object)).toEqual(['count'])
+    await fails(() => run(tools, 'jotai.restore')).toThrow(/count/)
+  })
+
+  test('errors name the jotai tool, and redact keys that match no atom are warned about once', async () => {
+    const { store, atoms } = setup()
+    const warn = spyOn(console, 'warn').mockImplementation(() => {})
+    const tools = jotaiTools(store, atoms, { redact: { tokenn: true } })
+    jotaiTools(store, atoms, { redact: { tokenn: true } })
+    await fails(() => run(tools, 'jotai.get', 'user', { bogus: true })).toThrow(/jotai\.get option/)
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('tokenn'))).toHaveLength(1)
+    warn.mockRestore()
   })
 })
