@@ -162,7 +162,12 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
             // The new load may already have saved the agent's value as the original.
             const saved = originals.get(mmkv)
             const savedNow = saved?.get(key)
-            const savedFake = saved?.has(key) && savedNow !== null && (savedNow ?? null) === entry.written
+            // A delete (written null) matches any key the new load saved as absent, so it needs the same instance confirmed.
+            const savedFake =
+              saved?.has(key) &&
+              savedNow !== null &&
+              (savedNow ?? null) === entry.written &&
+              (entry.written !== null || (e.id !== undefined && e.id === now))
             if (current === entry.original && !savedFake) {
               result.already.push(label)
             } else if (savedFake || current === entry.written) {

@@ -157,7 +157,8 @@ async function fakeApp(
   })
   let extra: Tools = options.extra?.(getAll) ?? {}
   const make = (): Registry =>
-    createRegistry(getAll, logs, options.noLoadId ? undefined : loadId)
+    // Its own slot: apps in one test process are separate loads.
+    createRegistry(getAll, logs, options.noLoadId ? undefined : loadId, {})
   registry = make()
   const info = (): DeviceInfo => ({
     deviceId,
@@ -1519,4 +1520,78 @@ describe('restores across a reload', () => {
     await daemon.stop()
     expect(disk.get('kv:token')).toBe('app-refreshed')
   }, 15_000)
+
+  // Not ready on its first adopt (waits out the hydration timeout), ready on the next.
+  const lateStore = (getTools: () => Tools): Tools => {
+    let asked = 0
+    const auth = createStore<{ token: string }>()(() => ({ token: disk.get('auth') ?? 'real-store' }))
+    auth.subscribe((s) => void disk.set('auth', s.token))
+    ;(auth as unknown as { persist: unknown }).persist = {
+      getOptions: () => ({}),
+      hasHydrated: () => asked++ > 0,
+      onFinishHydration: () => () => {},
+    }
+    return { ...storeTools({ auth }), ...restoreTools(getTools) }
+  }
+
+  test('an adopt that never answers but leaves the app alive is tried three times, then dropped', async () => {
+    const { metro, first, bridge } = await setup('rl-slow', {}, { timeoutMs: 400, adoptTimeoutMs: 200 })
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', {
+      restore: false,
+      loadId: 'load-2',
+      extra: (g: () => Tools) => ({ ...mmkvTools({}), ...restoreTools(g), 'bridge.adopt': () => new Promise(() => {}) }),
+    })
+    cleanups.push(() => second.ws.close())
+    let adopts = 0
+    second.onCall = (t) => t === 'bridge.adopt' && void adopts++
+    const notices: string[] = []
+    for (let i = 0; i < 5; i++) notices.push(String((await bridge.timed('bridge.pending')).notice ?? ''))
+    expect(notices.join(' ')).toContain('could not re-arm after the reload: mmkv:kv (timed out)')
+    expect(adopts).toBe(3)
+  }, 30_000)
+
+  test('stop right after a reload retries a store that is still hydrating', async () => {
+    disk.clear()
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: lateStore } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl-late', metro: metro.metro, idleMs: 0, healthMs: 0, adoptRetryMs: 50 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl-late', timeoutMs: 8000 })
+    cleanups.push(bridge.close)
+    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const stopped = await daemon.stop()
+    expect(stopped).toMatchObject({ ok: true })
+    expect(disk.get('auth')).toBe('real-store')
+  }, 30_000)
+
+  test('a mid-session bridge.restore does not wait out the retry pause for the journal', async () => {
+    disk.clear()
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: lateStore } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl-mid', metro: metro.metro, idleMs: 0, healthMs: 0, adoptRetryMs: 60_000 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl-mid', timeoutMs: 8000 })
+    cleanups.push(bridge.close)
+    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    await bridge.timed('bridge.pending')
+    await bridge.call('bridge.restore')
+    expect(disk.get('auth')).toBe('real-store')
+  }, 30_000)
+
 })

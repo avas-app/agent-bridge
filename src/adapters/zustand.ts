@@ -34,8 +34,12 @@ function survivesJson(v: unknown, depth = 0): boolean {
   if (Array.isArray(v)) return v.every((x) => survivesJson(x, depth + 1))
   const proto = Object.getPrototypeOf(v)
   if (proto !== Object.prototype && proto !== null) return false
-  return Object.values(v).every((x) => survivesJson(x, depth + 1))
+  return Object.values(v).every((x) => x === undefined || survivesJson(x, depth + 1))
 }
+
+// A top-level undefined is an absent key, as in JSON.
+const ok = (v: unknown) => v === undefined || survivesJson(v)
+const has = (x: Image, k: string) => x[k] !== undefined
 
 /** The persisted keys of a state: what partialize returns, minus functions. */
 function persisted(store: StoreLike, state: unknown): { raw: Image; refused: Set<string> } | undefined {
@@ -55,7 +59,7 @@ function persisted(store: StoreLike, state: unknown): { raw: Image; refused: Set
 }
 
 const differs = (a: unknown, b: unknown) =>
-  survivesJson(a) && survivesJson(b) ? !same(a, b) : !Object.is(a, b)
+  ok(a) && ok(b) ? !same(a, b) : !Object.is(a, b)
 
 const json = (v: unknown) => JSON.parse(JSON.stringify(v)) as unknown
 
@@ -83,6 +87,8 @@ async function hydrated(store: StoreLike): Promise<boolean> {
 // State from before the agent's first change, per store object, so tools
 // rebuilt on every render still find it.
 const snapshots = new WeakMap<StoreLike, unknown>()
+// Stores whose snapshot came from an adopt: only these keys are the agent's, the rest is the app's.
+const adoptedKeys = new WeakMap<StoreLike, Set<string>>()
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
@@ -148,8 +154,17 @@ function readState(state: unknown, given: unknown[]): unknown {
 
 // Puts the snapshot's data back and drops keys added since. Actions come from
 // the current state, so they keep working.
-function restore(store: StoreLike, snapshot: unknown) {
+function restore(store: StoreLike, snapshot: unknown, only?: Set<string>) {
   const current = store.getState()
+  if (only && isObject(snapshot) && isObject(current)) {
+    const next = { ...current }
+    for (const k of only) {
+      if (k in snapshot) next[k] = snapshot[k]
+      else delete next[k]
+    }
+    store.setState(next, true)
+    return
+  }
   if (!isObject(snapshot) || !isObject(current)) {
     store.setState(snapshot as Record<string, unknown>, true)
     return
@@ -182,10 +197,12 @@ function differences(
   snapshot: unknown,
   current: unknown,
   show: (key: string, value: unknown) => unknown,
+  only?: Set<string>,
 ): Record<string, { snapshot: unknown; current: unknown }> {
   if (!isObject(snapshot) || !isObject(current)) return {}
   const out: Record<string, { snapshot: unknown; current: unknown }> = {}
   for (const k of new Set([...Object.keys(snapshot), ...Object.keys(current)])) {
+    if (only && !only.has(k)) continue
     const a = snapshot[k]
     const b = current[k]
     if (typeof a === 'function' || typeof b === 'function') continue
@@ -257,9 +274,28 @@ export function storeTools(
       )
     return store
   }
+  // A key whose value, or a path inside it, redact would hide must not leave the app in the journal.
+  const hidden = (name: string, k: string, ...values: unknown[]) => {
+    const { redact } = options
+    if (!redact) return false
+    if (typeof redact !== 'function')
+      return !!redact[name]?.some((p) => p === k || p.startsWith(`${k}.`) || k.startsWith(`${p}.`))
+    return values.some((v) => !same(redactValue(redact, name, v, k), v))
+  }
   const beforeChange = (store: StoreLike) => {
     rev += 1
-    if (!snapshots.has(store)) snapshots.set(store, store.getState())
+    const only = adoptedKeys.get(store)
+    if (only) {
+      // The app has had the store since the adopt; from here the whole store is the agent's to undo.
+      const next = { ...(store.getState() as Image) }
+      const saved = snapshots.get(store) as Image
+      for (const k of only) {
+        if (k in saved) next[k] = saved[k]
+        else delete next[k]
+      }
+      snapshots.set(store, next)
+      adoptedKeys.delete(store)
+    } else if (!snapshots.has(store)) snapshots.set(store, store.getState())
   }
 
   return {
@@ -299,7 +335,13 @@ export function storeTools(
           throw new Error(`Store "${name}" has no action "${action}"`)
         beforeChange(store)
         const before = store.getState()
-        const result = await (fn as (...a: unknown[]) => unknown)(...args)
+        let result: unknown
+        try {
+          result = await (fn as (...a: unknown[]) => unknown)(...args)
+        } finally {
+          // An async action changes the store after the bump above; the journal must see that.
+          rev += 1
+        }
         const after = store.getState()
         if (result !== undefined && result !== before && result !== after) {
           // An action often returns a piece of its own state; redact that by
@@ -326,6 +368,7 @@ export function storeTools(
       run: (name: string) => {
         const store = get(name)
         rev += 1
+        adoptedKeys.delete(store)
         return { store: name, committed: snapshots.delete(store) }
       },
     },
@@ -344,16 +387,18 @@ export function storeTools(
           if (!before || !now) continue
           const entry: StoreJournal = { original: {}, after: {} }
           const skipped: string[] = []
+          const only = adoptedKeys.get(store)
           for (const k of new Set([...Object.keys(before.raw), ...Object.keys(now.raw)])) {
+            if (only && !only.has(k)) continue
             const a = before.raw[k]
             const b = now.raw[k]
             if (!differs(a, b)) continue
-            if (before.refused.has(k) || now.refused.has(k) || !survivesJson(a) || !survivesJson(b)) {
+            if (before.refused.has(k) || now.refused.has(k) || !ok(a) || !ok(b) || hidden(name, k, a, b)) {
               skipped.push(k)
               continue
             }
-            if (k in before.raw) entry.original[k] = json(a)
-            if (k in now.raw) entry.after[k] = json(b)
+            if (has(before.raw, k)) entry.original[k] = json(a)
+            if (has(now.raw, k)) entry.after[k] = json(b)
           }
           if (skipped.length) entry.skipped = skipped
           if (skipped.length || Object.keys(entry.original).length || Object.keys(entry.after).length) out[name] = entry
@@ -387,17 +432,17 @@ export function storeTools(
           }
           for (const k of skipped ?? []) (result.notKept ??= []).push(`${name}:${k}`)
           const now = persisted(store, store.getState())
-          const saved = snapshots.has(store) ? persisted(store, snapshots.get(store)) : undefined
-          const eq = (x: Image, y: Image, k: string) => (k in x) === (k in y) && (!(k in x) || same(x[k], y[k]))
+          const saved = snapshots.has(store) && !adoptedKeys.has(store) ? persisted(store, snapshots.get(store)) : undefined
+          const eq = (x: Image, y: Image, k: string) => has(x, k) === has(y, k) && (!has(x, k) || same(x[k], y[k]))
           const back: string[] = []
           for (const k of new Set([...Object.keys(entry.original), ...Object.keys(entry.after)])) {
             const label = `${name}:${k}`
-            if (!now || now.refused.has(k) || (k in now.raw && !survivesJson(now.raw[k]))) {
+            if (!now || now.refused.has(k) || !ok(now.raw[k])) {
               (result.notKept ??= []).push(label)
               continue
             }
             // The new load may already have saved the agent's value as its snapshot.
-            const savedFake = !!saved && (!(k in saved.raw) || survivesJson(saved.raw[k])) && eq(saved.raw, entry.after, k)
+            const savedFake = !!saved && ok(saved.raw[k]) && eq(saved.raw, entry.after, k)
             if (!savedFake && eq(now.raw, entry.original, k)) result.already.push(label)
             else if (savedFake || eq(now.raw, entry.after, k)) {
               back.push(k)
@@ -405,10 +450,13 @@ export function storeTools(
             } else result.changed.push(label)
           }
           if (back.length) {
+            // With no snapshot yet, restore touches only these keys; anything the app writes later stays.
+            if (!snapshots.has(store)) adoptedKeys.set(store, new Set())
             const next: Record<string, unknown> = { ...((snapshots.get(store) ?? store.getState()) as Image) }
             for (const k of back) {
               if (k in entry.original) next[k] = entry.original[k]
               else delete next[k]
+              adoptedKeys.get(store)?.add(k)
             }
             snapshots.set(store, next)
             rev += 1
@@ -425,8 +473,11 @@ export function storeTools(
         return Object.fromEntries(
           changed.map(([name, store]) => [
             name,
-            differences(snapshots.get(store), store.getState(), (key, value) =>
-              out(name, value, key),
+            differences(
+              snapshots.get(store),
+              store.getState(),
+              (key, value) => out(name, value, key),
+              adoptedKeys.get(store),
             ),
           ]),
         )
@@ -437,8 +488,9 @@ export function storeTools(
         Object.entries(stores).flatMap(([name, store]) => {
           if (!snapshots.has(store)) return []
           rev += 1
-          restore(store, snapshots.get(store))
+          restore(store, snapshots.get(store), adoptedKeys.get(store))
           snapshots.delete(store)
+          adoptedKeys.delete(store)
           return [name]
         }),
     },

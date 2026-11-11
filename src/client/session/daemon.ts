@@ -9,7 +9,7 @@ import { callTimeout } from '../call-timeout'
 import { metroHost } from '../discover'
 import { explainConnectError } from '../metro-hint'
 import { openConnection } from '../open'
-import { createJournal } from './journal'
+import { createJournal, lostConnection } from './journal'
 import {
   type SessionRequest,
   type SessionResponse,
@@ -46,6 +46,8 @@ export type DaemonOptions = {
   attemptMs?: number
   /** Pause between tries to re-arm the journal after a reload. Default 1 s. */
   adoptRetryMs?: number
+  /** Longest one bridge.adopt call may take. Default: `timeoutMs`, at least 3.5 s (a persisted store may wait 2 s to hydrate). */
+  adoptTimeoutMs?: number
 }
 
 export type SessionDaemon = {
@@ -122,13 +124,6 @@ const pause = (ms: number, signal: AbortSignal) =>
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
-
-/** A failed result that means the connection, not the tool, broke. */
-const lostConnection = (
-  r: ResultMessage,
-): r is Extract<ResultMessage, { ok: false }> =>
-  !r.ok &&
-  (r.from === '' || /socket closed|closed the debugger|not open/i.test(r.error))
 
 /**
  * Connects to one app and serves calls on a local socket until stopped or
@@ -222,7 +217,12 @@ export async function runSessionDaemon(
   const journalKey = randomBytes(16).toString('hex')
   const send = (tool: string, args: unknown[], ms: number) =>
     conn.call(tool, args, ms, { journalAck: journal.ack(), journalKey })
-  const journal = createJournal((tool, args) => send(tool, args, timeoutMs), conn.device.loadId)
+  const adoptTimeoutMs = options.adoptTimeoutMs ?? Math.max(timeoutMs, 3500)
+  const journal = createJournal(
+    (tool, args) => send(tool, args, adoptTimeoutMs),
+    conn.device.loadId,
+    () => ping(),
+  )
   const addNote = (note: string) => {
     reloads.push(note)
     unseen.push(note)
@@ -231,12 +231,19 @@ export async function runSessionDaemon(
   // One adopt at a time; everyone who needs it waits for the one in flight.
   const adoptRetryMs = options.adoptRetryMs ?? 1000
   let adoptRun: Promise<void> | null = null
+  let adoptLoad: string | undefined
   let nextAdopt = 0
-  const adoptJournal = (force = false): Promise<void> => {
-    if (adoptRun) return adoptRun
-    if (!journal.hasCarry() || (!force && Date.now() < nextAdopt))
-      return Promise.resolve()
+  const adoptJournal = async (force = false): Promise<void> => {
+    if (adoptRun) {
+      const startedFor = adoptLoad
+      await adoptRun
+      // A run for the load before a reload says nothing about the new one: whatever is still carried needs its own try.
+      if (!force || startedFor === journal.currentLoad()) return
+      if (adoptRun) return adoptRun
+    }
+    if (!journal.hasCarry() || (!force && Date.now() < nextAdopt)) return
     inflight++
+    adoptLoad = journal.currentLoad()
     adoptRun = journal
       .adopt()
       .then(
@@ -386,7 +393,8 @@ export async function runSessionDaemon(
 
   const callApp = async (tool: string, args: unknown[], ms: number) => {
     if (stale || reconnecting) await connected()
-    await adoptJournal()
+    // bridge.restore must see the re-armed journal, so it never waits out the retry pause.
+    await adoptJournal(tool === 'bridge.restore')
     // A write by another client may not be in the journal yet.
     if (tool === RELOAD) await ping()
     let t0 = performance.now()
@@ -511,7 +519,11 @@ export async function runSessionDaemon(
     try {
       // A quick ping tells a dead connection apart from a slow restore.
       if (stale || reconnecting || !(await ping())) await connected('no answer before restore')
-      await adoptJournal(true)
+      // A persisted store may not be ready yet: try up to the cap, with a short pause, before restoring.
+      for (let i = 0; i < 3 && journal.hasCarry(); i++) {
+        if (i) await new Promise((r) => setTimeout(r, Math.min(adoptRetryMs, 500)))
+        await adoptJournal(true)
+      }
       const first = await run('bridge.restore')
       if (first.result) return seen(first.result)
       await connected(first.lost)

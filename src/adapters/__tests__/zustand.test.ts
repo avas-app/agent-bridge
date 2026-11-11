@@ -395,3 +395,99 @@ describe('store journal', () => {
     expect(reloaded.getState().token).toBe('fake')
   })
 })
+
+describe('round 4', () => {
+  type W = Record<string, unknown> & { setX: () => void }
+  const wide = (state: Record<string, unknown>, partialize?: (s: W) => unknown) => {
+    const store = createStore<W>()(() => ({ setX: () => {}, ...state }) as W)
+    return Object.assign(store, {
+      persist: { getOptions: () => ({ partialize }), hasHydrated: () => true, onFinishHydration: () => () => {} },
+    })
+  }
+  const part = (tools: Tools) =>
+    tools['store.restore'] as { journal: () => unknown; adopt: (d: unknown) => Promise<unknown>; journalRev: () => number }
+
+  test('redacted keys never enter the journal and are named as not kept', async () => {
+    const auth = wide({ token: 'real-secret', user: { phone: '1', name: 'a' }, theme: 'light' })
+    const tools = storeTools({ auth }, { redact: { auth: ['token', 'user.phone'] } })
+    run(tools, 'store.set', 'auth', { token: 'fake', user: { phone: '2', name: 'b' }, theme: 'dark' })
+    const journal = part(tools).journal()
+    expect(JSON.stringify(journal)).not.toContain('real-secret')
+    expect(JSON.stringify(journal)).not.toContain('"phone"')
+    expect(journal).toEqual({
+      auth: { original: { theme: 'light' }, after: { theme: 'dark' }, skipped: ['token', 'user'] },
+    })
+  })
+
+  test('a redact hook also keeps its keys out of the journal', () => {
+    const auth = wide({ token: 'real-secret' })
+    const tools = storeTools({ auth }, { redact: (_s, path, v) => (path === 'token' ? '[x]' : v) })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    expect(JSON.stringify(part(tools).journal())).not.toContain('real-secret')
+  })
+
+  test('restore after an adopt puts back only the adopted keys, not later app writes', async () => {
+    const auth = wide({ token: 'real', cart: 0 })
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    const reloaded = wide({ token: 'fake', cart: 0 })
+    const tools2 = storeTools({ auth: reloaded })
+    await part(tools2).adopt(journal)
+    reloaded.setState({ cart: 3, launchCount: 2 })
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBe('real')
+    expect(reloaded.getState().cart).toBe(3)
+    expect(reloaded.getState().launchCount).toBe(2)
+  })
+
+  test('a store.set after an adopt upgrades to a full snapshot that still returns the adopted key', async () => {
+    const auth = wide({ token: 'real', cart: 0 })
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    const reloaded = wide({ token: 'fake', cart: 0 })
+    const tools2 = storeTools({ auth: reloaded })
+    await part(tools2).adopt(journal)
+    reloaded.setState({ cart: 3 })
+    run(tools2, 'store.set', 'auth', { cart: 9 })
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBe('real')
+    expect(reloaded.getState().cart).toBe(3)
+  })
+
+  test('an original that was undefined is journaled as absent', async () => {
+    const auth = wide({ token: undefined, cart: 0 })
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { token: 'fake' })
+    const journal = part(tools).journal()
+    expect(journal).toEqual({ auth: { original: {}, after: { token: 'fake' } } })
+    const reloaded = wide({ token: 'fake', cart: 0 })
+    const tools2 = storeTools({ auth: reloaded })
+    expect(await part(tools2).adopt(journal)).toMatchObject({ adopted: ['auth:token'] })
+    run(tools2, 'store.restore')
+    expect(reloaded.getState().token).toBeUndefined()
+  })
+
+  test('undefined properties inside a value do not stop it being journaled', () => {
+    const auth = wide({ user: { name: 'a', nick: undefined } })
+    const tools = storeTools({ auth })
+    run(tools, 'store.set', 'auth', { user: { name: 'b', nick: undefined } })
+    expect(part(tools).journal()).toEqual({ auth: { original: { user: { name: 'a' } }, after: { user: { name: 'b' } } } })
+  })
+
+  test('store.call bumps the journal revision after an async action settles', async () => {
+    const auth = wide({ token: 'real' })
+    const tools = storeTools({ auth })
+    let during = -1
+    auth.setState({
+      login: async () => {
+        await Promise.resolve()
+        auth.setState({ token: 'fake' })
+        during = part(tools).journalRev()
+      },
+    })
+    await run(tools, 'store.call', 'auth', 'login')
+    expect(part(tools).journalRev()).toBeGreaterThan(during)
+  })
+})

@@ -17,8 +17,30 @@ type AdoptReply = Record<
 
 const MAX_TRIES = 3
 
+/** The result of a call that never reached the tool: the socket went away. */
+export const lostConnection = (r: ResultMessage): r is Extract<ResultMessage, { ok: false }> =>
+  !r.ok && (r.from === '' || /socket closed|closed the debugger|not open/i.test(r.error))
+
 const plain = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === 'object' && !Array.isArray(v)
+
+type StoreEntry = { original: Record<string, unknown>; after: Record<string, unknown>; skipped?: string[] }
+const isStore = (v: Record<string, unknown>): v is StoreEntry => plain(v.original) && plain(v.after)
+
+/** A persisted store's entries: per key, the older original wins and the newer `after` wins. */
+function mergeStore(old: StoreEntry, next: StoreEntry): StoreEntry {
+  const known = new Set([...Object.keys(old.original), ...Object.keys(old.after), ...(old.skipped ?? [])])
+  const original = { ...old.original }
+  const after = { ...old.after }
+  const touched = new Set([...Object.keys(next.original), ...Object.keys(next.after), ...(next.skipped ?? [])])
+  for (const k of touched) {
+    if (!known.has(k) && k in next.original) original[k] = next.original[k]
+    if (k in next.after) after[k] = next.after[k]
+    else delete after[k]
+  }
+  const skipped = [...new Set([...(old.skipped ?? []), ...(next.skipped ?? [])])]
+  return { original, after, ...(skipped.length && { skipped }) }
+}
 
 /** Folds `data` into `carry`: area, then store or instance name, then key. The older entry wins on a clash (it holds the true original). */
 function merge(carry: Areas, data: Areas) {
@@ -31,7 +53,7 @@ function merge(carry: Areas, data: Areas) {
     const next = { ...old }
     for (const [name, value] of Object.entries(part)) {
       const was = old[name]
-      next[name] = plain(was) && plain(value) ? { ...value, ...was } : value
+      next[name] = plain(was) && plain(value) ? (isStore(was) && isStore(value) ? mergeStore(was, value) : { ...value, ...was }) : value
     }
     carry[area] = next
   }
@@ -49,6 +71,8 @@ const names = (part: unknown) => (plain(part) ? Object.keys(part) : [])
 export function createJournal(
   call: (tool: string, args: unknown[]) => Promise<ResultMessage>,
   firstLoad?: string,
+  /** True when the app still answers: a call that timed out then counts as a try. */
+  alive: () => Promise<boolean> = async () => false,
 ) {
   let data: Areas = {}
   // `loadId:rev` of what `data` holds; '' when nothing yet.
@@ -92,6 +116,8 @@ export function createJournal(
       return lastPending.filter((area) => !(area in carry))
     },
     hasCarry: () => Object.keys(carry).length > 0,
+    /** The load the journal is for now. */
+    currentLoad: () => load,
     /** Hands `carry` to the new load. Resolves to a note ('' when there was nothing to say). */
     async adopt(): Promise<string> {
       if (!Object.keys(carry).length) return ''
@@ -101,9 +127,12 @@ export function createJournal(
       try {
         r = await call('bridge.adopt', [sent])
       } catch {
-        return '' // Lost connection: not a try.
+        // A slow adopt on an app that still answers is a try, or it would repeat forever.
+        if (!(await alive().catch(() => false))) return ''
+        r = { id: '', from: 'app', ok: false, error: 'timed out', ms: 0 } as ResultMessage
       }
-      if (r.loadId && sentLoad && r.loadId !== sentLoad) return ''
+      if (lostConnection({ ...r })) return '' // Lost connection: not a try.
+      if (load !== sentLoad || (r.loadId && sentLoad && r.loadId !== sentLoad)) return ''
       this.accept(r)
       tries += 1
       const bits: string[] = []
@@ -137,7 +166,7 @@ export function createJournal(
         if (already.length) bits.push(`already back to the original: ${already.join(', ')}`)
         if (changed.length) bits.push(`left alone, the app changed them since: ${changed.join(', ')}`)
         if (skipped.length) bits.push(`left alone, a different storage instance than the one you wrote: ${skipped.join(', ')}`)
-        if (notKept.length) bits.push(`not kept across reload (not plain JSON, or renamed by partialize): ${notKept.join(', ')}`)
+        if (notKept.length) bits.push(`not kept across reload (not plain JSON, renamed by partialize, or hidden by redact): ${notKept.join(', ')}`)
         if (invalid.length) bits.push(`ignored, not a value this session saved: ${invalid.join(', ')}`)
       }
       if (Object.keys(carry).length) {

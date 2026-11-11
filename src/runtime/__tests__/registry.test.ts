@@ -1,6 +1,6 @@
-import { describe, expect, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
 
-import { createRegistry } from '../registry'
+import { createRegistry, resetSessionKey } from '../registry'
 import { toJson } from '../to-json'
 import { restoreTools } from '../tools/restore'
 import type { Tools } from '../types'
@@ -93,6 +93,24 @@ describe('journal key', () => {
   }
   const registry = createRegistry(() => tools, undefined, 'L1')
   const call = (extra: object, tool = 'bridge.pending') => registry.dispatch({ id: '1', tool, ...extra }, 'd')
+
+  beforeEach(resetSessionKey)
+
+  test('null, empty and non-string keys never claim the slot', async () => {
+    for (const bad of [null, '', 5, {}]) {
+      expect((await call({ journalAck: '', journalKey: bad })).journalData).toBeUndefined()
+      expect(await call({ journalKey: bad, args: [{}] }, 'bridge.adopt')).toMatchObject({ ok: false })
+    }
+    expect((await call({ journalAck: '', journalKey: 'k1' })).journalData).toEqual({ mmkv: { kv: { a: 1 } } })
+  })
+
+  test('a rebuilt registry (Fast Refresh) keeps the claimed key', async () => {
+    await call({ journalAck: '', journalKey: 'k1' })
+    const again = createRegistry(() => tools, undefined, 'L1')
+    const other = await again.dispatch({ id: '2', tool: 'bridge.pending', journalAck: '', journalKey: 'k2' }, 'd')
+    expect(other.journalData).toBeUndefined()
+    expect(await again.dispatch({ id: '3', tool: 'bridge.adopt', args: [{}], journalKey: 'k1' }, 'd')).toMatchObject({ ok: true })
+  })
 
   test('only the first key gets the journal or may call bridge.adopt', async () => {
     expect((await call({ journalAck: '' })).journalData).toBeUndefined()
