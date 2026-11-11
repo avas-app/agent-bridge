@@ -72,10 +72,10 @@ export const socketIoTools = realtimeAdapter(
       methods: 'emit',
       channel: ([event]) =>
         typeof event === 'string' && !RESERVED.has(event) ? event : undefined,
-      describe: ([, ...args]) => {
-        const values = args.filter((a) => typeof a !== 'function')
-        return { data: values.length === 1 ? values[0] : values }
-      },
+      // socket.io's retry queue calls emit again for the same message.
+      skip: (target) => Boolean((target as { flags?: { fromQueue?: boolean } }).flags?.fromQueue),
+      // Always the argument list, so emit('x', [1, 2]) and emit('x', 1, 2) differ.
+      describe: ([, ...args]) => ({ data: args.filter((a) => typeof a !== 'function') }),
     })
     return tap
   },

@@ -193,11 +193,11 @@ export function patchXhr(state: NetworkState): (() => void) | null {
         return send.call(this, body)
       }
       const { status, text: out, headers } = responseParts(blocked)
-      entry.blocked = true
+      if (!state.deviceOffline) entry.blocked = true
       finishEntry(
         entry,
         isOffline(blocked)
-          ? { error: `${OFFLINE_MESSAGE} (strict network)` }
+          ? { error: `${OFFLINE_MESSAGE} (${state.deviceOffline ? 'device offline' : 'strict network'})` }
           : { status, responseBody: out, contentType: contentTypeOf(headers), responseHeaders: headers },
       )
       // Answered after send returns, as a real response would be.

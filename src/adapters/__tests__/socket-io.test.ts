@@ -158,7 +158,42 @@ describe('socketIoTools', () => {
 
     expect(send).toHaveBeenCalledTimes(1)
     expect(run(tools, 'realtime.log')).toEqual([
-      expect.objectContaining({ channel: 'chat:send', data: { text: 'hi' }, sent: true, injected: false }),
+      expect.objectContaining({ channel: 'chat:send', data: [{ text: 'hi' }], sent: true, injected: false }),
     ])
+  })
+
+  test('an emit with retries on is logged once, not again from the retry queue', () => {
+    const socket = io('http://localhost:1', { autoConnect: false, retries: 3 })
+    sockets.push(socket)
+    const tools = socketIoTools(socket)
+    ;(socket as unknown as { onpacket: (p: Packet) => void }).onpacket({ nsp: '/', type: 0, data: { sid: 's' } })
+    ;(socket as unknown as { packet: unknown }).packet = mock()
+    socket.emit('chat:send', 'hi')
+    expect((run(tools, 'realtime.log') as unknown[]).length).toBe(1)
+  })
+
+  test('emit(x, [1, 2]) and emit(x, 1, 2) log differently', () => {
+    const { socket, tools, connect } = setup()
+    connect()
+    ;(socket as unknown as { packet: unknown }).packet = mock()
+    socket.emit('a', [1, 2])
+    socket.emit('a', 1, 2)
+    const data = (run(tools, 'realtime.log') as { data: unknown }[]).map((e) => e.data)
+    expect(data).toEqual([[1, 2], [[1, 2]]])
+  })
+
+  test('the log copies sent payloads and hides credentials unless full', () => {
+    const { socket, tools, connect } = setup()
+    connect()
+    ;(socket as unknown as { packet: unknown }).packet = mock()
+    const payload = { token: 'abc-secret', user: { password: 'pw', name: 'Ann' }, big: 'x'.repeat(5000) }
+    socket.emit('authenticate', payload)
+    payload.user.name = 'changed'
+    const [shown] = run(tools, 'realtime.log') as { data: [Record<string, any>] }[]
+    expect(shown!.data[0]!.token).toBe('[redacted]')
+    expect(shown!.data[0]!.user).toEqual({ password: '[redacted]', name: 'Ann' })
+    expect(shown!.data[0]!.big.length).toBeLessThan(2100)
+    const [full] = run(tools, 'realtime.log', { full: true }) as { data: [Record<string, any>] }[]
+    expect(full!.data[0]!.token).toBe('abc-secret')
   })
 })

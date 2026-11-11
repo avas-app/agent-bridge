@@ -2,16 +2,15 @@ import { type Area, deviceState, type ReactNativeLike } from './types'
 
 const STATES = ['active', 'background', 'inactive']
 
-// RN's own listener assigns currentState when we emit; the fake must ignore that.
-let emitting = false
-
 function emitState(rn: ReactNativeLike, state: string) {
-  emitting = true
+  // RN's own listener assigns currentState when we emit; the fake must ignore that.
+  const st = deviceState()
+  st.emitting = true
   try {
     rn.DeviceEventEmitter.emit('appStateDidChange', { app_state: state })
     if (rn.Platform?.OS === 'android') rn.DeviceEventEmitter.emit('appStateFocusChange', state === 'active')
   } finally {
-    emitting = false
+    st.emitting = false
   }
 }
 
@@ -55,7 +54,7 @@ export function appStateArea(rn: () => ReactNativeLike): Area {
               enumerable: true,
               get: () => deviceState().appState?.fake ?? faked.real,
               set: (value: string) => {
-                if (!emitting && deviceState().appState) deviceState().appState!.real = value
+                if (!deviceState().emitting && deviceState().appState) deviceState().appState!.real = value
               },
             })
           } else st.appState.fake = state

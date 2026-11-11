@@ -30,7 +30,11 @@ export function deviceTools(options: DeviceToolsOptions = {}): Tools {
       const pending = Object.assign({}, ...areas.map((a) => a.pending()))
       return Object.keys(pending).length ? pending : false
     },
-    run: () => Object.assign({}, ...areas.map((a) => a.restore())),
+    run: () => {
+      const results = areas.map((a) => a.restore())
+      // Each area reports its own `restored`; the total is true if any area undid something.
+      return { ...Object.assign({}, ...results), restored: results.some((r) => Boolean(r.restored)) }
+    },
   }
   return tools
 }

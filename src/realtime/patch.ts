@@ -110,6 +110,8 @@ export type TapOutgoingOptions = {
   channel: (args: unknown[]) => string | undefined
   /** What to log for the call. */
   describe: (args: unknown[]) => MessageSummary
+  /** True for a call that repeats one already logged, e.g. socket.io re-sending from its retry queue. */
+  skip?: (target: object) => boolean
 }
 
 /**
@@ -127,7 +129,7 @@ export function tapOutgoing(
     if (typeof send !== 'function') continue
     methods[name] = function (this: unknown, ...args: unknown[]) {
       try {
-        const channel = options.channel(args)
+        const channel = options.skip?.(this as object) ? undefined : options.channel(args)
         if (channel !== undefined) tap.sent(channel, options.describe(args))
       } catch {
         // Logging must never change what the app sends.

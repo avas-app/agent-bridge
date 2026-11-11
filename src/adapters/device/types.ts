@@ -46,6 +46,9 @@ export type DeviceState = {
   origGetInitialURL?: Fn
   appState?: { fake: string; real: string }
   offline?: boolean
+  netInfo?: NetInfoLike
+  origRefresh?: Fn
+  emitting?: boolean
   RealDate?: DateConstructor
   offsetMs?: number
 }

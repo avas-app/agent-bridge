@@ -1,5 +1,5 @@
 /** Headers whose values are credentials: net.entry cuts them unless asked for the whole. */
-const SECRET = /auth|cookie|token|secret|session|password|passwd|signature|api-?key|credential|jwt/i
+export const SECRET = /auth|cookie|token|secret|session|password|passwd|signature|api-?key|credential|jwt/i
 
 const lower = (headers: Record<string, string>): Record<string, string> =>
   Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]))

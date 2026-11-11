@@ -1,4 +1,5 @@
 import type { Tools } from '../runtime/types'
+import { redact, snapshot } from './snapshot'
 
 export const LOG_SIZE = 50
 
@@ -171,7 +172,14 @@ export function createRealtimeTap<M = unknown>(
   }
 
   const sent: RealtimeTap<M>['sent'] = (channel, summary) => {
-    log.push({ at: new Date().toISOString(), channel, ...summary, injected: false, sent: true })
+    log.push({
+      at: new Date().toISOString(),
+      channel,
+      ...summary,
+      ...('data' in summary && { data: snapshot(summary.data) }),
+      injected: false,
+      sent: true,
+    })
     if (log.length > LOG_SIZE) log.splice(0, log.length - LOG_SIZE)
   }
 
@@ -229,12 +237,13 @@ export function createRealtimeTap<M = unknown>(
         })),
     },
     [`${ns}.log`]: {
-      description: `Recent messages, real, injected, and ones the app sent (sent: true) (socket.emit, Ably publish), newest first (last ${LOG_SIZE}). Filter: { channel?, event?, limit? }; clear: true empties the log after reading.`,
+      description: `Recent messages, real, injected, and ones the app sent (sent: true) (socket.emit, Ably publish), newest first (last ${LOG_SIZE}). Filter: { channel?, event?, limit?, full? }; clear: true empties the log after reading. Sent messages are copied and cut, and keys like token, password or authorization show [redacted] unless full: true.`,
       run: (
         filter: {
           channel?: string
           event?: string
           limit?: number
+          full?: boolean
           clear?: boolean
         } = {},
       ) => {
@@ -246,6 +255,7 @@ export function createRealtimeTap<M = unknown>(
           )
           .reverse()
           .slice(0, filter.limit ?? 20)
+          .map((e) => (e.sent && !filter.full && 'data' in e ? { ...e, data: redact(e.data) } : e))
         if (filter.clear) log.length = 0
         return entries
       },

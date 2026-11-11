@@ -3,6 +3,12 @@ import type { NavigationLike } from '../expo-router'
 import { routeFromState, settle } from '../expo-router-route'
 import { type Area, deviceState, type ReactNativeLike } from './types'
 
+type Emitter = { emit: (event: string, payload: unknown) => void; listenerCount?: (event: string) => number }
+
+// expo-linking's useLinkingURL() listens on its native module's emitter, not on Linking.
+const expoLinking = () =>
+  (globalThis as { expo?: { modules?: Record<string, Emitter | undefined> } }).expo?.modules?.ExpoLinking
+
 /** `device.openUrl`: deliver an incoming deep link to the app's `url` listeners. */
 export function linkArea(rn: () => ReactNativeLike, navigation?: NavigationLike): Area {
   const restore = () => {
@@ -24,7 +30,7 @@ export function linkArea(rn: () => ReactNativeLike, navigation?: NavigationLike)
     tools: {
       'device.openUrl': {
         description:
-          'Deliver an incoming deep link, e.g. ["myapp://orders/5"], to every Linking "url" listener (expo-router and expo-linking included) without leaving the app, and make Linking.getInitialURL() return it until device.restore. A cold start already read its URL, so this tests links that arrive while the app runs. Returns { url, listeners } and, with the navigation container, the route the app ended on.',
+          'Deliver an incoming deep link, e.g. ["myapp://orders/5"], to every Linking "url" listener and, when the native expo-linking module exists, its useLinkingURL() hook without leaving the app, and make Linking.getInitialURL() return it until device.restore. getLinkingURL() still reads the native value. A cold start already read its URL, so this tests links that arrive while the app runs. Returns { url, listeners } and, with the navigation container, the route the app ended on.',
         maxArgs: 1,
         run: async (url: unknown) => {
           if (typeof url !== 'string' || !url) throw new Error('Pass the URL, e.g. "myapp://orders/5"')
@@ -35,7 +41,11 @@ export function linkArea(rn: () => ReactNativeLike, navigation?: NavigationLike)
             Linking.getInitialURL = () => Promise.resolve(deviceState().initialUrl ?? null)
           }
           st.initialUrl = url
-          const emit = () => DeviceEventEmitter.emit('url', { url })
+          const native = expoLinking()
+          const emit = () => {
+            DeviceEventEmitter.emit('url', { url })
+            if (typeof native?.emit === 'function') native.emit('onURLReceived', { url })
+          }
           const listeners = DeviceEventEmitter.listenerCount?.('url')
           if (!navigation || (navigation.isReady && !navigation.isReady())) {
             emit()

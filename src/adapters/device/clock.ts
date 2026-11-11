@@ -9,6 +9,7 @@ export function clockArea(): Area {
     const st = deviceState()
     if (!st.RealDate) return { restored: false }
     globalThis.Date = st.RealDate
+    st.RealDate.prototype.constructor = st.RealDate
     delete st.RealDate
     delete st.offsetMs
     return { restored: true }
@@ -18,12 +19,15 @@ export function clockArea(): Area {
     const st = deviceState()
     const Real = (st.RealDate ??= globalThis.Date)
     const now = () => Real.now() + (deviceState().offsetMs ?? 0)
-    globalThis.Date = new Proxy(Real, {
+    const proxy = new Proxy(Real, {
       construct: (target, args, newTarget) =>
         Reflect.construct(target, args.length ? args : [now()], newTarget),
       apply: () => new Real(now()).toString(),
       get: (target, key) => (key === 'now' ? now : Reflect.get(target, key)),
     })
+    // `x.constructor === Date` must stay true for every Date, or equality helpers (dequal) call them all equal.
+    Real.prototype.constructor = proxy
+    globalThis.Date = proxy
   }
 
   return {

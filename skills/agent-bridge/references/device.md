@@ -14,5 +14,8 @@ npx @avasapp/agent-bridge call device.restore
 - `device.openUrl` is for a running app. A cold start reads its URL before the bridge can fake it: open that link with agent-device.
 - `device.offline` fails mocked requests too. Metro stays reachable.
 - Without `{tapped:true}` a notification calls the received listeners (app open); with it, the response listeners.
-- The clock moves `Date.now()` and `new Date()` only; timers do not move. After `device.setTime`, call `device.appState '"active"'` so query caches recheck staleness.
+- The clock moves `Date.now()` and `new Date()` only; timers do not move. After `device.setTime`, call `device.appState '"background"'` then `'"active"'` so query caches recheck staleness (`active` alone does nothing when the app is already active). JS-driven `Animated` animations and Reanimated worklets are not shifted safely.
+- `device.offline` shows in `net.log` as `(device offline)`. NetInfo is faked only for listeners, `useNetInfo` and `NetInfo.refresh`; `fetch('wifi')` and a real native network event are not.
+- `device.notification` returns `listeners`; 0 means nothing heard it.
+- `device.openUrl` also reaches `useLinkingURL()`, but `getLinkingURL()` still reads the native value.
 - `bridge.pending` lists what is set under `device`, and `bridge.restore` undoes it.

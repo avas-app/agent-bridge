@@ -190,6 +190,75 @@ describe('device.setTime', () => {
   })
 })
 
+describe('review fixes', () => {
+  const expoModules = () => (globalThis as { expo?: unknown }).expo
+  afterEach(() => {
+    delete (globalThis as { expo?: unknown }).expo
+  })
+
+  test('restore from a rebuilt tools object still un-fakes NetInfo', async () => {
+    const refresh = mock(() => Promise.resolve({}))
+    const NetInfo = { refresh }
+    const first = deviceTools({ reactNative: rn as never, NetInfo })
+    run(first, 'device.offline', true)
+    const second = deviceTools({ reactNative: rn as never, NetInfo })
+    run(second, 'device.restore')
+    expect(NetInfo.refresh).toBe(refresh)
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  test('restore reports restored: true when any area undid something, with each area\'s detail', async () => {
+    await run(tools, 'device.openUrl', 'myapp://a')
+    run(tools, 'device.appState', 'background')
+    expect(run(tools, 'device.restore')).toEqual({ restored: true, url: 'myapp://a', state: 'active' })
+  })
+
+  test('openUrl also reaches expo-linking through its native emitter', async () => {
+    const emit = mock()
+    ;(globalThis as { expo?: unknown }).expo = { modules: { ExpoLinking: { emit } } }
+    await run(tools, 'device.openUrl', 'myapp://x')
+    expect(emit).toHaveBeenCalledWith('onURLReceived', { url: 'myapp://x' })
+    expect(expoModules()).toBeDefined()
+  })
+
+  test('the faked Date keeps x.constructor === Date, and restore puts the real one back', () => {
+    run(tools, 'device.setTime', { offsetMs: 1000 })
+    expect(new Date(0).constructor === Date).toBe(true)
+    expect(new Date().constructor === Date).toBe(true)
+    run(tools, 'device.restore')
+    expect(new Date(0).constructor).toBe(RealDate)
+  })
+
+  test('notification says which emitter it used and how many listeners heard it', () => {
+    expect(run(tools, 'device.notification', { title: 'Hi' })).toMatchObject({
+      via: 'DeviceEventEmitter',
+      listeners: 0,
+    })
+    rn.DeviceEventEmitter.addListener('onDidReceiveNotification', () => {})
+    expect(run(tools, 'device.notification', { title: 'Hi' })).toMatchObject({ listeners: 1 })
+    const native = new EventEmitter()
+    ;(globalThis as { expo?: unknown }).expo = {
+      modules: { ExpoNotificationsEmitter: { emit: (e: string, p: unknown) => native.emit(e, p), listenerCount: (e: string) => native.listenerCount(e) } },
+    }
+    native.on('onDidReceiveNotificationResponse', () => {})
+    expect(run(tools, 'device.notification', { title: 'T' }, { tapped: true })).toMatchObject({
+      via: 'ExpoNotificationsEmitter',
+      listeners: 1,
+      event: 'response',
+    })
+  })
+
+  test('the emitting flag is shared by two tools objects', () => {
+    const other = deviceTools({ reactNative: rn as never })
+    run(tools, 'device.appState', 'background')
+    run(other, 'device.appState', 'inactive')
+    rn.AppState.currentState = 'active' // a real change arrives
+    expect(rn.AppState.currentState).toBe('inactive')
+    run(other, 'device.restore')
+    expect(rn.AppState.currentState).toBe('active')
+  })
+})
+
 test('restore with nothing changed is a no-op', () => {
   expect(run(tools, 'device.restore')).toMatchObject({ restored: false })
 })
