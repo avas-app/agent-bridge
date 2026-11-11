@@ -36,7 +36,7 @@ roughly 200 ms more startup per call (machine-dependent).
 If the app's tools are already in your tool list as an MCP server
 (`agent-bridge mcp`; names like `screen_snapshot` for `screen.snapshot`), call
 those: each takes `args`, an array of the tool's arguments, and `full: true` for
-a result over 32 KB. The rest of this skill applies the same way.
+a result over 32 KB. If the list is empty or a call fails, call `agent_bridge_status`. A failed call keeps the session's own error (`may or may not have run`): check state before repeating a call that changes it. The rest of this skill applies the same way.
 
 ## Start a session
 

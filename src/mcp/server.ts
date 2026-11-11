@@ -7,9 +7,11 @@ import type { Readable, Writable } from 'node:stream'
 import { type AgentBridge, AgentBridgeCallError, type LogEntry } from '../client/index'
 import { logLine } from '../client/log-lines'
 import { OUTPUT_LIMIT_BYTES, shapedResult } from '../client/output'
+import { SessionLinkError } from '../client/session/client'
 import { encodeLine } from '../client/session/protocol'
 
-const SUPPORTED = ['2025-06-18', '2025-03-26', '2024-11-05']
+const SUPPORTED = ['2025-06-18', '2024-11-05']
+const STATUS_TOOL = 'agent_bridge_status'
 
 export type McpOptions = {
   input: Readable
@@ -19,6 +21,12 @@ export type McpOptions = {
   /** How often to look for a reload or a different app. 0 turns it off. Default 5 s. */
   pollMs?: number
   version?: string
+  /** One-off explanation to give instead of running the next call (the session it used stopped). */
+  takeNotice?: () => string | undefined
+  /** The session in use, for the status tool. */
+  sessionName?: () => string | undefined
+  /** Notes for the operator (stderr). Connect failures are logged once per distinct message. */
+  log?: (line: string) => void
 }
 
 export type McpServer = {
@@ -36,12 +44,19 @@ type ToolEntry = { name: string; mcp: string; description?: string }
 const MAX_NAME = 64
 
 /** MCP names allow letters, digits, `_` and `-`; `screen.snapshot` becomes `screen_snapshot`. Clashes get a number. */
-export function mcpNames(tools: Array<{ name: string }>): Map<string, string> {
+export function mcpNames(
+  tools: Array<{ name: string }>,
+  reserved: string[] = [],
+): Map<string, string> {
   const out = new Map<string, string>()
-  for (const { name } of tools) {
+  const taken = new Set(reserved)
+  // Sorted, so a tool keeps its name whatever order the app lists them in.
+  const sorted = [...tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  for (const { name } of sorted) {
     const base = name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, MAX_NAME - 4) || '_'
     let mcp = base
-    for (let n = 2; out.has(mcp); n++) mcp = `${base}_${n}`
+    for (let n = 2; taken.has(mcp); n++) mcp = `${base}_${n}`
+    taken.add(mcp)
     out.set(mcp, name)
   }
   return out
@@ -68,20 +83,34 @@ const text = (t: string): Content => ({ type: 'text', text: t })
 const logBlock = (logs: LogEntry[]): Content[] =>
   logs.length ? [text(`App errors:\n${logs.map(logLine).join('\n')}`)] : []
 
-/** A screenshot's base64 as an image block, the rest of the value as text. */
-function withImage(value: unknown): Content[] | null {
-  if (!value || typeof value !== 'object') return null
+const IMAGE_MAGIC: Array<[string, string]> = [
+  ['iVBORw0KGgo', 'image/png'],
+  ['/9j/', 'image/jpeg'],
+  ['UklGR', 'image/webp'],
+  ['R0lGOD', 'image/gif'],
+]
+
+/** screen.capture's base64 as an image block, the rest of the value as text. Anything that isn't an image stays text. */
+function withImage(tool: string, value: unknown): Content[] | null {
+  if (tool !== 'screen.capture' || !value || typeof value !== 'object') return null
   const { base64, ...rest } = value as { base64?: unknown }
   if (typeof base64 !== 'string' || !base64) return null
-  const data = base64.replace(/^data:[^,]*,/, '')
-  const image: Content = { type: 'image', data, mimeType: 'image/png' }
+  const url = /^data:([^;,]*)[^,]*,/.exec(base64)
+  const data = url ? base64.slice(url[0].length) : base64
+  const mimeType = IMAGE_MAGIC.find(([magic]) => data.startsWith(magic))?.[1]
+  if (!mimeType) return null
+  const image: Content = { type: 'image', data, mimeType }
   return Object.keys(rest).length
     ? [image, text(JSON.stringify(rest, null, 2))]
     : [image]
 }
 
-async function resultContent(value: unknown, full: boolean): Promise<Content[]> {
-  const image = withImage(value)
+async function resultContent(
+  tool: string,
+  value: unknown,
+  full: boolean,
+): Promise<Content[]> {
+  const image = withImage(tool, value)
   if (image) return image
   const shaped = await shapedResult(value, { full })
   const json = JSON.stringify(shaped, null, 2) ?? 'null'
@@ -109,6 +138,8 @@ async function resultContent(value: unknown, full: boolean): Promise<Content[]> 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
 
+type Outcome = { result: unknown } | { code: number; error: string } | null
+
 export function startMcpServer(options: McpOptions): McpServer {
   const pollMs = options.pollMs ?? 5000
   let bridge: AgentBridge | null = null
@@ -116,9 +147,13 @@ export function startMcpServer(options: McpOptions): McpServer {
   let tools: ToolEntry[] = []
   let names = new Map<string, string>()
   let signature = ''
+  // The signature of the list last sent to the client, and the last one announced.
+  let listed: string | null = null
+  let announced = ''
   let initialized = false
   let closed = false
   let inflight = 0
+  let lastError: string | undefined
 
   const send = (message: unknown) => {
     if (!closed) options.output.write(encodeLine(message))
@@ -128,21 +163,35 @@ export function startMcpServer(options: McpOptions): McpServer {
   const fail = (id: unknown, code: number, error: string) =>
     send({ jsonrpc: '2.0', id, error: { code, message: error } })
 
+  const noteError = (error: unknown) => {
+    const now = message(error)
+    if (now === lastError) return
+    lastError = now
+    options.log?.(`agent-bridge mcp: not connected: ${now}`)
+  }
+
+  // Tell the client when the list it last got is no longer the current one.
+  const announce = () => {
+    if (!initialized || listed === null || signature === listed || signature === announced)
+      return
+    announced = signature
+    send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })
+  }
+
   const adopt = (next: AgentBridge) => {
     const list = next.tools()
     const sig = JSON.stringify([next.device.deviceId, list])
-    const changed = sig !== signature
-    const first = !signature
     bridge = next
-    if (changed) {
+    lastError = undefined
+    if (sig !== signature) {
       signature = sig
-      names = mcpNames(list)
+      names = mcpNames(list, [STATUS_TOOL])
       tools = [...names].map(([mcp, name]) => ({
         name,
         mcp,
         description: list.find((t) => t.name === name)?.description,
       }))
-      if (initialized && !first) send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })
+      announce()
     }
   }
 
@@ -153,6 +202,10 @@ export function startMcpServer(options: McpOptions): McpServer {
       .then((next) => {
         adopt(next)
         return next
+      })
+      .catch((error) => {
+        noteError(error)
+        throw error
       })
       .finally(() => {
         opening = null
@@ -183,8 +236,8 @@ export function startMcpServer(options: McpOptions): McpServer {
       const old = bridge
       adopt(next)
       if (old !== next) old.close()
-    } catch {
-      // Nothing to do until the app is back; the next call says why.
+    } catch (error) {
+      noteError(error)
     } finally {
       polling = false
     }
@@ -192,57 +245,145 @@ export function startMcpServer(options: McpOptions): McpServer {
   const timer = pollMs > 0 ? setInterval(() => void poll(), pollMs) : undefined
   ;(timer as { unref?: () => void } | undefined)?.unref?.()
 
-  const listTools = () => ({
-    tools: tools.map((t) => ({
-      name: t.mcp,
-      title: t.name,
-      description: t.description ?? t.name,
-      inputSchema: INPUT_SCHEMA,
-    })),
-  })
+  const statusTool = {
+    name: STATUS_TOOL,
+    title: 'agent-bridge status',
+    description:
+      'Whether this server is connected to the app, which app and session, how many tools it has, and why the last connect failed. Works with no app connected.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  }
+
+  const listTools = () => {
+    listed = signature
+    return {
+      tools: [
+        ...tools.map((t) => ({
+          name: t.mcp,
+          title: t.name,
+          description: t.description ?? t.name,
+          inputSchema: INPUT_SCHEMA,
+        })),
+        statusTool,
+      ],
+    }
+  }
+
+  const statusResult = async () => {
+    await ensure().catch(() => {})
+    const json = {
+      connected: !!bridge,
+      ...(bridge && {
+        app: { name: bridge.device.name, deviceId: bridge.device.deviceId },
+        tools: tools.length,
+      }),
+      ...(options.sessionName?.() && { session: options.sessionName() }),
+      ...(lastError && { lastError }),
+    }
+    return { content: [text(JSON.stringify(json, null, 2))] }
+  }
 
   const callTool = async (params: { name?: unknown; arguments?: unknown }) => {
     const failure = (...content: Content[]) => ({ isError: true, content })
-    let b: AgentBridge
-    try {
-      b = await ensure()
-    } catch (error) {
-      return failure(
-        text(
-          `Not connected to the app: ${message(error)}\nStart the app and call again; the server reconnects on the next call.`,
-        ),
-      )
+    if (params.name === STATUS_TOOL) return statusResult()
+    const notice = options.takeNotice?.()
+    if (notice) {
+      drop()
+      return failure(text(notice))
     }
-    const tool = typeof params.name === 'string' ? names.get(params.name) : undefined
-    if (!tool) return null
-    const input = (params.arguments ?? {}) as { args?: unknown; full?: unknown }
-    let args = input.args ?? []
-    if (typeof args === 'string') {
-      try {
-        args = JSON.parse(args)
-      } catch {}
-    }
-    if (!Array.isArray(args))
-      return failure(text('`args` must be an array of the tool\'s arguments.'))
+    // Counted before the first await so the poll can't swap the connection under this call.
     inflight++
     try {
-      const timed = await b.timed(tool, ...args)
-      const content = await resultContent(timed.value, input.full === true)
-      content.push(...logBlock(timed.logs))
-      if (timed.notice) content.push(text(`Warning: ${timed.notice}`))
-      return { content }
-    } catch (error) {
-      if (error instanceof AgentBridgeCallError)
-        return failure(text(error.message), ...logBlock(error.logs))
-      // Not a tool error: the connection or the session broke. Reconnect on the next call.
-      drop()
-      return failure(
-        text(
-          `${message(error)}\nThe connection to the app was lost. The server reconnects on the next call; if the app reloaded, its pending restores are lost.`,
-        ),
-      )
+      let b: AgentBridge
+      try {
+        b = await ensure()
+      } catch (error) {
+        return failure(
+          text(
+            `Not connected to the app: ${message(error)}\nStart the app and call again; the server reconnects on the next call. The ${STATUS_TOOL} tool says what state it is in.`,
+          ),
+        )
+      }
+      const tool = typeof params.name === 'string' ? names.get(params.name) : undefined
+      if (!tool) return null
+      const input = (params.arguments ?? {}) as { args?: unknown; full?: unknown }
+      let args = input.args ?? []
+      if (typeof args === 'string') {
+        try {
+          args = JSON.parse(args)
+        } catch {}
+      }
+      if (!Array.isArray(args))
+        return failure(text('`args` must be an array of the tool\'s arguments.'))
+      try {
+        const timed = await b.timed(tool, ...args)
+        const content = await resultContent(tool, timed.value, input.full === true)
+        content.push(...logBlock(timed.logs))
+        if (timed.notice) content.push(text(`Warning: ${timed.notice}`))
+        return { content }
+      } catch (error) {
+        if (error instanceof AgentBridgeCallError)
+          return failure(text(error.message), ...logBlock(error.logs))
+        if (error instanceof SessionLinkError) {
+          // The socket to the session closed mid-call: whether it ran is unknown.
+          drop()
+          return failure(
+            text(
+              `${error.message}\nThe call may or may not have run; check before repeating one that changes state. The server reconnects on the next call.`,
+            ),
+          )
+        }
+        // A direct connection that stopped answering can't be reused.
+        if (/^No reply to "/.test(message(error))) drop()
+        return failure(text(message(error)))
+      }
     } finally {
       inflight--
+    }
+  }
+
+  const active = new Map<string, () => void>()
+
+  const dispatch = async (method: string, params: any, id: unknown, isRequest: boolean): Promise<Outcome> => {
+    switch (method) {
+      case 'initialize': {
+        if (!isRequest) return null
+        const asked = params?.protocolVersion
+        // Connect now so the first tools/list already has the app's tools.
+        void ensure().catch(() => {})
+        return {
+          result: {
+            protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
+            capabilities: { tools: { listChanged: true } },
+            serverInfo: { name: 'agent-bridge', version: options.version ?? '0.0.0' },
+            instructions: `Tools of the connected React Native app. Each takes \`args\`, an array of the tool's arguments. Results over 32 KB come back as a summary unless \`full\` is true. If the list is empty or calls fail, call ${STATUS_TOOL}.`,
+          },
+        }
+      }
+      case 'notifications/initialized':
+        initialized = true
+        return null
+      case 'ping':
+        return isRequest ? { result: {} } : null
+      case 'tools/list':
+        if (!isRequest) return null
+        // Waits for the connection, but not forever, so a missing app gives a short list.
+        await Promise.race([
+          ensure().catch(() => {}),
+          new Promise((r) => {
+            const t = setTimeout(r, 5000)
+            if (typeof t === 'object') t.unref()
+          }),
+        ])
+        return { result: listTools() }
+      case 'tools/call': {
+        if (!isRequest) return null
+        const result = await callTool(params ?? {})
+        return result
+          ? { result }
+          : { code: -32602, error: `Unknown tool: ${String(params?.name)}` }
+      }
+      default:
+        return isRequest ? { code: -32601, error: `Method not found: ${method}` } : null
     }
   }
 
@@ -253,52 +394,34 @@ export function startMcpServer(options: McpOptions): McpServer {
     } catch {
       return void fail(null, -32700, 'Parse error')
     }
-    if (!req || typeof req !== 'object' || Array.isArray(req) || typeof req.method !== 'string')
-      return void fail(req?.id ?? null, -32600, 'Invalid request')
+    if (!req || typeof req !== 'object' || Array.isArray(req))
+      return void fail(null, -32600, 'Invalid request')
+    // A response to something we never asked: nothing to answer.
+    if (req.method === undefined && req.id !== undefined) return
+    if (typeof req.method !== 'string')
+      return void fail(req.id ?? null, -32600, 'Invalid request')
     const { id, method, params } = req
-    const isRequest = id !== undefined
+    const isRequest = id !== undefined && id !== null
+    if (method === 'notifications/cancelled') {
+      active.get(JSON.stringify(params?.requestId))?.()
+      return
+    }
+    const key = JSON.stringify(id)
+    let cancel: () => void = () => {}
+    const cancelled = new Promise<'cancelled'>((r) => {
+      cancel = () => r('cancelled')
+    })
+    if (isRequest) active.set(key, cancel)
     try {
-      switch (method) {
-        case 'initialize': {
-          const asked = params?.protocolVersion
-          reply(id, {
-            protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
-            capabilities: { tools: { listChanged: true } },
-            serverInfo: { name: 'agent-bridge', version: options.version ?? '0.0.0' },
-            instructions:
-              "Tools of the connected React Native app. Each takes `args`, an array of the tool's arguments. Results over 32 KB come back as a summary unless `full` is true.",
-          })
-          // Connect now so the first tools/list already has the app's tools.
-          void ensure().catch(() => {})
-          return
-        }
-        case 'notifications/initialized':
-          initialized = true
-          return
-        case 'ping':
-          if (isRequest) reply(id, {})
-          return
-        case 'tools/list':
-          // Waits for the connection, but not forever, so a missing app gives an empty list.
-          await Promise.race([
-            ensure().catch(() => {}),
-            new Promise((r) => {
-              const t = setTimeout(r, 5000)
-              if (typeof t === 'object') t.unref()
-            }),
-          ])
-          return void reply(id, listTools())
-        case 'tools/call': {
-          const result = await callTool(params ?? {})
-          if (result) reply(id, result)
-          else fail(id, -32602, `Unknown tool: ${String(params?.name)}`)
-          return
-        }
-        default:
-          if (isRequest) fail(id, -32601, `Method not found: ${method}`)
-      }
+      const outcome = await Promise.race([dispatch(method, params, id, isRequest), cancelled])
+      // A cancelled request gets no reply; its call may still finish in the app.
+      if (outcome === 'cancelled' || !outcome) return
+      if ('result' in outcome) reply(id, outcome.result)
+      else fail(id, outcome.code, outcome.error)
     } catch (error) {
       if (isRequest) fail(id, -32603, message(error))
+    } finally {
+      if (isRequest) active.delete(key)
     }
   }
 
