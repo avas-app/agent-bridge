@@ -99,7 +99,7 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       '',
       '// Pass the ref you give to <NavigationContainer ref={…}>, then uncomment navTools below.',
       `// import { navTools } from '@avasapp/agent-bridge/react-navigation'`,
-      `// import { navigationRef } from '../navigation'`,
+      `// import { navigationRef } from './path-to-your-navigation-ref'`,
     )
   if (o.realtimeTools?.length)
     L.push('', ...o.realtimeTools.map((t) => `import { ${t.name} } from '${t.from}'`))
