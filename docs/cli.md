@@ -106,6 +106,28 @@ printf '%s\n' 'router.navigate /inbox' 'screen.waitFor "Inbox"' | agent-bridge c
 
 A session stops itself, restore included, after 15 minutes without calls (`--idle`), and reconnects if the app reloads. It only reconnects to the app it started on (same name and platform; its deviceId changes on every reload): with that app gone, calls fail with `<app> is not connected; connected: …` rather than going to another app on the same Metro. After a reload it warns `app reloaded; N pending restores lost: store, query` (the areas that had something to undo) in the next call's output, failed or not, and in `session stop`, because the old runtime's undo state is gone. Every step of a reconnect is time-bounded (12 s per transport, Expo then CDP), so a Metro that stops answering can't wedge the session: calls fail with `app not connected; reconnecting` or `The app is gone (...)` instead of hanging, the daemon's health check (every 5 s) and the next call each try again until the idle timeout, and `session stop` and SIGTERM always finish (a stop still tries one reconnect so `bridge.restore` can run).
 
+## MCP server
+
+`agent-bridge mcp` serves the connected app's tools to an agent that prefers MCP tools over a shell. It speaks MCP over stdio (protocol 2025-06-18, 2025-03-26 and 2024-11-05) and writes nothing else to stdout.
+
+```sh
+claude mcp add agent-bridge -- npx @avasapp/agent-bridge mcp          # Claude Code
+codex mcp add agent-bridge -- npx @avasapp/agent-bridge mcp           # Codex
+```
+
+Cursor, in `.cursor/mcp.json` (Codex also reads `[mcp_servers.agent-bridge]` with `command` and `args` in `~/.codex/config.toml`):
+
+```json
+{ "mcpServers": { "agent-bridge": { "command": "npx", "args": ["@avasapp/agent-bridge", "mcp"] } } }
+```
+
+Add `"--metro", "host:port"` to the args when Metro isn't on `localhost:8081`, and use the installed `./node_modules/.bin/agent-bridge` instead of `npx` if you can. It takes the same `--metro`, `--device`, `--transport`, `--timeout`, `--session` and `--no-session` options as the other commands.
+
+- **Session.** It uses the project's running session, like `call`. With none running it starts one inside the server and, when the server exits, runs `bridge.restore` (`--keep` leaves the app as it is). Reload notices, pending restores and the lost-reply rules are the session's.
+- **Tools.** Each app tool is an MCP tool with a dot-free name: `screen.snapshot` is `screen_snapshot` (the tool's `title` keeps the real name; a clash gets `_2`). Every tool takes `args`, an array of its arguments in order, and `full`. When the app reloads or a different app connects, the server sends `notifications/tools/list_changed` and the list updates. With no app connected the list is empty until one appears.
+- **Results.** The value as JSON text. A result over 32 KB is a summary of its size and shape unless the call passes `full: true`. `screen.capture` with `{base64: true}` comes back as an image. App errors logged during the call and the session's reload notice are added as extra text.
+- **Errors.** A failed call is a result with `isError` and the app's error text. If the app goes away the call says so and the server keeps running; it reconnects on the next call.
+
 ## From code
 
 ```ts
