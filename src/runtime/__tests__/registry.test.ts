@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { createRegistry } from '../registry'
 import { toJson } from '../to-json'
+import { restoreTools } from '../tools/restore'
+import type { Tools } from '../types'
 
 const registry = createRegistry(() => ({
   'demo.echo': (...args: unknown[]) => args,
@@ -81,5 +83,26 @@ describe('toJson', () => {
     expect(
       (await registry.dispatch({ id: '3', tool: 'demo.echo' }, 'dev')).loadId,
     ).toBeUndefined()
+  })
+})
+
+describe('journal key', () => {
+  const tools: Tools = {
+    ...restoreTools(() => tools),
+    'mmkv.restore': { run: () => 0, journalRev: () => 1, journal: () => ({ kv: { a: 1 } }), adopt: () => ({ adopted: [], already: [], changed: [] }) },
+  }
+  const registry = createRegistry(() => tools, undefined, 'L1')
+  const call = (extra: object, tool = 'bridge.pending') => registry.dispatch({ id: '1', tool, ...extra }, 'd')
+
+  test('only the first key gets the journal or may call bridge.adopt', async () => {
+    expect((await call({ journalAck: '' })).journalData).toBeUndefined()
+    const mine = await call({ journalAck: '', journalKey: 'k1' })
+    expect(mine.journalData).toEqual({ mmkv: { kv: { a: 1 } } })
+    expect((await call({ journalAck: '', journalKey: 'k2' })).journalData).toBeUndefined()
+    expect((await call({ journalAck: 'L1:1', journalKey: 'k1' })).journalData).toBeUndefined()
+    const refused = await call({ journalKey: 'k2', args: [{}] }, 'bridge.adopt')
+    expect(refused).toMatchObject({ ok: false })
+    expect(await call({ args: [{}] }, 'bridge.adopt')).toMatchObject({ ok: false })
+    expect(await call({ journalKey: 'k1', args: [{}] }, 'bridge.adopt')).toMatchObject({ ok: true })
   })
 })

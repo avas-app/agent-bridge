@@ -324,12 +324,21 @@ export function storeTools(
         return Object.keys(out).length ? out : undefined
       },
       adopt: async (raw: unknown): Promise<AdoptResult> => {
-        const data = raw as Record<string, StoreJournal>
+        const data = (isObject(raw) && !Array.isArray(raw) ? raw : {}) as Record<string, StoreJournal>
         const result: AdoptResult = { adopted: [], already: [], changed: [] }
         const retry: Record<string, StoreJournal> = {}
+        // Waited for together, so unready stores cost one wait, not one each.
+        const ready = await Promise.all(
+          Object.keys(data).map((n) => (stores[n] ? hydrated(stores[n]) : false)),
+        )
+        const names = Object.keys(data)
         for (const [name, entry] of Object.entries(data)) {
           const store = stores[name]
-          if (!store || !(await hydrated(store))) {
+          if (!isObject(entry) || !isObject(entry.original) || !isObject(entry.after)) {
+            (result.invalid ??= []).push(name)
+            continue
+          }
+          if (!store || !ready[names.indexOf(name)]) {
             retry[name] = entry
             continue
           }

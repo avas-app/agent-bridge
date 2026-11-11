@@ -1304,6 +1304,168 @@ describe('restores across a reload', () => {
     expect(disk.get('auth')).toBe('real-store')
   }, 15_000)
 
+  const setup = async (name: string, extraOpts: Record<string, unknown> = {}, daemonOpts: Record<string, unknown> = {}) => {
+    disk.clear()
+    disk.set('kv:token', 'real')
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withStorage, ...extraOpts } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name, metro: metro.metro, idleMs: 0, healthMs: 0, adoptRetryMs: 0, ...daemonOpts })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name, timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    return { metro, opts, first, daemon, bridge }
+  }
+
+  test('the journal rides on the write reply, with no separate read', async () => {
+    const { first, bridge } = await setup('rl-ride')
+    const seen: string[] = []
+    first.onCall = (t) => void seen.push(t)
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    expect(seen).toEqual(['mmkv.set'])
+  })
+
+  test('a reload right after a write keeps its undo', async () => {
+    const { metro, opts, first, daemon, bridge } = await setup('rl-race')
+    let second: Awaited<ReturnType<typeof fakeApp>> | undefined
+    // The old design read the journal in a second call, which a reload could answer empty.
+    first.onCall = (t) => {
+      if (t === 'bridge.journal') first.ws.close()
+    }
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second?.ws.close())
+    const next = await bridge.timed('bridge.pending')
+    expect(next.notice).toContain('kept 1 undo')
+    await daemon.stop()
+    expect(disk.get('kv:token')).toBe('real')
+  }, 15_000)
+
+  test('a call that fails after a reload carries the kept-undo notice in the same reply', async () => {
+    const { metro, opts, first, bridge } = await setup('rl-notice')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const error = await bridge.call('demo.echo', 1).catch((e: unknown) => e as { notice?: string })
+    expect(String((error as { notice?: string }).notice)).toContain('kept 1 undo')
+  }, 15_000)
+
+  test('stop right after a reload restores the journaled fakes', async () => {
+    const { metro, opts, first, daemon, bridge } = await setup('rl-stop')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const stopped = await daemon.stop()
+    expect(stopped).toMatchObject({ ok: true })
+    expect(disk.get('kv:token')).toBe('real')
+  }, 15_000)
+
+  test('a write whose reply was lost to a reload says its undo is lost', async () => {
+    const { metro, opts, first, bridge } = await setup('rl-lostwrite')
+    first.onCall = (t) => t === 'mmkv.set' && first.ws.close()
+    const error = await bridge.call('mmkv.set', 'kv', 'token', 'fake').catch((e: unknown) => e as { notice?: string })
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const again = await bridge.timed('bridge.pending')
+    expect(`${(error as { notice?: string }).notice} ${again.notice}`).toContain('that undo may be lost')
+  }, 15_000)
+
+  test('an area that never becomes ready is tried three times, reported once, then dropped', async () => {
+    const { metro, first, bridge, daemon } = await setup('rl-cap')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', {
+      restore: false,
+      loadId: 'load-2',
+      extra: (g: () => Tools) => ({ ...mmkvTools({}), ...restoreTools(g) }),
+    })
+    cleanups.push(() => second.ws.close())
+    const adopts: string[] = []
+    second.onCall = (t) => t === 'bridge.adopt' && adopts.push(t)
+    const notices: (string | undefined)[] = []
+    for (let i = 0; i < 4; i++) notices.push((await bridge.timed('bridge.pending')).notice)
+    expect(notices[0]).toContain('will retry: mmkv:kv (not ready)')
+    expect(notices[1]).toBeUndefined()
+    expect(notices[2]).toContain('could not re-arm after the reload: mmkv:kv')
+    expect(notices[3]).toBeUndefined()
+    expect(adopts.length).toBe(3)
+    void daemon
+  }, 20_000)
+
+  test('a second reload keeps what was still waiting', async () => {
+    const { metro, first, bridge, daemon } = await setup('rl-two')
+    disk.set('kv2:k', 'orig2')
+    // Load 1 has kv and kv2; load 2 only kv2; load 3 both.
+    const mk = (names: string[]) => (g: () => Tools): Tools => {
+      const all: Record<string, ReturnType<typeof mem>['kv']> = {}
+      for (const n of names) {
+        const pre = n === 'kv' ? 'kv:' : 'kv2:'
+        all[n] = {
+          getAllKeys: () => [...disk.keys()].filter((k) => k.startsWith(pre)).map((k) => k.slice(pre.length)),
+          getString: (k: string) => disk.get(pre + k),
+          set: (k: string, v: string | number | boolean) => void disk.set(pre + k, String(v)),
+          remove: (k: string) => disk.delete(pre + k),
+        }
+      }
+      return { ...mmkvTools(all), ...restoreTools(g) }
+    }
+    first.ws.close()
+    const one = await fakeApp(metro.metro, 'dev-1b', { restore: false, loadId: 'load-1b', extra: mk(['kv', 'kv2']) })
+    cleanups.push(() => one.ws.close())
+    await bridge.timed('bridge.pending')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    one.ws.close()
+    const two = await fakeApp(metro.metro, 'dev-2', { restore: false, loadId: 'load-2', extra: mk(['kv2']) })
+    cleanups.push(() => two.ws.close())
+    await bridge.timed('bridge.pending')
+    await bridge.call('mmkv.set', 'kv2', 'k', 'fake2')
+    two.ws.close()
+    const three = await fakeApp(metro.metro, 'dev-3', { restore: false, loadId: 'load-3', extra: mk(['kv', 'kv2']) })
+    cleanups.push(() => three.ws.close())
+    await daemon.stop()
+    expect(disk.get('kv:token')).toBe('real')
+    expect(disk.get('kv2:k')).toBe('orig2')
+  }, 20_000)
+
+  test('stop: a restore whose reply was lost is repeated only if something is still pending', async () => {
+    for (const changed of [false, true]) {
+      const { metro, daemon, first } = await setup(`rl-lost-restore-${changed}`, { restore: false }, { timeoutMs: 1000 })
+      first.ws.close()
+      const a = await fakeApp(metro.metro, 'dev-a', { dropOnce: ['bridge.restore'], loadId: 'load-1', extra: undefined })
+      cleanups.push(() => a.ws.close())
+      let b: Awaited<ReturnType<typeof fakeApp>> | undefined
+      // The app comes back (same load) right after the restore cut the socket.
+      a.onCall = (t) => {
+        if (t !== 'bridge.restore') return
+        void fakeApp(metro.metro, 'dev-b', { counted: ['bridge.restore'], loadId: 'load-1' }).then((x) => {
+          b = x
+          x.changed = changed
+          cleanups.push(() => x.ws.close())
+        })
+      }
+      const stopped = await daemon.stop()
+      expect(stopped).toMatchObject({ ok: true })
+      expect(b?.runs['bridge.restore']).toBe(changed ? 1 : undefined)
+    }
+  }, 40_000)
+
+  test('a call without the session key cannot read or hand over the journal', async () => {
+    const { first, metro } = await setup('rl-key')
+    void first
+    const { connect } = await import('../../index')
+    const bridge = await connect({ metro: metro.metro, transport: 'expo', timeoutMs: 1000 })
+    cleanups.push(() => bridge.close())
+    await expect(bridge.call('bridge.adopt', {})).rejects.toThrow(/session's own use/)
+    const tools = (await bridge.tools()).map((t: { name: string }) => t.name)
+    expect(tools).not.toContain('bridge.adopt')
+  }, 15_000)
+
   test('a value the app changed since is left alone and said so', async () => {
     disk.clear()
     disk.set('kv:token', 'real')

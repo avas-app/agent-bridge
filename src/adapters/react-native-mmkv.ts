@@ -26,6 +26,9 @@ let rev = 0
 type JournalEntry = { original: string | null; written: string | null }
 type Journal = Record<string, Record<string, JournalEntry>>
 
+const isPlain = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v)
+
 function remove(mmkv: MMKVLike, name: string, key: string) {
   if (mmkv.remove) mmkv.remove(key)
   else if (mmkv.delete) mmkv.delete(key)
@@ -118,10 +121,14 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
         return Object.keys(out).length ? out : undefined
       },
       adopt: (raw: unknown): AdoptResult => {
-        const data = raw as Journal
+        const data = (isPlain(raw) ? raw : {}) as Journal
         const result: AdoptResult = { adopted: [], already: [], changed: [] }
         const retry: Journal = {}
         for (const [name, keys] of Object.entries(data)) {
+          if (!isPlain(keys)) {
+            (result.invalid ??= []).push(name)
+            continue
+          }
           const mmkv = instances[name]
           if (!mmkv) {
             retry[name] = keys
@@ -129,6 +136,12 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
           }
           for (const [key, entry] of Object.entries(keys)) {
             const label = `${name}:${key}`
+            const e = entry as Partial<JournalEntry> | null
+            const text = (v: unknown) => v === null || typeof v === 'string'
+            if (!isPlain(e) || !text(e.original) || !text(e.written)) {
+              (result.invalid ??= []).push(label)
+              continue
+            }
             const exists = mmkv.contains?.(key) ?? mmkv.getAllKeys().includes(key)
             const current = exists ? (mmkv.getString(key) ?? undefined) : null
             // The new load may already have saved the agent's value as the original.
@@ -141,7 +154,9 @@ export function mmkvTools(instances: Record<string, MMKVLike>): Tools {
               let map = originals.get(mmkv)
               if (!map) originals.set(mmkv, (map = new Map()))
               map.set(key, entry.original ?? undefined)
-              note(mmkv, key, entry.written)
+              // The new load may have saved a newer value of its own: keep what it wrote.
+              if (!savedFake) note(mmkv, key, entry.written)
+              else rev += 1
               result.adopted.push(label)
             } else result.changed.push(label)
           }

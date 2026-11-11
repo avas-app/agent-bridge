@@ -104,6 +104,21 @@ describe('mmkv journal', () => {
     expect(storage.data.get('a')).toBe('app-wrote-this')
   })
 
+  test('drops entries of the wrong shape and names them, and restores the rest', () => {
+    const storage = fakeMmkv('remove')
+    storage.data.set('a', 'fake-a')
+    storage.data.set('b', 'fake-b')
+    const tools = mmkvTools({ storage })
+    const result = adopt(tools, {
+      storage: { a: { original: { evil: 1 }, written: 'fake-a' }, b: { original: 'real-b', written: 'fake-b' } },
+      other: 'nope',
+    })
+    expect(result).toEqual({ adopted: ['storage:b'], already: [], changed: [], invalid: ['storage:a', 'other'] })
+    run(tools, 'mmkv.restore')
+    expect(storage.data.get('b')).toBe('real-b')
+    expect(storage.data.get('a')).toBe('fake-a')
+  })
+
   test('keeps the journal original when the new load already saved the fake value', () => {
     const storage = fakeMmkv('remove')
     storage.data.set('t', 'real')

@@ -45,6 +45,10 @@ export type AdoptResult = {
   already: string[]
   changed: string[]
   retry?: unknown
+  /** Why `retry` is not ready. */
+  error?: string
+  /** Entries that were not the expected shape and were dropped. */
+  invalid?: string[]
 }
 
 /** Tools by name. Namespace them with a dot, e.g. `query.pin`. */

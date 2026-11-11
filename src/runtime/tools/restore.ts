@@ -60,7 +60,7 @@ function restorers(tools: Tools) {
 }
 
 /** Names a session reads and writes itself; hidden from the tool list because they carry raw values. */
-export const INTERNAL_TOOLS = ['bridge.journal', 'bridge.adopt']
+export const INTERNAL_TOOLS = ['bridge.adopt']
 
 /**
  * `bridge.restore` runs every tool whose name ends in `.restore`, so each
@@ -75,20 +75,16 @@ export function restoreTools(getTools: () => Tools): Tools {
         'What bridge.restore would undo right now, per area (store, query, net, app, ...): the value is true, or detail such as a store\'s snapshot against its current value. Empty when nothing is pending. Changes nothing.',
       run: () => pendingByArea(getTools(), true),
     },
-    'bridge.journal': {
-      maxArgs: 0,
-      description: 'Internal: what a session keeps to undo after a reload. Holds raw values.',
-      run: () => journalByArea(getTools()),
-    },
     'bridge.adopt': {
       maxArgs: 1,
       description: 'Internal: a session hands back its journal after a reload.',
       run: async (data: Record<string, unknown>) => {
         const tools = getTools()
         const out: Record<string, unknown> = {}
-        for (const [area, part] of Object.entries(data ?? {})) {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('bridge.adopt takes an object')
+        for (const [area, part] of Object.entries(data)) {
           const d = tools[`${area}${SUFFIX}`]
-          if (typeof d === 'function' || !d?.adopt) out[area] = { adopted: [], already: [], changed: [], retry: part }
+          if (typeof d === 'function' || !d?.adopt) out[area] = { adopted: [], already: [], changed: [], retry: part, error: 'this area has no adopt' }
           else
             try {
               out[area] = await d.adopt(part)

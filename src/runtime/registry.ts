@@ -1,7 +1,7 @@
 import type { CallMessage, ResultMessage, ToolInfo } from '../shared/protocol'
 import type { LogCapture } from './logs'
 import { toJson } from './to-json'
-import { INTERNAL_TOOLS, journalRev, pendingByArea } from './tools/restore'
+import { INTERNAL_TOOLS, journalByArea, journalRev, pendingByArea } from './tools/restore'
 import type { ToolDefinition, ToolFn, Tools } from './types'
 
 function unwrap(definition: ToolDefinition): {
@@ -33,10 +33,14 @@ export function createRegistry(
   ): Promise<ResultMessage> {
     // The client's health ping and pending check must not take errors meant for the next real call.
     const quiet = call.tool === 'bridge.ping' || call.tool === 'bridge.pending'
+    // The first key a call brings is the session's; anyone else's is ignored.
+    const trusted = call.journalKey !== undefined && (sessionKey ??= call.journalKey) === call.journalKey
     const end = quiet ? undefined : logs?.begin(call.tool)
-    const result = await run(call, from).finally(end)
+    const result = INTERNAL_TOOLS.includes(call.tool) && !trusted
+      ? await refused(call, from)
+      : await run(call, from).finally(end)
     const errors = quiet ? undefined : logs?.takeErrors()
-    const stamped = loadId ? { ...result, loadId, ...pending(), ...journal() } : result
+    const stamped = loadId ? { ...result, loadId, ...pending(), ...journal(call, trusted) } : result
     return errors?.length ? { ...stamped, logs: errors } : stamped
   }
 
@@ -46,10 +50,23 @@ export function createRegistry(
     return areas.length ? { pending: areas } : {}
   }
 
-  function journal(): { journal?: number } {
+  function journal(call: CallMessage, trusted: boolean) {
     const rev = journalRev(getTools())
-    return rev ? { journal: rev } : {}
+    const out: { journal?: number; journalData?: Record<string, unknown> } = rev ? { journal: rev } : {}
+    if (trusted && call.journalAck !== undefined && call.journalAck !== `${loadId}:${rev}`)
+      out.journalData = journalByArea(getTools())
+    return out
   }
+
+  const refused = (call: CallMessage, from: string): ResultMessage => ({
+    id: call.id,
+    from,
+    ok: false,
+    error: `${call.tool} is for a session's own use`,
+    ms: 0,
+  })
+
+  let sessionKey: string | undefined
 
   async function run(call: CallMessage, from: string): Promise<ResultMessage> {
     const t0 = performance.now()

@@ -18,6 +18,10 @@ export type CallMessage = {
   args?: unknown[]
   /** Device to run on. Expo's socket broadcasts, so every app sees every call. */
   to?: string
+  /** A session's own: the journal tag it holds, so the reply carries the journal only when it is stale. */
+  journalAck?: string
+  /** A session's own secret; the runtime keeps the first one it gets and ignores the journal calls of anyone else. */
+  journalKey?: string
 }
 
 /** An error or warning the app logged, threw or left unhandled. */
@@ -44,8 +48,10 @@ export type ResultMessage = (
   loadId?: string
   /** Areas (`store`, `query`, ...) whose `*.restore` has something to undo. */
   pending?: string[]
-  /** Goes up when something persistent changed that a restore could undo; a session then reads bridge.journal. */
+  /** Goes up when something persistent changed that a restore could undo. */
   journal?: number
+  /** What each area could undo from storage; sent only to a session that proved it holds the key and a stale tag. */
+  journalData?: Record<string, unknown>
 }
 
 export type ToolInfo = { name: string; description?: string }
