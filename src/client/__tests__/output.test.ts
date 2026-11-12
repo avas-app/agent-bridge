@@ -11,7 +11,7 @@ import {
   type DeviceInfo,
   PROTOCOL_VERSION,
 } from '../../shared/protocol'
-import { OUTPUT_LIMIT_BYTES, renderResult, shapeOf } from '../output'
+import { OUTPUT_LIMIT_BYTES, renderResult, renderText, shapeOf } from '../output'
 import { bigValue } from './big-value'
 import { startFakeMetro } from './fake-metro'
 
@@ -26,6 +26,19 @@ const tmp = () => {
   dirs.push(d)
   return d
 }
+
+describe('renderText', () => {
+  test('prints small text as it is, writes it to --out, and summarises big text', async () => {
+    expect(await renderText('button #a')).toBe('button #a')
+    const file = join(tmp(), 'snap.txt')
+    const summary = JSON.parse(await renderText('button #a', { out: file }))
+    expect(summary.file).toBe(file)
+    expect(readFileSync(file, 'utf8')).toBe('button #a\n')
+    const big = 'é'.repeat(OUTPUT_LIMIT_BYTES)
+    expect(JSON.parse(await renderText(big)).resultTooLarge).toBe(true)
+    expect(await renderText(big, { full: true })).toBe(big)
+  })
+})
 
 describe('renderResult', () => {
   test('prints small results as they are', async () => {

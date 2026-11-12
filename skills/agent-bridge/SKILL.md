@@ -121,7 +121,7 @@ real account instead. If you're asked to add one, read
 ## See and use the screen
 
 ```sh
-npx @avasapp/agent-bridge call screen.snapshot                       # buttons, inputs, text on the focused screen
+npx @avasapp/agent-bridge call screen.snapshot                       # one line per button, input, text on the focused screen (--json for rects)
 npx @avasapp/agent-bridge call screen.press '"add-plant"'            # by testID, label or text
 npx @avasapp/agent-bridge call screen.fill '["plant-name", "Fern"]'  # runs the input's handlers
 npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'   # {"gone": true} waits for it to go
