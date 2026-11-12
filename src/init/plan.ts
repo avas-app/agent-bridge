@@ -361,8 +361,8 @@ export function plan(
     if (d.has.reactNavigation && !d.has.expoRouter)
       commented.push({
         adapter: '@react-navigation/native',
-        items: ['nav.navigate', 'nav.current'],
-        why: 'there is no React Navigation adapter; the sample tools need your container ref',
+        items: ['navTools(navigationRef)'],
+        why: `navTools needs the container ref you pass to <NavigationContainer> (${DOCS}/adapters.md)`,
       })
     for (const t of realtime) todos.push(`${realtimeTodoText(t)}: ${REALTIME_WHY} (${DOCS}/realtime.md).`)
   }

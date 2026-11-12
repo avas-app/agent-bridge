@@ -94,6 +94,13 @@ export function renderBridgeFile(o: BridgeFileInput): string {
   }
   if (o.expoRouter) L.push(`import { router, useNavigationContainerRef } from 'expo-router'`)
   if (o.reactQuery) L.push(`import { useContext } from 'react'`)
+  if (o.reactNavigation)
+    L.push(
+      '',
+      '// Pass the ref you give to <NavigationContainer ref={…}>, then uncomment navTools below.',
+      `// import { navTools } from '@avasapp/agent-bridge/react-navigation'`,
+      `// import { navigationRef } from './path-to-your-navigation-ref'`,
+    )
   if (o.realtimeTools?.length)
     L.push('', ...o.realtimeTools.map((t) => `import { ${t.name} } from '${t.from}'`))
 
@@ -195,15 +202,12 @@ export function renderBridgeFile(o: BridgeFileInput): string {
     L.push(`      // ...mmkvTools({ ${mmkv.map((m) => m.name).join(', ')} }),`)
   }
   if (o.realtime.length) L.push('      // ...realtimeDevTools,')
-  if (o.reactNavigation) {
-    const params = o.ts ? 'name: string, params?: object' : 'name, params'
+  if (o.reactNavigation)
     L.push(
-      '      // React Navigation has no adapter. With your container ref',
-      '      // (createNavigationContainerRef from @react-navigation/native), tools like these work:',
-      `      // 'nav.navigate': (${params}) => navigationRef.navigate(name, params),`,
-      `      // 'nav.current': () => navigationRef.getCurrentRoute(),`,
+      '      // React Navigation: uncomment this and the imports above, with the ref you pass to',
+      '      // <NavigationContainer ref={…}> (createNavigationContainerRef from @react-navigation/native).',
+      '      // ...navTools(navigationRef),',
     )
-  }
   L.push(
     `      // Your own tools: any function, JSON in and out, e.g. 'cart.clear': () => clearCart(),`,
     '    },',
