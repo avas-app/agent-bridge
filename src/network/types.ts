@@ -1,11 +1,21 @@
-/** Which requests a mock answers. A bare string is a URL substring. */
+/**
+ * Which requests a mock answers. A bare string is a URL substring. In the
+ * object form every key given must match, and at least one of `url`, `path`,
+ * `body` or `graphql` is needed.
+ */
 export type MockMatch =
   | string
   | {
       /** A substring of the URL, a RegExp, or `{ regex }` from JSON. */
-      url: string | RegExp | { regex: string; flags?: string }
+      url?: string | RegExp | { regex: string; flags?: string }
+      /** The whole path of the URL on any host, query ignored: "/orders/:id" (one segment) or "/files/*" (the rest). "/orders" does not match "/orders/5/items". */
+      path?: string
       /** Any method when left out. */
       method?: string
+      /** A JSON request body must contain this: objects match key by key, arrays match in length and position, other values are equal. */
+      body?: Record<string, unknown> | unknown[]
+      /** The GraphQL operationName, from the JSON body or the `?operationName=` query. */
+      graphql?: string
     }
 
 export type MockResponse =
@@ -63,6 +73,9 @@ export type LogEntry = {
   pending?: boolean
   requestBody?: string
   responseBody?: string
+  /** From net.entry only; names are lower case. Credential values are cut unless `{ full: true }`. */
+  requestHeaders?: Record<string, string>
+  responseHeaders?: Record<string, string>
   /** From net.entry: a body shown is only a preview because the whole one was too large or is gone. */
   truncated?: boolean
   error?: string
