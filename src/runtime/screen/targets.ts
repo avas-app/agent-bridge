@@ -151,7 +151,10 @@ export function resolveTarget(
     reachable.filter((f) => f.onScreen),
     target,
   )
-  if (!matches.length && options?.offscreen) matches = matchTarget(reachable, target)
+  // An {index} counts every rendered match, as paging does, so a page that lands with
+  // only some of them on screen still finds the one asked for.
+  const hasIndex = (options?.index ?? indexOf(target)) !== undefined
+  if (options?.offscreen && (!matches.length || hasIndex)) matches = matchTarget(reachable, target)
   if (!matches.length) {
     const hidden = matchTarget(found, target)[0]
     if (hidden?.hidden)

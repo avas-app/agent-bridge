@@ -277,9 +277,9 @@ describe('gesture handler', () => {
 // With `lag`, rows follow the offset 60 ms after scrollTo and the content only grows as rows
 // render (no getItemLayout), as a real VirtualizedList does after onScroll.
 describe('scroll:true on a list that has not rendered the row', () => {
-  function list(rows = 100, lag = false, extra: Fiber[] = []) {
+  function list(rows = 100, lag = false, extra: Fiber[] = [], win = { before: 80, after: 680 }, fixedTotal = false) {
     const state = { offset: 0, shown: 0, grown: 0, scrolls: [] as number[] }
-    const total = () => (lag ? Math.max(state.grown, 640) : rows * 40)
+    const total = () => (lag && !fixedTotal ? Math.max(state.grown, 640) : rows * 40)
     const view = { getBoundingClientRect: (): Rect => ({ x: 0, y: 100, width: 400, height: 600 }), checkVisibility: () => true }
     const content = {
       getBoundingClientRect: (): Rect => ({ x: 0, y: 100 - state.offset, width: 400, height: total() }),
@@ -298,7 +298,7 @@ describe('scroll:true on a list that has not rendered the row', () => {
       const items: Fiber[] = []
       for (let i = 0; i < rows; i++) {
         const top = i * 40
-        if (top + 40 < state.shown - 80 || top > state.shown + 680) continue
+        if (top + 40 < state.shown - win.before || top > state.shown + win.after) continue
         state.grown = Math.max(state.grown, top + 40)
         let row = cache.get(i)
         if (!row) {
@@ -361,6 +361,36 @@ describe('scroll:true on a list that has not rendered the row', () => {
     )
     expect(state.offset).toBe(200)
     expect(state.scrolls.at(-1)).toBe(200)
+  })
+
+  test('a long list with a wide render window is crossed in few pages', async () => {
+    // VirtualizedList renders ~10 viewports; stepping by the rendered span reaches row 480 in a few jumps.
+    const { screen, state } = list(500, true, [], { before: 3000, after: 3600 }, true)
+    expect(await screen.press('row-480', { scroll: true })).toMatchObject({ testID: 'row-480' })
+    expect(state.scrolls.length).toBeLessThanOrEqual(8)
+  })
+
+  test('starting at the bottom, the whole budget goes to paging up', async () => {
+    const { screen, state } = list(500, true, [], { before: 3000, after: 3600 }, true)
+    state.offset = state.shown = 500 * 40 - 600
+    expect(await screen.press('row-20', { scroll: true })).toMatchObject({ testID: 'row-20' })
+  })
+
+  test('{scroll:{timeoutMs}} sets the time budget and a missing row fails within it', async () => {
+    const { screen, state } = list(500, true, [], { before: 80, after: 680 }, true)
+    state.offset = state.shown = 3000
+    const t = performance.now()
+    await expect(screen.press('Row 9999', { scroll: { timeoutMs: 400 } })).rejects.toThrow(
+      /scrolled back to offset 3000.*400 ms budget/,
+    )
+    expect(performance.now() - t).toBeLessThan(1500)
+    expect(state.offset).toBe(3000)
+  })
+
+  test('scroll options are checked', async () => {
+    const { screen } = list()
+    await expect(screen.press('Row 60', { scroll: { timeoutMs: -1 } })).rejects.toThrow(/positive number/)
+    await expect(screen.press('Row 60', { scroll: { pages: 3 } as never })).rejects.toThrow(/Unknown scroll option "pages"/)
   })
 
   test('only one list is paged: a horizontal carousel is left alone', async () => {

@@ -1,6 +1,6 @@
 // The screen tools' logic, given a way to read the fiber roots and the window
 // size. tools/screen.ts wires it to React Native.
-import type { Fiber } from '../find-text-core'
+import { type Fiber, measureHost } from '../find-text-core'
 import {
   fillInput,
   isSlider,
@@ -124,7 +124,20 @@ export function createScreen(env: {
   }
 
   const PAGE_LIMIT = 40
-  const PAGE_MS = 3000
+  const PAGE_MS = 10_000
+
+  // `scroll` is true, or {timeoutMs} to change the paging time budget.
+  const pagingBudget = (scroll: boolean | { timeoutMs?: number } | undefined): number => {
+    if (scroll === null || typeof scroll !== 'object') return PAGE_MS
+    const bad = Object.keys(scroll).filter((k) => k !== 'timeoutMs')
+    if (bad.length)
+      throw new Error(`Unknown scroll option ${bad.map((k) => JSON.stringify(k)).join(', ')}. Valid: timeoutMs`)
+    const ms = scroll.timeoutMs
+    if (ms === undefined) return PAGE_MS
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0)
+      throw new Error(`scroll.timeoutMs is a positive number of milliseconds; got ${JSON.stringify(ms)}`)
+    return ms
+  }
 
   const scrollableAgain = (host: Fiber): Scrollable | undefined => {
     const node = host.stateNode
@@ -149,6 +162,7 @@ export function createScreen(env: {
     first: Scrollable,
     skipped: Scrollable[],
     has: () => boolean,
+    budgetMs: number,
   ): Promise<{ found: boolean; note: string }> => {
     const { host } = first
     const name = nameOf(host)
@@ -156,26 +170,46 @@ export function createScreen(env: {
     if (!first0) return { found: false, note: `${name} has no readable scroll position` }
     const start: Metrics = first0
     const size = Math.max(1, ((isHorizontal(first) ? start.view?.width : start.view?.height) ?? 400) * 0.9)
-    const deadline = performance.now() + PAGE_MS
+    const deadline = performance.now() + budgetMs
     let pages = 0
     let lowest = start.offset
     let highest = start.offset
     let max = start.max
     let stop = 'both ends'
+    const horizontal = isHorizontal(first)
+    const node = host.stateNode
+    let span: { top: number; bottom: number } | null = null
     const readRows = () => {
       const now = scrollableAgain(host)
-      const rows = collectAll().found.filter((f) => {
-        if (!f.onScreen) return false
-        for (let x = f.scroller; x; x = x.parent) if (x.host === host) return true
-        return false
-      }).length
-      return { metrics: now ? metricsOf(now) : null, rows }
+      const metrics = now ? metricsOf(now) : null
+      let rows = 0
+      let top = Infinity
+      let bottom = -Infinity
+      for (const f of collectAll().found) {
+        let inList = false
+        for (let x = f.scroller; x; x = x.parent)
+          if (x.host === host || (node != null && x.host.stateNode === node)) inList = true
+        if (!inList) continue
+        if (f.onScreen) rows++
+        // Rendered rows as offsets along the scroll axis, off screen ones too.
+        const box = metrics?.view && !metrics.inverted ? measureHost(f.host) : null
+        if (!metrics?.view || !box) continue
+        const at = (horizontal ? box.x - metrics.view.x : box.y - metrics.view.y) + metrics.offset
+        top = Math.min(top, at)
+        bottom = Math.max(bottom, at + (horizontal ? box.width : box.height))
+      }
+      span = top <= bottom ? { top, bottom } : null
+      return { metrics, rows }
     }
+    // Lands the offset, then looks for the target before waiting for rows to render.
     const go = async (offset: number) => {
       const now = scrollableAgain(host)
       if (!now) return false
-      await scrolled(now, () => (scrollToOffset(now, offset), offset))
+      const before = metricsOf(now)
+      scrollToOffset(now, offset)
+      await awaitScroll(now, before?.offset, offset)
       pages++
+      if (has()) return true
       const m = await awaitRows(readRows, has)
       if (m) {
         lowest = Math.min(lowest, m.offset)
@@ -189,12 +223,20 @@ export function createScreen(env: {
       const from = pages
       while (true) {
         if (pages - from >= limit || performance.now() >= until) {
-          stop = pages >= PAGE_LIMIT ? `the ${PAGE_LIMIT}-page limit` : `the ${PAGE_MS} ms budget`
+          stop = pages >= PAGE_LIMIT ? `the ${PAGE_LIMIT}-page limit` : `the ${budgetMs} ms budget`
           return false
         }
         const m = readRows().metrics
         if (!m) return false
-        const next = dir === 1 ? Math.min(m.max ?? Infinity, m.offset + size) : Math.max(0, m.offset - size)
+        // Step to just past the rendered rows (a virtualized list renders several
+        // viewports), so each page brings new rows; at least one viewport.
+        const viewSize = size / 0.9
+        const reach = span as { top: number; bottom: number } | null
+        const want =
+          dir === 1
+            ? Math.max(m.offset + size, reach ? reach.bottom : -Infinity)
+            : Math.min(m.offset - size, reach ? reach.top - viewSize : Infinity)
+        const next = dir === 1 ? Math.min(m.max ?? Infinity, want) : Math.max(0, want)
         if (Math.abs(next - m.offset) < 1) {
           // At the end: rows measured late (or onEndReached) may have grown the content.
           const grown = await awaitRows(readRows, has, 400)
@@ -211,8 +253,12 @@ export function createScreen(env: {
       const order: (1 | -1)[] = downFirst ? [1, -1] : [-1, 1]
       const now = performance.now()
       for (const [i, dir] of order.entries()) {
-        const share = i === 0 ? now + PAGE_MS / 2 : deadline
-        const limit = i === 0 ? PAGE_LIMIT / 2 : PAGE_LIMIT - pages
+        // The first direction keeps half unless the other has no room (a list at an end).
+        const otherRoom = dir === -1 ? start.max == null || start.max - start.offset >= 1 : start.offset >= 1
+        const half = i === 0 && otherRoom
+        const share = half ? now + budgetMs / 2 : deadline
+        const limit = half ? PAGE_LIMIT / 2 : PAGE_LIMIT - pages
+        if (dir === -1 && start.offset < 1) continue
         // The second direction starts back at the start offset.
         if (i === 1 && pages) await go(start.offset)
         if (await sweep(dir, share, limit)) return (found = true), done()
@@ -240,11 +286,11 @@ export function createScreen(env: {
   }
 
   // For a target no rendered row matches: pages the main virtualized list on screen, looking for it.
-  const pageFor = async (has: () => boolean): Promise<{ found: boolean; note: string }> => {
+  const pageFor = async (has: () => boolean, budgetMs: number): Promise<{ found: boolean; note: string }> => {
     const { list, skipped } = pagingList(collectAll().scrollables, env.window())
     if (!list)
       return { found: false, note: '{scroll:true} found no FlatList, SectionList or FlashList on screen to page' }
-    return pageList(list, skipped, has)
+    return pageList(list, skipped, has, budgetMs)
   }
 
   // The element a target means, scrolled into view first when it is off
@@ -252,10 +298,10 @@ export function createScreen(env: {
   const resolve = async (
     target: Target,
     prefer: (f: Found) => boolean,
-    options: { index?: number; afterText?: boolean; scroll?: boolean },
+    options: { index?: number; afterText?: boolean; scroll?: boolean | { timeoutMs?: number } },
   ): Promise<Found> => {
     const pick = () =>
-      resolveTarget(collect(), target, prefer, { ...options, offscreen: options.scroll })
+      resolveTarget(collect(), target, prefer, { ...options, offscreen: !!options.scroll })
     let note = ''
     if (options.scroll && typeof target === 'object' && target.at !== undefined)
       throw new Error(
@@ -263,7 +309,7 @@ export function createScreen(env: {
       )
     const has = rendered(target, options.index)
     if (options.scroll && !has()) {
-      const paged = await pageFor(has)
+      const paged = await pageFor(has, pagingBudget(options.scroll))
       note = paged.note
       if (!paged.found) {
         try {
@@ -301,7 +347,7 @@ export function createScreen(env: {
     async fill(
       target: Target,
       text: string,
-      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean } = {},
+      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean | { timeoutMs?: number } } = {},
     ): Promise<{ filled: string; element: ScreenElement; warning?: string }> {
       const found = await resolve(target, (f) => !!f.input, {
         index: options.index,
@@ -332,7 +378,7 @@ export function createScreen(env: {
       options: {
         force?: boolean
         index?: number
-        scroll?: boolean
+        scroll?: boolean | { timeoutMs?: number }
         action?: string
         long?: boolean
       } = {},
@@ -360,7 +406,7 @@ export function createScreen(env: {
     async setValue(
       target: Target,
       value: unknown,
-      options: { force?: boolean; index?: number; scroll?: boolean } = {},
+      options: { force?: boolean; index?: number; scroll?: boolean | { timeoutMs?: number } } = {},
     ): Promise<{ value: unknown; element: ScreenElement; warning?: string }> {
       const found = await resolve(target, (f) => !!f.change, options)
       const before = valueOf(found)

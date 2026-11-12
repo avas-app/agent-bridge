@@ -35,7 +35,7 @@ export function screenTools(): Tools {
       run: (
         target: Target,
         text: string,
-        options?: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean },
+        options?: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean | { timeoutMs?: number } },
       ) =>
         screen.fill(target, text, options),
     },
@@ -47,7 +47,7 @@ export function screenTools(): Tools {
         options?: {
           force?: boolean
           index?: number
-          scroll?: boolean
+          scroll?: boolean | { timeoutMs?: number }
           action?: string
           long?: boolean
         },
@@ -59,7 +59,7 @@ export function screenTools(): Tools {
       run: (
         target: Target,
         value: unknown,
-        options?: { force?: boolean; index?: number; scroll?: boolean },
+        options?: { force?: boolean; index?: number; scroll?: boolean | { timeoutMs?: number } },
       ) => screen.setValue(target, value, options),
     },
     'screen.scroll': {
