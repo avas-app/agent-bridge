@@ -151,6 +151,7 @@ from the real state.
 | Read or set query data, store values, routes, modals; get argument shapes right | [references/state.md](references/state.md) |
 | Mock or inspect requests, or deal with strict network mode | [references/network.md](references/network.md) |
 | See or fake realtime messages (`realtime.*` in `tools`) | [references/realtime.md](references/realtime.md) |
+| Fake a deep link, background, offline, a push or the clock (`device.*` in `tools`) | [references/device.md](references/device.md) |
 | Handle a result over 32 KB or an argument over ~128 KB | [references/large-data.md](references/large-data.md) |
 | Run many calls at once, write a flow file, or measure timing | [references/flows.md](references/flows.md) |
 | Understand what restore undoes, or fix a value restore got wrong | [references/restore.md](references/restore.md) |

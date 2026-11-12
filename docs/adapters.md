@@ -10,6 +10,7 @@
 | `@avasapp/agent-bridge/network` | `net.log` `entry` `waitFor` `mock` `mockFromLog` `mocks` `unmock` `strict` `clear` `restore` | nothing: patches `fetch` and `XMLHttpRequest` in dev |
 | `@avasapp/agent-bridge/ably` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your Ably `Realtime` client, see [Realtime](realtime.md) |
 | `@avasapp/agent-bridge/socket.io` | `realtime.channels` `log` `emit` `mute` `unmute` `connection` `restore` | your socket.io `Socket` |
+| `@avasapp/agent-bridge/device` | `device.openUrl` `appState` `offline` `notification` `setTime` `restore` | see [Device events](device-events.md) |
 | `@avasapp/agent-bridge/realtime` | `realtime.channels` `log` `emit` `mute` `unmute` `restore` | two lines in your own subscribe function |
 
 A pin keeps seeded data in place through refetches until you unpin it. `net.mock('/inbox', { status: 500 })` or `{ offline: true }` fails a route (the newest mock is tried first; `{ priority }` reorders mocks from the same source); `net.entry <id>` returns a logged request with whole bodies and its headers (any header whose name contains auth, cookie, token, secret, session, password, signature or api-key is cut unless you pass `{"full": true}`: Authorization keeps only its scheme word, others at most 4 characters and a quarter of the value) and `net.mockFromLog <id> [patch]` turns its response into a mock; apps can fake a whole backend with `mockRequests` or `mockApi` from the same import, and turn on strict mode with `strictNetwork` (see [Scenarios](scenarios.md)).

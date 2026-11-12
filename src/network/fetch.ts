@@ -141,9 +141,9 @@ export function patchFetch(state: NetworkState): (() => void) | null {
     const passOn = () => {
       const blocked = blockedResponse(state, method, url, requestBody)
       if (!blocked) return real()
-      entry.blocked = true
+      if (!state.deviceOffline) entry.blocked = true
       if (isOffline(blocked)) {
-        finishEntry(entry, { error: `${OFFLINE_MESSAGE} (strict network)` })
+        finishEntry(entry, { error: `${OFFLINE_MESSAGE} (${state.deviceOffline ? 'device offline' : 'strict network'})` })
         return Promise.reject(new TypeError(OFFLINE_MESSAGE))
       }
       const { status, text, headers } = responseParts(blocked)

@@ -57,6 +57,8 @@ export type NetworkState = {
   strictAgent: StrictRule | false | null
   /** Requests strict mode failed, by "METHOD url". */
   blocked: Map<string, { method: string; url: string; count: number; operation?: string }>
+  /** From `device.offline`: every request fails like offline, mocks included. */
+  deviceOffline?: boolean
 }
 
 export type StrictRule = {
@@ -407,6 +409,11 @@ export function shadowedMocks(state: NetworkState, added: Mock): Mock[] {
   })
 }
 
+/** Makes every request fail like offline (mocks included) until false. */
+export function setDeviceOffline(offline: boolean): void {
+  networkState().deviceOffline = offline
+}
+
 /**
  * Mocks that match a method and URL, in the order they are tried. When the
  * request body is known (`body`, possibly undefined), body and graphql checks
@@ -419,6 +426,7 @@ export function matchingMocks(
   url: string,
   body?: { text: string | undefined },
 ): Mock[] {
+  if (state.deviceOffline) return []
   const found = state.mocks.filter((m) => m.test(method, url))
   const probe = body && found.some((m) => m.needsBody) ? mockRequest(method, url, {}, body.text) : null
   return found
@@ -541,6 +549,7 @@ export function blockedResponse(
   url: string,
   body?: string,
 ): MockResponse | null {
+  if (state.deviceOffline) return { offline: true }
   const rules = strictRules(state)
   if (!rules.length || rules.some((r) => r.allow.some((test) => test(url))))
     return null
