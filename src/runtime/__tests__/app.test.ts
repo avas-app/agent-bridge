@@ -14,6 +14,21 @@ describe('app.reload', () => {
   })
 })
 
+describe('app.reload with pending restores', () => {
+  test('names the areas whose restores the reload will lose', () => {
+    const tools = {
+      'secureStore.restore': { run: () => 0, pending: () => true },
+      'asyncStorage.restore': { run: () => 0, pending: () => false },
+    }
+    const tool = appTools(() => {}, () => tools)['app.reload']
+    const run = typeof tool === 'function' ? tool : tool?.run
+    expect(run?.()).toEqual({
+      reloading: true,
+      lost: 'pending restores are lost: secureStore',
+    })
+  })
+})
+
 describe('selectReload', () => {
   test("uses Expo's reloadAppAsync when the app has it", () => {
     const devSettings = mock(() => {})

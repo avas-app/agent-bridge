@@ -31,6 +31,8 @@ export type BridgeFileInput = {
   /** Undefined when zustand isn't a dependency; empty when the scan found no store. */
   stores?: Imported[]
   mmkv?: Imported[]
+  asyncStorage?: boolean
+  secureStore?: boolean
   realtime: RealtimeTodo[]
   /** Realtime tools the app already exports, wired live. */
   realtimeTools?: Imported[]
@@ -45,6 +47,10 @@ export const STORES_WHY =
   'stores often hold tokens: add `redact` for those paths before wiring them'
 export const MMKV_WHY =
   'MMKV often holds tokens and mmkv.get returns values as they are: wire only instances without secrets'
+export const ASYNC_STORAGE_WHY =
+  'AsyncStorage often holds tokens and asyncStorage.get returns values as they are: wire it only if it holds no secrets'
+export const SECURE_STORE_WHY =
+  'SecureStore holds secrets: secureStore.get hides values unless the agent asks for {full:true}, but secureStore.set can still overwrite them'
 export const REALTIME_WHY =
   'the adapter must wrap the client where it is created, before the app subscribes'
 export const NETWORK_PROMPT =
@@ -126,6 +132,27 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       ...mmkv.map((m) => `// import { ${m.name} } from '${m.from}'`),
     )
   }
+  if (o.asyncStorage)
+    L.push(
+      '',
+      '// AsyncStorage is left out: it often holds tokens, and asyncStorage.get returns',
+      '// values as they are. Uncomment these and asyncStorageTools below if it holds none,',
+      '// passing the storage the app uses (a createAsyncStorage(name) instance, if it has one).',
+      `// See ${DOCS}/adapters.md`,
+      `// import { asyncStorageTools } from '@avasapp/agent-bridge/async-storage'`,
+      `// import AsyncStorage from '@react-native-async-storage/async-storage'`,
+    )
+  if (o.secureStore)
+    L.push(
+      '',
+      '// SecureStore is left out: it holds secrets. secureStore.get hides values unless',
+      '// the agent asks for {full:true}. Uncomment these and secureStoreTools below,',
+      '// passing the keys the app uses so secureStore.list can show them, and the same',
+      '// options the app passes to SecureStore (keychainService, requireAuthentication).',
+      `// See ${DOCS}/adapters.md`,
+      `// import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'`,
+      `// import * as SecureStore from 'expo-secure-store'`,
+    )
   for (const todo of o.realtime) {
     const r = REALTIME[todo.kind]
     L.push(
@@ -201,6 +228,8 @@ export function renderBridgeFile(o: BridgeFileInput): string {
     const mmkv = o.mmkv.length ? o.mmkv : [{ name: 'storage', from: '' }]
     L.push(`      // ...mmkvTools({ ${mmkv.map((m) => m.name).join(', ')} }),`)
   }
+  if (o.asyncStorage) L.push('      // ...asyncStorageTools(AsyncStorage),')
+  if (o.secureStore) L.push(`      // ...secureStoreTools(SecureStore, ['authToken']),`)
   if (o.realtime.length) L.push('      // ...realtimeDevTools,')
   if (o.reactNavigation)
     L.push(

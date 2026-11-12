@@ -6,6 +6,8 @@ import { binFallback, installCommand } from './package-manager'
 import {
   DOCS,
   MMKV_WHY,
+  ASYNC_STORAGE_WHY,
+  SECURE_STORE_WHY,
   NETWORK_WHY,
   type Patch,
   REALTIME_WHY,
@@ -103,6 +105,8 @@ const MARKERS: Array<[keyof Detection['has'], RegExp, string]> = [
   ['webview', /webviewTools/, 'react-native-webview'],
   ['zustand', /storeTools/, 'zustand'],
   ['mmkv', /mmkvTools/, 'react-native-mmkv'],
+  ['asyncStorage', /asyncStorageTools/, '@react-native-async-storage/async-storage'],
+  ['secureStore', /secureStoreTools/, 'expo-secure-store'],
   ['socketIo', /realtimeDevTools|socketIoTools|realtime/i, 'socket.io-client'],
   ['ably', /realtimeDevTools|ablyTools|realtime/i, 'ably'],
 ]
@@ -331,6 +335,8 @@ export function plan(
         reactNavigation: d.has.reactNavigation && !d.has.expoRouter,
         stores: d.has.zustand ? imported(found.stores) : undefined,
         mmkv: d.has.mmkv ? imported(found.mmkv) : undefined,
+        asyncStorage: d.has.asyncStorage,
+        secureStore: d.has.secureStore,
         realtime,
         realtimeTools,
       }),
@@ -357,6 +363,18 @@ export function plan(
         adapter: 'react-native-mmkv',
         items: found.mmkv.map((s) => `${s.name} (${s.file})`),
         why: `${MMKV_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.asyncStorage)
+      commented.push({
+        adapter: 'async-storage',
+        items: ['AsyncStorage'],
+        why: `${ASYNC_STORAGE_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.secureStore)
+      commented.push({
+        adapter: 'secure-store',
+        items: ['SecureStore'],
+        why: `${SECURE_STORE_WHY} (${DOCS}/adapters.md)`,
       })
     if (d.has.reactNavigation && !d.has.expoRouter)
       commented.push({

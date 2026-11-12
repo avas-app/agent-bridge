@@ -7,7 +7,7 @@ npx @avasapp/agent-bridge session stop             # runs bridge.restore
 npx @avasapp/agent-bridge session stop --keep      # leaves the app as is; warns about anything still pending
 ```
 
-`bridge.restore` unpins queries, puts back store and MMKV values, removes
+`bridge.restore` unpins queries, puts back store, MMKV, AsyncStorage and SecureStore values, removes
 network mocks, unmutes realtime channels and ends a faked connection state,
 then undoes active scenarios (newest first), so the next run starts from the
 real state. With `session stop --keep`, a later restore will still apply what
@@ -19,8 +19,9 @@ storage is kept: `mmkv.set`/`mmkv.delete` of string values and `store.set`/
 undone by `bridge.restore` after the reload, and the next call says
 `app reloaded; kept N undos across the reload (...)`. A value the app changed
 after your write is left alone and named. Everything else (stores that are not
-persisted, queries, mocks, `onRestore`) is lost: the session warns
+persisted, redux, jotai, AsyncStorage and SecureStore changes, queries, mocks, `onRestore`) is lost: the session warns
 `app reloaded; N pending restores lost: ...`. Redo that setup when you see it. After a reload that also lost non-persisted changes, check `bridge.pending`: `kept N undos` does not list what was lost in the same area. `not kept across reload: store:key` means that key (a Set, Date, class instance, one `partialize` renames, or one `redact` hides) is not journaled, so the reload keeps the agent's value for it; `could not re-arm after the reload: ...` means a store or MMKV instance never became ready and its undo was dropped; `<tool> was cut off; ... that undo may be lost` means a write's reply was lost and may not be journaled.
+AsyncStorage and SecureStore values stay on disk across a reload with their old values gone, so run `bridge.restore` before `app.reload`. A key the app wrote after the agent did is left alone and returned under `skipped`.
 
 ## Mocked queries
 

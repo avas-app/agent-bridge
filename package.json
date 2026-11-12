@@ -70,6 +70,14 @@
       "types": "./dist/adapters/socket-io.d.cts",
       "default": "./entries/socket.io.cjs"
     },
+    "./async-storage": {
+      "types": "./dist/adapters/async-storage.d.cts",
+      "default": "./entries/async-storage.cjs"
+    },
+    "./secure-store": {
+      "types": "./dist/adapters/secure-store.d.cts",
+      "default": "./entries/secure-store.cjs"
+    },
     "./device": {
       "types": "./dist/adapters/device.d.cts",
       "default": "./entries/device.cjs"
@@ -101,6 +109,8 @@
     "tanstack-query",
     "zustand",
     "mmkv",
+    "async-storage",
+    "secure-store",
     "realtime",
     "ably",
     "socket.io",

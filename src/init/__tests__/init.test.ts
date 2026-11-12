@@ -100,6 +100,8 @@ describe('generated files per app', () => {
     const bare = await initIn(BARE_JS, { skill: false })
     expect(bare.report!.commented.map((c) => c.adapter)).toEqual([
       'react-native-mmkv',
+      'async-storage',
+      'secure-store',
       '@react-navigation/native',
     ])
     expect(bare.files['src/dev/agent-bridge.js']).toContain("// import { storage } from '../storage'")
