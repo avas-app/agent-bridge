@@ -6,6 +6,10 @@ import { binFallback, installCommand } from './package-manager'
 import {
   DOCS,
   MMKV_WHY,
+  ASYNC_STORAGE_WHY,
+  JOTAI_WHY,
+  REDUX_WHY,
+  SECURE_STORE_WHY,
   NETWORK_WHY,
   type Patch,
   REALTIME_WHY,
@@ -102,7 +106,12 @@ const MARKERS: Array<[keyof Detection['has'], RegExp, string]> = [
   ['reactQuery', /queryTools/, '@tanstack/react-query'],
   ['webview', /webviewTools/, 'react-native-webview'],
   ['zustand', /storeTools/, 'zustand'],
+  ['redux', /reduxTools/, '@reduxjs/toolkit'],
+  ['reduxCore', /reduxTools/, 'redux'],
+  ['jotai', /jotaiTools/, 'jotai'],
   ['mmkv', /mmkvTools/, 'react-native-mmkv'],
+  ['asyncStorage', /asyncStorageTools/, '@react-native-async-storage/async-storage'],
+  ['secureStore', /secureStoreTools/, 'expo-secure-store'],
   ['socketIo', /realtimeDevTools|socketIoTools|realtime/i, 'socket.io-client'],
   ['ably', /realtimeDevTools|ablyTools|realtime/i, 'ably'],
 ]
@@ -331,6 +340,10 @@ export function plan(
         reactNavigation: d.has.reactNavigation && !d.has.expoRouter,
         stores: d.has.zustand ? imported(found.stores) : undefined,
         mmkv: d.has.mmkv ? imported(found.mmkv) : undefined,
+        asyncStorage: d.has.asyncStorage,
+        secureStore: d.has.secureStore,
+        redux: d.has.redux || d.has.reduxCore,
+        jotai: d.has.jotai,
         realtime,
         realtimeTools,
       }),
@@ -358,11 +371,35 @@ export function plan(
         items: found.mmkv.map((s) => `${s.name} (${s.file})`),
         why: `${MMKV_WHY} (${DOCS}/adapters.md)`,
       })
+    if (d.has.asyncStorage)
+      commented.push({
+        adapter: 'async-storage',
+        items: ['AsyncStorage'],
+        why: `${ASYNC_STORAGE_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.secureStore)
+      commented.push({
+        adapter: 'secure-store',
+        items: ['SecureStore'],
+        why: `${SECURE_STORE_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.redux || d.has.reduxCore)
+      commented.push({
+        adapter: 'redux',
+        items: ['reduxTools(store)'],
+        why: `${REDUX_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.jotai)
+      commented.push({
+        adapter: 'jotai',
+        items: ['jotaiTools(store, atoms)'],
+        why: `${JOTAI_WHY} (${DOCS}/adapters.md)`,
+      })
     if (d.has.reactNavigation && !d.has.expoRouter)
       commented.push({
         adapter: '@react-navigation/native',
-        items: ['nav.navigate', 'nav.current'],
-        why: 'there is no React Navigation adapter; the sample tools need your container ref',
+        items: ['navTools(navigationRef)'],
+        why: `navTools needs the container ref you pass to <NavigationContainer> (${DOCS}/adapters.md)`,
       })
     for (const t of realtime) todos.push(`${realtimeTodoText(t)}: ${REALTIME_WHY} (${DOCS}/realtime.md).`)
   }

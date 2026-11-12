@@ -31,17 +31,17 @@ export function screenTools(): Tools {
     },
     'screen.fill': {
       description:
-        `Type into an input, then wait for the render. ${TARGET_HELP} {submit:true} also submits.`,
+        `Type into an input, then wait for the render. ${TARGET_HELP} {submit:true} also submits. "" clears it. {type:true} types one character at a time, waiting for a render after each (for debounced or per-character inputs; "\\n" is the Enter key). An input with no value prop gets its native text set; if that cannot be done the reply has a warning.`,
       run: (
         target: Target,
         text: string,
-        options?: { submit?: boolean; index?: number; scroll?: boolean },
+        options?: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean },
       ) =>
         screen.fill(target, text, options),
     },
     'screen.press': {
       description:
-        `Press a button, then wait for the render. ${TARGET_HELP} Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap. {scroll:true} scrolls an off-screen target into view first. With no onPress it sends the "activate" accessibility action, as a screen reader's double tap does (swipe-to-confirm buttons, sliders), and the reply says via:"accessibilityAction:activate". {action:"increment"} (or any name in the element's snapshot \`actions\`) sends that action instead.`,
+        `Press a button, then wait for the render. ${TARGET_HELP} Text with no handler of its own presses the nearest ancestor that has one, and the reply says via:"ancestor". Disabled elements are refused; {force:true} presses anyway, to see what the app does on tap. {scroll:true} scrolls an off-screen target into view first. With no onPress it sends the "activate" accessibility action, as a screen reader's double tap does (swipe-to-confirm buttons, sliders), and the reply says via:"accessibilityAction:activate". {action:"increment"} (or any name in the element's snapshot \`actions\`) sends that action instead.`,
       run: (
         target: Target,
         options?: { force?: boolean; index?: number; scroll?: boolean; action?: string },

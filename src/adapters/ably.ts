@@ -1,4 +1,4 @@
-import { fakeableConnection, realtimeAdapter, tapListeners } from '../realtime/patch'
+import { fakeableConnection, realtimeAdapter, tapListeners, tapOutgoing } from '../realtime/patch'
 import { createRealtimeTap } from '../realtime/tap'
 
 /** The fields of an Ably message this adapter reads. */
@@ -20,6 +20,7 @@ export type AblyMessageLike = {
 export type AblyChannelLike = {
   name: string
   state?: string
+  publish?(...args: never[]): unknown
   subscribe(...args: never[]): unknown
   unsubscribe(...args: never[]): unknown
 }
@@ -127,6 +128,17 @@ export const ablyTools = realtimeAdapter(
         remove: 'unsubscribe',
         channel: () => channel.name,
         accepts: ([filter], message) => accepts(filter, message),
+      })
+      // publish(name, data), publish({ name, data, ... }) or publish([messages]).
+      tapOutgoing(tap, channel, {
+        methods: 'publish',
+        channel: () => channel.name,
+        describe: ([first, second]) => {
+          if (typeof first === 'string') return { event: first, data: second }
+          const m = first as AblyMessageLike | AblyMessageLike[] | undefined
+          if (Array.isArray(m)) return { data: m.map((x) => ({ event: x.name, data: x.data })) }
+          return { event: m?.name, data: m?.data, id: m?.id }
+        },
       })
       return channel
     }

@@ -155,16 +155,30 @@ export function createScreen(env: {
     async fill(
       target: Target,
       text: string,
-      options: { submit?: boolean; index?: number; scroll?: boolean } = {},
-    ): Promise<{ filled: string; element: ScreenElement }> {
+      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean } = {},
+    ): Promise<{ filled: string; element: ScreenElement; warning?: string }> {
       const found = await resolve(target, (f) => !!f.input, {
         index: options.index,
         afterText: true,
         scroll: options.scroll,
       })
-      const filled = fillInput(found, String(text), options)
+      const { filled, native } = await fillInput(found, String(text), {
+        ...options,
+        between: async () => void (await settle()),
+        again: reread,
+      })
       await settle()
-      return { filled, element: reread(found).element }
+      const element = reread(found).element
+      // An uncontrolled input has no value prop to read back: report what was written natively.
+      if (native === true) return { filled, element: { ...element, value: filled } }
+      if (native === false)
+        return {
+          filled,
+          element,
+          warning:
+            'the input has no value prop and its native text could not be set from here, so the field may not show the text',
+        }
+      return { filled, element }
     },
 
     async press(

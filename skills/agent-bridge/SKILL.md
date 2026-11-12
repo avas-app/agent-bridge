@@ -33,6 +33,11 @@ config on every call, so a project `.npmrc` with keys npm doesn't know prints
 `npm warn Unknown project config` into your output each time, and it adds
 roughly 200 ms more startup per call (machine-dependent).
 
+If the app's tools are already in your tool list as an MCP server
+(`agent-bridge mcp`; names like `screen_snapshot` for `screen.snapshot`), call
+those: each takes `args`, an array of the tool's arguments, and `full: true` for
+a result over 32 KB. If the list is empty or a call fails, call `agent_bridge_status`. A failed call keeps the session's own error (`may or may not have run`): check state before repeating a call that changes it. The rest of this skill applies the same way.
+
 ## Start a session
 
 ```sh
@@ -56,18 +61,27 @@ connects directly, so pass `--session`.
 A session holds one connection for all your calls. It stops itself after 15
 minutes without calls and runs `bridge.restore` when it does.
 
-A JS reload (an error screen's Retry, or `app.reload`) throws away every pending
-restore. The session notices the app is a new runtime and reports
-`app reloaded; N pending restores lost: store, query` (the areas that
-had something to undo) as a warning on the next call (also on a failed one) and
-again in `session stop`. When you see it, redo your setup: nothing you changed
-before the reload will be undone.
+A JS reload (an error screen's Retry, or `app.reload`) throws away the app's
+undo state, except what lives in storage: string `mmkv.set`/`mmkv.delete` and
+persisted zustand stores are kept by the session and still undone by
+`bridge.restore`. The session reports what it kept, and
+`app reloaded; N pending restores lost: query, ...` (the areas that had
+something to undo) for the rest, as a warning on the next call (also on a
+failed one) and again in `session stop`. For the lost ones, redo your setup:
+they will not be undone.
 
 If a call fails with `app not connected; reconnecting` or `The app is gone`, the
 session lost the app (Metro or the app is down, or mid-reload). It retries on
 its 5 s health check and on your next call: wait a few seconds and call again.
 `session stop` still works. A session never moves to another app: `<app> is
 not connected; connected: …` means its app is gone and something else is there.
+
+If a call fails with `the app reloaded during <tool>; it may or may not have run`
+(or `disconnected`, `the connection dropped`), the connection dropped mid-call
+and the session did not repeat it (only read-only tools are repeated). Check the screen or state before you call again.
+
+A `timeoutMs` in the options of `screen.waitFor` or `webview.waitFor` longer
+than the call timeout stretches it, so you don't need `--timeout` for that.
 
 If `tools` fails with "agent-bridge isn't running", the hook isn't mounted in
 this build. Say so; don't fall back to tapping silently.
@@ -114,6 +128,10 @@ npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'   # {"gone": 
 npx @avasapp/agent-bridge call router.navigate /inbox
 ```
 
+Check `tools` for `router.*` (expo-router) or `nav.*` (React Navigation). `nav.*`
+takes route names (`nav.navigate Inbox`, `nav.popTo Home`), and paths only if the
+app passed `linking`; read the returned `warning`.
+
 `press` and `fill` return once the app has rendered the result, so the next
 check sees it. `press` on plain text presses the nearest pressable ancestor.
 Unfocused tabs (native tabs included) and screens under others count as hidden.
@@ -149,6 +167,7 @@ from the real state.
 | Read or set query data, store values, routes, modals; get argument shapes right | [references/state.md](references/state.md) |
 | Mock or inspect requests, or deal with strict network mode | [references/network.md](references/network.md) |
 | See or fake realtime messages (`realtime.*` in `tools`) | [references/realtime.md](references/realtime.md) |
+| Fake a deep link, background, offline, a push or the clock (`device.*` in `tools`) | [references/device.md](references/device.md) |
 | Handle a result over 32 KB or an argument over ~128 KB | [references/large-data.md](references/large-data.md) |
 | Run many calls at once, write a flow file, or measure timing | [references/flows.md](references/flows.md) |
 | Understand what restore undoes, or fix a value restore got wrong | [references/restore.md](references/restore.md) |

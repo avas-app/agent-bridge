@@ -1,5 +1,6 @@
 import { pendingUndos, runUndos } from '../undo'
 import type { Tools } from '../types'
+import { pendingByArea } from './restore'
 
 /** The part of Expo's runtime global (`globalThis.expo`) that `app.reload` uses. */
 export type ExpoHost = {
@@ -32,15 +33,18 @@ export function selectReload(
   }
 }
 
-export function appTools(reload: () => void): Tools {
+export function appTools(reload: () => void, getTools?: () => Tools): Tools {
   return {
     'app.reload': {
       description:
-        "Reload the app's JS (Expo's reloadAppAsync, else DevSettings.reload). Pending restores (store, query, mocks, pins) are lost. Returns before it reloads; a session waits for the new bridge and reports what was lost.",
+        "Reload the app's JS (Expo's reloadAppAsync, else DevSettings.reload). Pending restores (store, query, mocks, pins, storage) are lost, and the reply names them: restore first. Returns before it reloads; a session waits for the new bridge and reports what was lost.",
       run: () => {
         // Later, so this reply gets out first.
         setTimeout(reload, 50)
-        return { reloading: true }
+        const lost = getTools ? Object.keys(pendingByArea(getTools())) : []
+        return lost.length
+          ? { reloading: true, lost: `pending restores are lost: ${lost.join(', ')}` }
+          : { reloading: true }
       },
     },
     'app.restore': {

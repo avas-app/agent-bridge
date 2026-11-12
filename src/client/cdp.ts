@@ -159,8 +159,8 @@ export async function connectCdp(
       target: targetLabel(target),
     },
     device: { ...info, name: `${info.name} (${targetLabel(target)})` },
-    call(tool, args, timeoutMs) {
-      const call: CallMessage = { id: newCallId(), tool, args }
+    call(tool, args, timeoutMs, extra) {
+      const call: CallMessage = { id: newCallId(), tool, args, ...extra }
       const reply = pending.wait(call.id, tool, timeoutMs)
       // Not awaited: Hermes answers Runtime.evaluate only when the JS thread
       // is free, and never after a reload, but the reply's timeout must

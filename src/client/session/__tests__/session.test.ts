@@ -14,7 +14,12 @@ import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import WebSocket from 'ws'
+import { createStore } from 'zustand/vanilla'
 
+import { mmkvTools } from '../../../adapters/react-native-mmkv'
+import { storeTools } from '../../../adapters/zustand'
+import { restoreTools } from '../../../runtime/tools/restore'
+import { createLogCapture } from '../../../runtime/logs'
 import { createRegistry } from '../../../runtime/registry'
 import { bridgeTools } from '../../../runtime/tools/bridge'
 import type { Tools } from '../../../runtime/types'
@@ -53,28 +58,62 @@ async function fakeApp(
     pending?: boolean
     /** The name the app gives the bridge. Default "Fake App". */
     name?: string
+    /** Extra tools, rebuilt (so their in-memory undo state is gone) on every reload. */
+    extra?: (getTools: () => Tools) => Tools
+    /** Announce no load id, as an older app package does. */
+    noLoadId?: boolean
+    /** Tools that run, then drop the socket before replying, the first time only. */
+    dropOnce?: string[]
+    /** Tools that just count their runs and answer "ran". */
+    counted?: string[]
   } = {},
 ) {
   let deviceId = firstId
   let loadId = options.loadId ?? 'load-1'
+  const logs = createLogCapture()
   const app = {
+    logs,
     restores: 0,
+    drops: 0,
     slow: 0,
     reloads: 0,
+    /** How many times each dropOnce tool ran. */
+    runs: {} as Record<string, number>,
     changed: false,
+    /** Called for every call this app receives. */
+    onCall: undefined as ((tool: string, args: unknown[]) => void) | undefined,
     ws: undefined as unknown as WebSocket,
     /** The runtime restarts on this socket. A new device id is announced, as Expo does. */
     reload: (id: string, load = loadId) => {
       const announce = id !== deviceId
       deviceId = id
       loadId = load
+      extra = options.extra?.(getAll) ?? {}
       registry = make()
       if (announce) send('hello:reply', info())
     },
   }
   const tools: Tools = {
     'demo.echo': (...args: unknown[]) => args,
+    // A read-only name, so a lost reply is run again.
+    'store.get': (...args: unknown[]) => args,
     'demo.big': (bytes: number) => bigValue(bytes),
+    'demo.boom': () => {
+      logs.record('error', ['boom'])
+    },
+    // Runs, then the socket drops before the reply: the app reloaded mid-call.
+    'demo.drop': () => {
+      app.drops++
+      app.ws.close()
+    },
+    'mmkv.get': () => {
+      app.drops++
+      if (!getDropped) {
+        getDropped = true
+        app.ws.close()
+      }
+      return 'got'
+    },
     'demo.set': () => {
       app.changed = true
     },
@@ -109,21 +148,31 @@ async function fakeApp(
           },
         }),
   }
+  for (const name of [...(options.dropOnce ?? []), ...(options.counted ?? [])]) {
+    tools[name] = () => {
+      app.runs[name] = (app.runs[name] ?? 0) + 1
+      if (app.runs[name] === 1 && options.dropOnce?.includes(name)) app.ws.close()
+      return 'ran'
+    }
+  }
   type Registry = ReturnType<typeof createRegistry>
   let registry: Registry
+  const getAll = (): Tools => ({
+    ...bridgeTools(() => registry.list()),
+    ...tools,
+    ...extra,
+  })
+  let extra: Tools = options.extra?.(getAll) ?? {}
   const make = (): Registry =>
-    createRegistry(
-      () => ({ ...bridgeTools(() => registry.list()), ...tools }),
-      undefined,
-      loadId,
-    )
+    // Its own slot: apps in one test process are separate loads.
+    createRegistry(getAll, logs, options.noLoadId ? undefined : loadId, {})
   registry = make()
   const info = (): DeviceInfo => ({
     deviceId,
     name: options.name ?? 'Fake App',
     platform: 'ios',
     protocol: PROTOCOL_VERSION,
-    loadId,
+    loadId: options.noLoadId ? undefined : loadId,
     tools: registry.list(),
   })
   const ws = new WebSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
@@ -142,6 +191,7 @@ async function fakeApp(
     if (messageKey.method === 'hello') send('hello:reply', info())
     // Calls to an id this runtime no longer has are dropped, as in the app.
     if (messageKey.method === 'call' && payload.to === deviceId) {
+      app.onCall?.(payload.tool, payload.args ?? [])
       // An extra field, like the logs a newer app sends, must pass through.
       send('result', {
         ...(await registry.dispatch(payload, deviceId)),
@@ -154,8 +204,11 @@ async function fakeApp(
 }
 
 let dir = ''
+/** The first mmkv.get on any fake app loses its reply. */
+let getDropped = false
 const cleanups: Array<() => unknown> = []
 beforeEach(() => {
+  getDropped = false
   dir = mkdtempSync(join(tmpdir(), 'ab-'))
   process.env.AGENT_BRIDGE_STATE_DIR = dir
 })
@@ -195,7 +248,7 @@ describe('session daemon', () => {
     expect(bridge.session.name).toBe('one')
     expect(bridge.device.deviceId).toBe('dev-1')
     expect(bridge.tools().map((t) => t.name)).toContain('demo.echo')
-    const timed = await bridge.timed('demo.echo', 'hi', { n: 1 })
+    const timed = await bridge.timed('store.get', 'hi', { n: 1 })
     expect(timed.value).toEqual(['hi', { n: 1 }])
     expect((timed as unknown as { extra: string }).extra).toBe('kept')
     expect(timed.ms).toBeGreaterThan(0)
@@ -207,6 +260,26 @@ describe('session daemon', () => {
     expect(await daemon.done).toBe('stop')
     expect(listSessions()).toEqual([])
     expect(readFileSync(files.log, 'utf8')).toContain('stopped (stop)')
+  })
+
+  test('the health ping leaves app errors for the next real call', async () => {
+    const { metro, app } = await setup()
+    const daemon = await runSessionDaemon({
+      name: 'pinged',
+      metro,
+      idleMs: 0,
+      healthMs: 30,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ metro })
+    cleanups.push(bridge.close)
+    await bridge.call('demo.boom')
+    // An error after the call, as from a timer or a rejected promise.
+    app.logs.record('error', ['late'])
+    await new Promise((r) => setTimeout(r, 200))
+    const next = await bridge.timed('store.get')
+    expect(next.logs.map((l) => l.message)).toEqual(['late'])
+    expect(next.logs[0]?.after).toBe('demo.boom')
   })
 
   test('one session on a non-default Metro port needs no --metro', async () => {
@@ -222,7 +295,7 @@ describe('session daemon', () => {
     const bridge = await connectSession()
     cleanups.push(bridge.close)
     expect(bridge.session.name).toBe('custom')
-    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+    expect(await bridge.call('store.get', 1)).toEqual([1])
   })
 
   test('with several sessions, errors listing them; --session, --metro and --device pick one', async () => {
@@ -361,17 +434,17 @@ describe('session daemon', () => {
     cleanups.push(() => daemon.stop(true))
     const bridge = await connectSession({ name: 're', timeoutMs: 300 })
     cleanups.push(bridge.close)
-    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+    expect(await bridge.call('store.get', 1)).toEqual([1])
 
     // A reload: same app, new device id.
     app.ws.close()
     const reloaded = await fakeApp(metro, 'dev-2')
     cleanups.push(() => reloaded.ws.close())
-    expect(await bridge.call('demo.echo', 2)).toEqual([2])
+    expect(await bridge.call('store.get', 2)).toEqual([2])
     expect(listSessions()[0]?.device.deviceId).toBe('dev-2')
 
     reloaded.ws.close()
-    await expect(bridge.call('demo.echo', 3)).rejects.toThrow('The app is gone')
+    await expect(bridge.call('store.get', 3)).rejects.toThrow('The app is gone')
   }, 15_000)
 
   test('never reconnects to another app; waits for the one it started on', async () => {
@@ -385,7 +458,7 @@ describe('session daemon', () => {
     cleanups.push(() => daemon.stop(true))
     const bridge = await connectSession({ name: 'pinned', timeoutMs: 300 })
     cleanups.push(bridge.close)
-    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+    expect(await bridge.call('store.get', 1)).toEqual([1])
 
     // The app goes; another app on the same Metro is all that is left.
     app.ws.close()
@@ -403,7 +476,7 @@ describe('session daemon', () => {
     // The same app coming back (reloaded, so a new id) is picked up again.
     const back = await fakeApp(metro, 'dev-2')
     cleanups.push(() => back.ws.close())
-    expect(await bridge.call('demo.echo', 2)).toEqual([2])
+    expect(await bridge.call('store.get', 2)).toEqual([2])
     expect(listSessions()[0]?.device.deviceId).toBe('dev-2')
   }, 15_000)
 
@@ -518,16 +591,16 @@ describe('session daemon', () => {
   test('reports the restores a reload lost, once in the next call and again on stop', async () => {
     const { metro, app, bridge } = await session('lost')
     await bridge.call('demo.set')
-    expect((await bridge.timed('demo.echo', 1)).notice).toBeUndefined()
+    expect((await bridge.timed('store.get', 1)).notice).toBeUndefined()
 
     // The old app's socket goes; a new runtime with a new load id comes up.
     app.ws.close()
     const reloaded = await fakeApp(metro, 'dev-2', { loadId: 'load-2' })
     cleanups.push(() => reloaded.ws.close())
-    const next = await bridge.timed('demo.echo', 2)
+    const next = await bridge.timed('store.get', 2)
     expect(next.value).toEqual([2])
     expect(next.notice).toBe(LOST)
-    expect((await bridge.timed('demo.echo', 3)).notice).toBeUndefined()
+    expect((await bridge.timed('store.get', 3)).notice).toBeUndefined()
     expect(readFileSync(sessionFiles('lost', dir).log, 'utf8')).toContain(
       `warning: ${LOST}`,
     )
@@ -535,6 +608,133 @@ describe('session daemon', () => {
     const stopped = await sessionRequest(listSessions()[0]!, { op: 'stop' })
     expect(stopped.notice).toBe(LOST)
     expect(reloaded.restores).toBe(1)
+  }, 15_000)
+
+  test('a call whose reply was lost is not run again, and says so', async () => {
+    const { metro, app, bridge } = await session('nodup')
+    const reloaded = await fakeApp(metro, 'dev-2', { loadId: 'load-2' })
+    cleanups.push(() => reloaded.ws.close())
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect(error).toBeInstanceOf(AgentBridgeCallError)
+    expect((error as Error).message).toContain(
+      'the app reloaded during demo.drop; it may or may not have run',
+    )
+    expect(app.drops).toBe(1)
+    expect(reloaded.drops).toBe(0)
+    // The session is back on the new app for the next call.
+    expect((await bridge.timed('store.get', 1)).value).toEqual([1])
+  }, 15_000)
+
+  test('a read-only call whose reply was lost is run again on the reconnect', async () => {
+    const { metro, app, bridge } = await session('retry')
+    const reloaded = await fakeApp(metro, 'dev-2', { loadId: 'load-2' })
+    cleanups.push(() => reloaded.ws.close())
+    expect(await bridge.call('mmkv.get')).toBe('got')
+    expect(app.drops).toBe(1)
+    expect(reloaded.drops).toBe(1)
+  }, 15_000)
+
+  test('a call whose reply was lost says the connection dropped when no reload is known', async () => {
+    const { metro, bridge } = await session('wording', {
+      app: { noLoadId: true },
+    })
+    const again = await fakeApp(metro, 'dev-2', { noLoadId: true })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect((error as Error).message).toContain(
+      'the connection dropped during demo.drop; it may or may not have run',
+    )
+  }, 15_000)
+
+  test('the same app back on the same load says it disconnected, not reloaded', async () => {
+    const { metro, bridge } = await session('wording2')
+    const again = await fakeApp(metro, 'dev-2')
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect((error as Error).message).toContain(
+      'the app disconnected during demo.drop; it may or may not have run',
+    )
+  }, 15_000)
+
+  test('a failed reconnect still says the call may have run', async () => {
+    const { bridge, app } = await session('gone')
+    const error = await bridge.call('demo.drop').catch((e: Error) => e)
+    expect((error as Error).message).toContain(
+      'during demo.drop; it may or may not have run',
+    )
+    expect((error as Error).message).toContain('Reconnecting failed')
+    expect(app.drops).toBe(1)
+  }, 15_000)
+
+  test('bridge.restore is not run again after a lost reply', async () => {
+    const { metro, app, bridge } = await session('restore-lost', {
+      app: { dropOnce: ['bridge.restore'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { dropOnce: ['bridge.restore'] })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('bridge.restore').catch((e: Error) => e)
+    expect((error as Error).message).toContain('may or may not have run')
+    expect(app.runs['bridge.restore']).toBe(1)
+    expect(again.runs['bridge.restore'] ?? 0).toBe(0)
+  }, 15_000)
+
+  test('an app tool that merely ends in .log is not run again', async () => {
+    const { metro, app, bridge } = await session('applog', {
+      app: { dropOnce: ['analytics.log'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { dropOnce: ['analytics.log'] })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge.call('analytics.log', 'event').catch((e: Error) => e)
+    expect((error as Error).message).toContain('may or may not have run')
+    expect(app.runs['analytics.log']).toBe(1)
+    expect(again.runs['analytics.log'] ?? 0).toBe(0)
+  }, 15_000)
+
+  for (const tool of ['net.log', 'bridge.logs']) {
+    test(`${tool} is run again after a lost reply, but not with clear: true`, async () => {
+      const first = await session(`log-${tool}`, { app: { dropOnce: [tool] } })
+      const again = await fakeApp(first.metro, 'dev-2', { counted: [tool] })
+      cleanups.push(() => again.ws.close())
+      expect(await first.bridge.call(tool)).toBe('ran')
+      expect(first.app.runs[tool]).toBe(1)
+      expect(again.runs[tool]).toBe(1)
+
+      const next = await session(`log-clear-${tool}`, { app: { dropOnce: [tool] } })
+      const plain = await fakeApp(next.metro, 'dev-2', { counted: [tool] })
+      cleanups.push(() => plain.ws.close())
+      const error = await next.bridge.call(tool, { clear: true }).catch((e: Error) => e)
+      expect((error as Error).message).toContain('may or may not have run')
+      expect(plain.runs[tool] ?? 0).toBe(0)
+    }, 20_000)
+  }
+
+  test('a wait for something to go away is not repeated after a reload', async () => {
+    const { metro, bridge } = await session('gone-wait', {
+      app: { dropOnce: ['screen.waitFor'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { loadId: 'load-2', dropOnce: ['screen.waitFor'] })
+    cleanups.push(() => again.ws.close())
+    const error = await bridge
+      .call('screen.waitFor', 'Spinner', { gone: true })
+      .catch((e: Error) => e)
+    expect((error as Error).message).toContain('may or may not have run')
+    expect(again.runs['screen.waitFor'] ?? 0).toBe(0)
+  }, 15_000)
+
+  test('a repeated wait gets only the time left', async () => {
+    const seen: unknown[] = []
+    const { metro, bridge } = await session('time-left', {
+      app: { dropOnce: ['screen.waitFor'] },
+    })
+    const again = await fakeApp(metro, 'dev-2', { loadId: 'load-1' })
+    cleanups.push(() => again.ws.close())
+    again.onCall = (tool, args) => {
+      if (tool === 'screen.waitFor') seen.push(args)
+    }
+    await bridge.call('screen.waitFor', 'Done', { timeoutMs: 8000 }).catch(() => {})
+    const opts = (seen[0] as unknown[] | undefined)?.[1] as { timeoutMs: number } | undefined
+    expect(opts?.timeoutMs).toBeLessThan(8000)
+    expect(opts?.timeoutMs).toBeGreaterThan(0)
   }, 15_000)
 
   test('stop --dry-run lists what restore would undo and keeps the session; --keep reports it', async () => {
@@ -547,7 +747,7 @@ describe('session daemon', () => {
     expect(dry.restore).toBeUndefined()
     expect(app.restores).toBe(0)
     expect(listSessions().map((s) => s.name)).toEqual(['dry'])
-    expect(await bridge.call('demo.echo', 1)).toEqual([1])
+    expect(await bridge.call('store.get', 1)).toEqual([1])
 
     const kept = await sessionRequest(state, { op: 'stop', keep: true })
     expect(kept.restore).toBeNull()
@@ -695,7 +895,7 @@ describe('session daemon', () => {
     await bridge.call('demo.set')
     app.reload('dev-2', 'load-2')
     const t0 = performance.now()
-    const next = await bridge.timed('demo.echo', 2)
+    const next = await bridge.timed('store.get', 2)
     expect(performance.now() - t0).toBeLessThan(3000)
     expect(next.notice).toBe(LOST)
     expect(listSessions()[0]?.device.deviceId).toBe('dev-2')
@@ -705,7 +905,7 @@ describe('session daemon', () => {
     const { app, bridge } = await session('refresh', { timeoutMs: 8000 })
     await bridge.call('demo.set')
     app.reload('dev-2')
-    const next = await bridge.timed('demo.echo', 2)
+    const next = await bridge.timed('store.get', 2)
     expect(next.notice).toBeUndefined()
     expect(listSessions()[0]?.device.deviceId).toBe('dev-2')
     const stopped = await sessionRequest(listSessions()[0]!, { op: 'stop' })
@@ -717,7 +917,7 @@ describe('session daemon', () => {
     await bridge.call('demo.set')
     // Same connection, same device id: only the reply's load id differs.
     app.reload('dev-1', 'load-2')
-    const next = await bridge.timed('demo.echo', 2)
+    const next = await bridge.timed('store.get', 2)
     expect(next.notice).toBe(LOST)
     expect(readFileSync(sessionFiles('reply', dir).log, 'utf8')).not.toContain(
       'reconnecting',
@@ -729,9 +929,9 @@ describe('session daemon', () => {
     await bridge.call('demo.set')
     await bridge.call('bridge.restore')
     for (let i = 0; i < 3; i++)
-      expect((await bridge.timed('demo.echo', i)).notice).toBeUndefined()
+      expect((await bridge.timed('store.get', i)).notice).toBeUndefined()
     app.reload('dev-1', 'load-2')
-    expect((await bridge.timed('demo.echo', 4)).notice).toBe(
+    expect((await bridge.timed('store.get', 4)).notice).toBe(
       'app reloaded; 0 pending restores lost',
     )
   }, 15_000)
@@ -741,7 +941,7 @@ describe('session daemon', () => {
     await bridge.call('demo.set')
     await bridge.call('demo.restore')
     app.reload('dev-1', 'load-2')
-    expect((await bridge.timed('demo.echo', 1)).notice).toBe(
+    expect((await bridge.timed('store.get', 1)).notice).toBe(
       'app reloaded; 0 pending restores lost',
     )
   }, 15_000)
@@ -767,7 +967,7 @@ describe('session daemon', () => {
         const next = await fakeApp(metro, 'dev-2', { loadId: 'load-2' })
         cleanups.push(() => next.ws.close())
       }, 600)
-      const next = await bridge.timed('demo.echo', 1)
+      const next = await bridge.timed('store.get', 1)
       expect(next.value).toEqual([1])
       expect(next.notice).toBe(LOST)
       expect(app.reloads).toBe(1)
@@ -778,7 +978,7 @@ describe('session daemon', () => {
       await bridge.call('demo.set')
       expect(await bridge.call('app.reload')).toEqual({ reloading: true })
       comeBack(metro, app.ws)
-      const next = await bridge.timed('demo.echo', 1)
+      const next = await bridge.timed('store.get', 1)
       expect(next.notice).toBe(LOST)
     }, 20_000)
 
@@ -786,7 +986,7 @@ describe('session daemon', () => {
       const { app, bridge } = await session('gone', { reloadWaitMs: 1000 })
       expect(await bridge.call('app.reload')).toEqual({ reloading: true })
       app.ws.close()
-      await expect(bridge.call('demo.echo', 1)).rejects.toThrow(
+      await expect(bridge.call('store.get', 1)).rejects.toThrow(
         "The app is reloading; its bridge isn't ready yet",
       )
     }, 20_000)
@@ -806,7 +1006,7 @@ describe('session daemon', () => {
       cleanups.push(() => daemon.stop(true))
       const bridge = await connectSession({ name, timeoutMs: 300 })
       cleanups.push(bridge.close)
-      expect(await bridge.call('demo.echo', 1)).toEqual([1])
+      expect(await bridge.call('store.get', 1)).toEqual([1])
       fake.live.hangList = true
       fake.live.hangUpgrade = true
       app.ws.close()
@@ -817,14 +1017,14 @@ describe('session daemon', () => {
       const { bridge } = await hung('fast')
       const t0 = Date.now()
       const gone = /app not connected|The app is gone/
-      await expect(bridge.call('demo.echo', 2)).rejects.toThrow(gone)
-      await expect(bridge.call('demo.echo', 3)).rejects.toThrow(gone)
+      await expect(bridge.call('store.get', 2)).rejects.toThrow(gone)
+      await expect(bridge.call('store.get', 3)).rejects.toThrow(gone)
       expect(Date.now() - t0).toBeLessThan(9000)
     }, 15_000)
 
     test('stop completes while the reconnect is stuck', async () => {
       const { daemon, bridge } = await hung('stop')
-      await expect(bridge.call('demo.echo', 2)).rejects.toThrow(
+      await expect(bridge.call('store.get', 2)).rejects.toThrow(
         /app not connected|The app is gone/,
       )
       const stopped = await Promise.race([
@@ -838,7 +1038,7 @@ describe('session daemon', () => {
 
     test('stop completes when Metro goes away mid-reconnect', async () => {
       const { fake, daemon, bridge } = await hung('gone-metro')
-      await expect(bridge.call('demo.echo', 2)).rejects.toThrow(
+      await expect(bridge.call('store.get', 2)).rejects.toThrow(
         /app not connected|The app is gone/,
       )
       await fake.close()
@@ -866,7 +1066,7 @@ describe('session daemon', () => {
     const { metro, app, bridge, daemon } = await session('restore-back')
     await bridge.call('demo.set')
     app.ws.close()
-    await expect(bridge.call('demo.echo', 1)).rejects.toThrow('The app is gone')
+    await expect(bridge.call('store.get', 1)).rejects.toThrow('The app is gone')
     const reloaded = await fakeApp(metro, 'dev-2')
     cleanups.push(() => reloaded.ws.close())
     expect(await daemon.stop()).toMatchObject({
@@ -1195,4 +1395,359 @@ describe('session CLI', () => {
     expect(out.stderr).toContain('No app is connected')
     expect(listSessions()).toEqual([])
   })
+})
+
+describe('restores across a reload', () => {
+  // What survives an app reload: MMKV storage and a persisted store's storage.
+  const disk = new Map<string, string>()
+  const mem = () => {
+    const kv = {
+      getAllKeys: () => [...disk.keys()].filter((k) => k.startsWith('kv:')).map((k) => k.slice(3)),
+      getString: (k: string) => disk.get(`kv:${k}`),
+      set: (k: string, v: string | number | boolean) => void disk.set(`kv:${k}`, String(v)),
+      remove: (k: string) => disk.delete(`kv:${k}`),
+    }
+    type Auth = { token: string }
+    const auth = createStore<Auth>()(() => ({ token: disk.get('auth') ?? 'real-store' }))
+    auth.subscribe((s) => void disk.set('auth', s.token))
+    ;(auth as unknown as { persist: unknown }).persist = {
+      getOptions: () => ({}),
+      hasHydrated: () => true,
+    }
+    return { kv, auth }
+  }
+  const withStorage = (getTools: () => Tools): Tools => {
+    const { kv, auth } = mem()
+    return {
+      ...mmkvTools({ kv }),
+      ...storeTools({ auth }),
+      ...restoreTools(getTools),
+    }
+  }
+
+  test('a reload keeps the undo for MMKV and a persisted store; stop restores them', async () => {
+    disk.clear()
+    disk.set('kv:token', 'real')
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withStorage } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    // The new load booted on the fake values; nothing is undone yet.
+    expect(disk.get('kv:token')).toBe('fake')
+    expect(disk.get('auth')).toBe('fake-store')
+
+    const next = await bridge.timed('bridge.pending')
+    expect(next.notice).toContain('kept 2 undos across the reload')
+    expect(next.notice).not.toContain('lost')
+    expect(await bridge.call('bridge.pending')).toMatchObject({ mmkv: true, store: expect.anything() })
+    expect(disk.get('kv:token')).toBe('fake')
+
+    const stopped = await daemon.stop()
+    expect(stopped?.ok).toBe(true)
+    expect(disk.get('kv:token')).toBe('real')
+    expect(disk.get('auth')).toBe('real-store')
+  }, 15_000)
+
+  test('a store key that is not plain JSON is named in the reload notice', async () => {
+    disk.clear()
+    const withSet = (getTools: () => Tools): Tools => {
+      const store = createStore<{ token: string; seen: Set<string>; bump: () => void }>()((set) => ({
+        token: disk.get('auth') ?? 'real-store',
+        seen: new Set(['a']),
+        bump: () => set({ token: 'fake-store', seen: new Set(['b']) }),
+      }))
+      store.subscribe((s) => void disk.set('auth', s.token))
+      ;(store as unknown as { persist: unknown }).persist = { getOptions: () => ({}), hasHydrated: () => true }
+      return { ...storeTools({ auth: store }), ...restoreTools(getTools) }
+    }
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withSet } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl3', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl3', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    await bridge.call('store.call', 'auth', 'bump')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const next = await bridge.timed('bridge.pending')
+    expect(next.notice).toContain('not kept across reload')
+    expect(next.notice).toContain('auth:seen')
+    expect(next.notice).toContain('kept 1 undo')
+  }, 15_000)
+
+  const setup = async (name: string, extraOpts: Record<string, unknown> = {}, daemonOpts: Record<string, unknown> = {}) => {
+    disk.clear()
+    disk.set('kv:token', 'real')
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withStorage, ...extraOpts } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name, metro: metro.metro, idleMs: 0, healthMs: 0, adoptRetryMs: 0, ...daemonOpts })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name, timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    return { metro, opts, first, daemon, bridge }
+  }
+
+  test('the journal rides on the write reply, with no separate read', async () => {
+    const { first, bridge } = await setup('rl-ride')
+    const seen: string[] = []
+    first.onCall = (t) => void seen.push(t)
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    expect(seen).toEqual(['mmkv.set'])
+  })
+
+  test('a reload right after a write keeps its undo', async () => {
+    const { metro, opts, first, daemon, bridge } = await setup('rl-race')
+    let second: Awaited<ReturnType<typeof fakeApp>> | undefined
+    // The old design read the journal in a second call, which a reload could answer empty.
+    first.onCall = (t) => {
+      if (t === 'bridge.journal') first.ws.close()
+    }
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second?.ws.close())
+    const next = await bridge.timed('bridge.pending')
+    expect(next.notice).toContain('kept 1 undo')
+    await daemon.stop()
+    expect(disk.get('kv:token')).toBe('real')
+  }, 15_000)
+
+  test('a call that fails after a reload carries the kept-undo notice in the same reply', async () => {
+    const { metro, opts, first, bridge } = await setup('rl-notice')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const error = await bridge.call('demo.echo', 1).catch((e: unknown) => e as { notice?: string })
+    expect(String((error as { notice?: string }).notice)).toContain('kept 1 undo')
+  }, 15_000)
+
+  test('stop right after a reload restores the journaled fakes', async () => {
+    const { metro, opts, first, daemon, bridge } = await setup('rl-stop')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const stopped = await daemon.stop()
+    expect(stopped).toMatchObject({ ok: true })
+    expect(disk.get('kv:token')).toBe('real')
+  }, 15_000)
+
+  test('a write whose reply was lost to a reload says its undo is lost', async () => {
+    const { metro, opts, first, bridge } = await setup('rl-lostwrite')
+    first.onCall = (t) => t === 'mmkv.set' && first.ws.close()
+    const error = await bridge.call('mmkv.set', 'kv', 'token', 'fake').catch((e: unknown) => e as { notice?: string })
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const again = await bridge.timed('bridge.pending')
+    expect(`${(error as { notice?: string }).notice} ${again.notice}`).toContain('that undo may be lost')
+  }, 15_000)
+
+  test('an area that never becomes ready is tried three times, reported once, then dropped', async () => {
+    const { metro, first, bridge, daemon } = await setup('rl-cap')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', {
+      restore: false,
+      loadId: 'load-2',
+      extra: (g: () => Tools) => ({ ...mmkvTools({}), ...restoreTools(g) }),
+    })
+    cleanups.push(() => second.ws.close())
+    const adopts: string[] = []
+    second.onCall = (t) => t === 'bridge.adopt' && adopts.push(t)
+    const notices: (string | undefined)[] = []
+    for (let i = 0; i < 4; i++) notices.push((await bridge.timed('bridge.pending')).notice)
+    expect(notices[0]).toContain('will retry: mmkv:kv (not ready)')
+    expect(notices[1]).toBeUndefined()
+    expect(notices[2]).toContain('could not re-arm after the reload: mmkv:kv')
+    expect(notices[3]).toBeUndefined()
+    expect(adopts.length).toBe(3)
+    void daemon
+  }, 20_000)
+
+  test('a second reload keeps what was still waiting', async () => {
+    const { metro, first, bridge, daemon } = await setup('rl-two')
+    disk.set('kv2:k', 'orig2')
+    // Load 1 has kv and kv2; load 2 only kv2; load 3 both.
+    const mk = (names: string[]) => (g: () => Tools): Tools => {
+      const all: Record<string, ReturnType<typeof mem>['kv']> = {}
+      for (const n of names) {
+        const pre = n === 'kv' ? 'kv:' : 'kv2:'
+        all[n] = {
+          getAllKeys: () => [...disk.keys()].filter((k) => k.startsWith(pre)).map((k) => k.slice(pre.length)),
+          getString: (k: string) => disk.get(pre + k),
+          set: (k: string, v: string | number | boolean) => void disk.set(pre + k, String(v)),
+          remove: (k: string) => disk.delete(pre + k),
+        }
+      }
+      return { ...mmkvTools(all), ...restoreTools(g) }
+    }
+    first.ws.close()
+    const one = await fakeApp(metro.metro, 'dev-1b', { restore: false, loadId: 'load-1b', extra: mk(['kv', 'kv2']) })
+    cleanups.push(() => one.ws.close())
+    await bridge.timed('bridge.pending')
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    one.ws.close()
+    const two = await fakeApp(metro.metro, 'dev-2', { restore: false, loadId: 'load-2', extra: mk(['kv2']) })
+    cleanups.push(() => two.ws.close())
+    await bridge.timed('bridge.pending')
+    await bridge.call('mmkv.set', 'kv2', 'k', 'fake2')
+    two.ws.close()
+    const three = await fakeApp(metro.metro, 'dev-3', { restore: false, loadId: 'load-3', extra: mk(['kv', 'kv2']) })
+    cleanups.push(() => three.ws.close())
+    await daemon.stop()
+    expect(disk.get('kv:token')).toBe('real')
+    expect(disk.get('kv2:k')).toBe('orig2')
+  }, 20_000)
+
+  test('stop: a restore whose reply was lost is repeated only if something is still pending', async () => {
+    for (const changed of [false, true]) {
+      const { metro, daemon, first } = await setup(`rl-lost-restore-${changed}`, { restore: false }, { timeoutMs: 1000 })
+      first.ws.close()
+      const a = await fakeApp(metro.metro, 'dev-a', { dropOnce: ['bridge.restore'], loadId: 'load-1', extra: undefined })
+      cleanups.push(() => a.ws.close())
+      let b: Awaited<ReturnType<typeof fakeApp>> | undefined
+      // The app comes back (same load) right after the restore cut the socket.
+      a.onCall = (t) => {
+        if (t !== 'bridge.restore') return
+        void fakeApp(metro.metro, 'dev-b', { counted: ['bridge.restore'], loadId: 'load-1' }).then((x) => {
+          b = x
+          x.changed = changed
+          cleanups.push(() => x.ws.close())
+        })
+      }
+      const stopped = await daemon.stop()
+      expect(stopped).toMatchObject({ ok: true })
+      expect(b?.runs['bridge.restore']).toBe(changed ? 1 : undefined)
+    }
+  }, 40_000)
+
+  test('a call without the session key cannot read or hand over the journal', async () => {
+    const { first, metro } = await setup('rl-key')
+    void first
+    const { connect } = await import('../../index')
+    const bridge = await connect({ metro: metro.metro, transport: 'expo', timeoutMs: 1000 })
+    cleanups.push(() => bridge.close())
+    await expect(bridge.call('bridge.adopt', {})).rejects.toThrow(/session's own use/)
+    const tools = (await bridge.tools()).map((t: { name: string }) => t.name)
+    expect(tools).not.toContain('bridge.adopt')
+  }, 15_000)
+
+  test('a value the app changed since is left alone and said so', async () => {
+    disk.clear()
+    disk.set('kv:token', 'real')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: withStorage } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl2', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl2', timeoutMs: 1000 })
+    cleanups.push(bridge.close)
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    disk.set('kv:token', 'app-refreshed')
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const next = await bridge.timed('bridge.pending')
+    expect(next.notice).toContain('left alone, the app changed them since: kv:token')
+    await daemon.stop()
+    expect(disk.get('kv:token')).toBe('app-refreshed')
+  }, 15_000)
+
+  // Not ready on its first adopt (waits out the hydration timeout), ready on the next.
+  const lateStore = (getTools: () => Tools): Tools => {
+    let asked = 0
+    const auth = createStore<{ token: string }>()(() => ({ token: disk.get('auth') ?? 'real-store' }))
+    auth.subscribe((s) => void disk.set('auth', s.token))
+    ;(auth as unknown as { persist: unknown }).persist = {
+      getOptions: () => ({}),
+      hasHydrated: () => asked++ > 0,
+      onFinishHydration: () => () => {},
+    }
+    return { ...storeTools({ auth }), ...restoreTools(getTools) }
+  }
+
+  test('an adopt that never answers but leaves the app alive is tried three times, then dropped', async () => {
+    const { metro, first, bridge } = await setup('rl-slow', {}, { timeoutMs: 400, adoptTimeoutMs: 200 })
+    await bridge.call('mmkv.set', 'kv', 'token', 'fake')
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', {
+      restore: false,
+      loadId: 'load-2',
+      extra: (g: () => Tools) => ({ ...mmkvTools({}), ...restoreTools(g), 'bridge.adopt': () => new Promise(() => {}) }),
+    })
+    cleanups.push(() => second.ws.close())
+    let adopts = 0
+    second.onCall = (t) => t === 'bridge.adopt' && void adopts++
+    const notices: string[] = []
+    for (let i = 0; i < 5; i++) notices.push(String((await bridge.timed('bridge.pending')).notice ?? ''))
+    expect(notices.join(' ')).toContain('could not re-arm after the reload: mmkv:kv (timed out)')
+    expect(adopts).toBe(3)
+  }, 30_000)
+
+  test('stop right after a reload retries a store that is still hydrating', async () => {
+    disk.clear()
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: lateStore } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl-late', metro: metro.metro, idleMs: 0, healthMs: 0, adoptRetryMs: 50 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl-late', timeoutMs: 8000 })
+    cleanups.push(bridge.close)
+    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    const stopped = await daemon.stop()
+    expect(stopped).toMatchObject({ ok: true })
+    expect(disk.get('auth')).toBe('real-store')
+  }, 30_000)
+
+  test('a mid-session bridge.restore does not wait out the retry pause for the journal', async () => {
+    disk.clear()
+    disk.set('auth', 'real-store')
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const opts = { restore: false, extra: lateStore } as const
+    const first = await fakeApp(metro.metro, 'dev-1', { ...opts, loadId: 'load-1' })
+    cleanups.push(() => first.ws.close())
+    const daemon = await runSessionDaemon({ name: 'rl-mid', metro: metro.metro, idleMs: 0, healthMs: 0, adoptRetryMs: 60_000 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ name: 'rl-mid', timeoutMs: 8000 })
+    cleanups.push(bridge.close)
+    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    first.ws.close()
+    const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
+    cleanups.push(() => second.ws.close())
+    await bridge.timed('bridge.pending')
+    await bridge.call('bridge.restore')
+    expect(disk.get('auth')).toBe('real-store')
+  }, 30_000)
+
 })

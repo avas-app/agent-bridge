@@ -69,7 +69,10 @@ describe('routerTools', () => {
     const tools = routerTools(router, { navigation })
 
     expect(run(tools, 'router.current')).toMatchObject({ pathname: '/', canGoBack: false })
-    expect(await run(tools, 'router.navigate', '/inbox')).toBe('/inbox')
+    expect(await run(tools, 'router.navigate', '/inbox')).toMatchObject({
+      pathname: '/inbox',
+      canGoBack: true,
+    })
     expect(run(tools, 'router.current')).toEqual({
       pathname: '/inbox',
       href: '/inbox',
@@ -126,8 +129,62 @@ describe('routerTools', () => {
     )
     const tools = routerTools(router, { navigation })
     expect(run(tools, 'router.current')).toMatchObject({ pathname: '/docs/a/b', href: '/docs/a/b' })
-    await run(tools, 'router.navigate', '/nope')
+    await expect(run(tools, 'router.navigate', '/nope')).rejects.toThrow('+not-found')
     expect(run(tools, 'router.current')).toMatchObject({ pathname: '/nope', segments: ['+not-found'] })
+  })
+
+  test('navigate returns the route it ended on, and warns when that is not the target', async () => {
+    const { router, navigation } = fakeApp(
+      { '/': tabs('index'), '/inbox': tabs('inbox'), '/other': tabs('other') },
+      '/',
+    )
+    const tools = routerTools(
+      { ...router, navigate: (href) => router.navigate(String(href) === '/redirect' ? ('/other' as never) : href) },
+      { navigation },
+    )
+    expect(await run(tools, 'router.push', '/inbox')).not.toHaveProperty('warning')
+    expect(await run(tools, 'router.navigate', '/redirect')).toMatchObject({
+      pathname: '/other',
+      warning: expect.stringContaining('/redirect'),
+    })
+  })
+
+  test('a query in the href that the route does not carry gets a warning', async () => {
+    const { router, navigation } = fakeApp(
+      {
+        '/': tabs('index'),
+        '/inbox': tabs('inbox'),
+        '/inbox?filter=unread': tabs('inbox'),
+        '/inbox?filter=read': tabs('inbox', { filter: 'read' }),
+      },
+      '/inbox',
+    )
+    const tools = routerTools(router, { navigation })
+    expect(await run(tools, 'router.navigate', '/inbox?filter=unread')).toMatchObject({
+      warning: expect.stringContaining('filter'),
+    })
+    expect(await run(tools, 'router.navigate', '/inbox?filter=read')).not.toHaveProperty('warning')
+  })
+
+  test('a container that is not ready says so instead of reporting "/" and a redirect', async () => {
+    const { router, navigation } = fakeApp({ '/': tabs('index'), '/inbox': tabs('inbox') }, '/')
+    const tools = routerTools(router, { navigation: { ...navigation, isReady: () => false } })
+    const result = await run(tools, 'router.navigate', '/inbox')
+    expect(result).toMatchObject({ warning: expect.stringContaining('not mounted') })
+    expect(JSON.stringify(result)).not.toContain('redirected')
+  })
+
+  test('navigating to an unmatched href fails when it lands on +not-found', async () => {
+    const { router, navigation } = fakeApp(
+      {
+        '/': tabs('index'),
+        '/typo': { index: 0, routes: [{ name: '+not-found', path: '/typo' } as Route] },
+      },
+      '/',
+    )
+    await expect(run(routerTools(router, { navigation }), 'router.navigate', '/typo')).rejects.toThrow(
+      /\+not-found/,
+    )
   })
 
   test('navigation tools still return right away without a navigation container', () => {
