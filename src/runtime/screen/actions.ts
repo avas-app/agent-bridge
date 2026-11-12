@@ -26,29 +26,98 @@ const event = (nativeEvent: Record<string, unknown>, target?: unknown) => ({
 
 let eventCount = 0
 
-/** Types `text` into an input. Returns the text it filled (after `maxLength`). */
-export function fillInput(
+const has = (v: unknown) => v !== undefined && v !== null
+
+/** Whether the input keeps its own text: no `value` prop on it or the host under it. */
+export const isUncontrolled = (found: Found) =>
+  !!found.input && !has(propsOf(found.input)?.value) && !has(propsOf(found.host)?.value)
+
+type NativeProps = { setNativeProps?: (p: object) => void }
+
+// An input with no `value` prop keeps its text natively, so write it there.
+// Fabric hosts hold the instance at stateNode.canonical.publicInstance (null until first used).
+function setNativeText(found: Found, text: string): boolean {
+  for (const fiber of [found.host, found.input]) {
+    const node = fiber?.stateNode as
+      | (NativeProps & { canonical?: { publicInstance?: NativeProps | null } })
+      | null
+      | undefined
+    for (const target of [node, node?.canonical?.publicInstance]) {
+      if (target && typeof target.setNativeProps === 'function') {
+        target.setNativeProps({ text })
+        return true
+      }
+    }
+  }
+  const dom = found.host.stateNode as { value?: unknown } | null
+  if (dom && typeof dom === 'object' && 'value' in dom) {
+    dom.value = text
+    return true
+  }
+  return false
+}
+
+// A key per user-perceived character, so an emoji is one keystroke.
+const keysOf = (text: string): string[] => {
+  const Segmenter = (Intl as { Segmenter?: new (l?: string, o?: object) => { segment(s: string): Iterable<{ segment: string }> } }).Segmenter
+  return Segmenter
+    ? Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text), (x) => x.segment)
+    : Array.from(text)
+}
+
+/**
+ * Types `text` into an input, replacing what is there ("" clears it). `type`
+ * enters one key at a time, as a keyboard does, calling `between` after each
+ * so the app can render, and `again` to get the input after that render.
+ * Returns the text it filled (after `maxLength`) and whether the text was
+ * written natively (null for a controlled input).
+ */
+export async function fillInput(
   found: Found,
   text: string,
-  options: { submit?: boolean } = {},
-): string {
-  const input = found.input
-  if (!input) throw new Error(`${describe(found.element)} is not a text input`)
+  options: {
+    submit?: boolean
+    type?: boolean
+    between?: () => Promise<void>
+    again?: (found: Found) => Found
+  } = {},
+): Promise<{ filled: string; native: boolean | null }> {
+  if (!found.input) throw new Error(`${describe(found.element)} is not a text input`)
   if (found.element.editable === false)
     throw new Error(`${describe(found.element)} is not editable`)
   const { maxLength } = found
   const value =
     maxLength === undefined ? text : text.slice(0, Math.max(0, maxLength))
+  const uncontrolled = isUncontrolled(found)
+  let native: boolean | null = uncontrolled ? false : null
+  let current = found
   // react-dom reads event.target.value; React Native reads nativeEvent.text.
+  const change = (next: string) => {
+    const target = { value: next }
+    if (uncontrolled && setNativeText(current, next)) native = true
+    const input = current.input as Fiber
+    handler(input, 'onChangeText')?.(next)
+    eventCount += 1
+    handler(input, 'onChange')?.(event({ text: next, eventCount }, target))
+  }
   const target = { value }
-  handler(input, 'onFocus')?.(event({ text: value }, target))
-  handler(input, 'onChangeText')?.(value)
-  eventCount += 1
-  handler(input, 'onChange')?.(event({ text: value, eventCount }, target))
-  if (options.submit)
-    handler(input, 'onSubmitEditing')?.(event({ text: value }, target))
+  handler(found.input, 'onFocus')?.(event({ text: value }, target))
+  if (options.type && value) {
+    const keys = keysOf(value)
+    let typed = ''
+    for (const key of keys) {
+      typed += key
+      handler(current.input as Fiber, 'onKeyPress')?.(event({ key: key === '\n' ? 'Enter' : key }))
+      change(typed)
+      if (options.between) await options.between()
+      if (options.again) current = options.again(current)
+    }
+  } else change(value)
+  const input = current.input as Fiber
+  if (options.submit) handler(input, 'onSubmitEditing')?.(event({ text: value }, target))
+  handler(input, 'onEndEditing')?.(event({ text: value }, target))
   handler(input, 'onBlur')?.(event({ text: value }, target))
-  return value
+  return { filled: value, native }
 }
 
 const center = (rect: Rect | null) =>
@@ -65,7 +134,7 @@ const disabledProps = (fiber: Fiber) => {
 function pressTargetOf(found: Found, action: string | undefined) {
   if (action === undefined) return pressFiberOf(found)
   const fiber = actionFiberOf(found, action)
-  return fiber && { fiber, via: 'accessibilityAction' as const }
+  return fiber && { fiber, via: 'accessibilityAction' as const, ancestor: fiber !== found.actions }
 }
 
 /**
@@ -89,7 +158,8 @@ export function pressElement(
         : `${describe(found.element)} has no accessibility action ${JSON.stringify(action)}${has}`,
     )
   }
-  const { fiber, via } = target
+  const { fiber, via, ancestor } = target
+  const from = ancestor ? 'ancestor:' : ''
   if (!options.force && (found.element.disabled || disabledProps(fiber)))
     throw new Error(
       `${describe(found.element)} is disabled; pass {"force":true} as the last argument to press anyway`,
@@ -97,7 +167,7 @@ export function pressElement(
   if (via === 'accessibilityAction') {
     const actionName = action ?? 'activate'
     handler(fiber, 'onAccessibilityAction')?.(event({ actionName }))
-    return `accessibilityAction:${actionName}`
+    return `${from}accessibilityAction:${actionName}`
   }
   const { x, y } = center(found.element.rect)
   const e = () =>
@@ -113,5 +183,5 @@ export function pressElement(
   handler(fiber, 'onPressIn')?.(e())
   handler(fiber, 'onPress')?.(e())
   handler(fiber, 'onPressOut')?.(e())
-  return 'onPress'
+  return ancestor ? 'ancestor' : 'onPress'
 }
