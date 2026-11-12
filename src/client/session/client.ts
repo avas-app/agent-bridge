@@ -60,7 +60,10 @@ export function openSessionLink(state: SessionState): Promise<Link> {
       for (const [id, done] of waiting) done({ id, error: gone, linkLost: true })
       waiting.clear()
     })
-    createInterface({ input: socket }).on('line', (line) => {
+    // readline re-emits the socket's errors; without a listener they go uncaught
+    const lines = createInterface({ input: socket })
+    lines.on('error', () => {})
+    lines.on('line', (line) => {
       const res = JSON.parse(line) as SessionResponse
       waiting.get(res.id)?.(res)
       waiting.delete(res.id)

@@ -662,7 +662,9 @@ export async function runSessionDaemon(
     clients.add(socket)
     socket.on('close', () => clients.delete(socket))
     socket.on('error', () => {})
-    createInterface({ input: socket }).on('line', async (line) => {
+    const lines = createInterface({ input: socket })
+    lines.on('error', () => {})
+    lines.on('line', async (line) => {
       let req: SessionRequest
       try {
         req = JSON.parse(line) as SessionRequest
