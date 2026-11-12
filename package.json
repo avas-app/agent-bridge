@@ -38,6 +38,14 @@
       "types": "./dist/adapters/zustand.d.cts",
       "default": "./entries/zustand.cjs"
     },
+    "./redux": {
+      "types": "./dist/adapters/redux.d.cts",
+      "default": "./entries/redux.cjs"
+    },
+    "./jotai": {
+      "types": "./dist/adapters/jotai.d.cts",
+      "default": "./entries/jotai.cjs"
+    },
     "./react-native-mmkv": {
       "types": "./dist/adapters/react-native-mmkv.d.cts",
       "default": "./entries/react-native-mmkv.cjs"
@@ -108,6 +116,8 @@
     "cdp",
     "tanstack-query",
     "zustand",
+    "redux",
+    "jotai",
     "mmkv",
     "async-storage",
     "secure-store",
@@ -153,12 +163,15 @@
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
     "@expo/devtools": "^57.0.1",
+    "@reduxjs/toolkit": "^2.14.0",
     "@tanstack/query-core": "^5.90.0",
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
     "@types/ws": "^8.18.1",
     "ably": "^2.29.0",
     "happy-dom": "^20.14.5",
+    "jotai": "^3.0.2",
+    "redux-persist": "^6.0.0",
     "socket.io-client": "^4.8.4",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",

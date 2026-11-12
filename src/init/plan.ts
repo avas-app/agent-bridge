@@ -7,6 +7,8 @@ import {
   DOCS,
   MMKV_WHY,
   ASYNC_STORAGE_WHY,
+  JOTAI_WHY,
+  REDUX_WHY,
   SECURE_STORE_WHY,
   NETWORK_WHY,
   type Patch,
@@ -104,6 +106,9 @@ const MARKERS: Array<[keyof Detection['has'], RegExp, string]> = [
   ['reactQuery', /queryTools/, '@tanstack/react-query'],
   ['webview', /webviewTools/, 'react-native-webview'],
   ['zustand', /storeTools/, 'zustand'],
+  ['redux', /reduxTools/, '@reduxjs/toolkit'],
+  ['reduxCore', /reduxTools/, 'redux'],
+  ['jotai', /jotaiTools/, 'jotai'],
   ['mmkv', /mmkvTools/, 'react-native-mmkv'],
   ['asyncStorage', /asyncStorageTools/, '@react-native-async-storage/async-storage'],
   ['secureStore', /secureStoreTools/, 'expo-secure-store'],
@@ -337,6 +342,8 @@ export function plan(
         mmkv: d.has.mmkv ? imported(found.mmkv) : undefined,
         asyncStorage: d.has.asyncStorage,
         secureStore: d.has.secureStore,
+        redux: d.has.redux || d.has.reduxCore,
+        jotai: d.has.jotai,
         realtime,
         realtimeTools,
       }),
@@ -375,6 +382,18 @@ export function plan(
         adapter: 'secure-store',
         items: ['SecureStore'],
         why: `${SECURE_STORE_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.redux || d.has.reduxCore)
+      commented.push({
+        adapter: 'redux',
+        items: ['reduxTools(store)'],
+        why: `${REDUX_WHY} (${DOCS}/adapters.md)`,
+      })
+    if (d.has.jotai)
+      commented.push({
+        adapter: 'jotai',
+        items: ['jotaiTools(store, atoms)'],
+        why: `${JOTAI_WHY} (${DOCS}/adapters.md)`,
       })
     if (d.has.reactNavigation && !d.has.expoRouter)
       commented.push({
