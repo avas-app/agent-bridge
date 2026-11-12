@@ -14,7 +14,7 @@ try {
   const pkg = join(modules, '@avasapp/agent-bridge')
   for (const file of ['package.json', 'dist', 'entries'])
     cpSync(join(root, file), join(pkg, file), { recursive: true })
-  for (const dep of ['@tanstack/query-core', 'ably', 'socket.io-client', 'zustand']) {
+  for (const dep of ['@tanstack/query-core', 'ably', 'socket.io-client', 'zustand', 'jotai', '@reduxjs/toolkit']) {
     mkdirSync(dirname(join(modules, dep)), { recursive: true })
     symlinkSync(join(root, 'node_modules', dep), join(modules, dep), 'dir')
   }

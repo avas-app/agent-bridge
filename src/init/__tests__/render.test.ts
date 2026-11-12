@@ -142,7 +142,7 @@ describe('bridge file', () => {
     })
     const uncommented = file
       .split('\n')
-      .map((l) => l.replace(/^(\s*)\/\/ (import \{|\.\.\.|'nav\.)/, '$1$2'))
+      .map((l) => l.replace(/^(\s*)\/\/ (import \{|\.\.\.)/, '$1$2'))
       .join('\n')
     expect(uncommented).toContain("import { useAuthStore } from '../stores/auth'")
     expect(uncommented).toContain("...storeTools({ auth: useAuthStore }, { redact: { auth: ['token'] } }),")

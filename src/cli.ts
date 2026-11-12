@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createRequire } from 'node:module'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -29,6 +30,7 @@ import {
 } from './client/session/cli'
 import { connectSession } from './client/session/client'
 import { nodeIo, runInit } from './init/index'
+import { mcpMain } from './mcp/run'
 import { RUNTIME_MARKER } from './shared/protocol'
 
 const HELP = `agent-bridge: drive a running React Native app from an agent
@@ -52,6 +54,9 @@ Usage
                                           on failure (--keep skips it); a scenario export is
                                           applied first. Exits 1 if any flow failed
   agent-bridge scenarios                  Scenarios the app defines (scenario.apply applies one)
+  agent-bridge mcp                        Serve the app's tools as an MCP server on stdio (add to your agent's MCP
+                                          config). Uses this project's session, or starts one and
+                                          runs bridge.restore on exit (--keep: don't)
   agent-bridge assert-absent <files...>   Fail if a release bundle contains the bridge
 
 Sessions: one connection for all of an agent's calls
@@ -356,6 +361,13 @@ async function main() {
             console.log(`  ${''.padEnd(20)} options: ${JSON.stringify(s.options)}`)
         }
       })
+    case 'mcp':
+      return mcpMain(
+        values,
+        options,
+        (createRequire(import.meta.url)('../package.json') as { version: string })
+          .version,
+      )
     case 'session':
       return sessionCommand(rest[0], values)
     case DAEMON_COMMAND:

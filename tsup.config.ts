@@ -5,13 +5,19 @@ const appEntries = {
   'expo/index': 'src/expo/index.ts',
   'adapters/tanstack-query': 'src/adapters/tanstack-query.ts',
   'adapters/zustand': 'src/adapters/zustand.ts',
+  'adapters/redux': 'src/adapters/redux.ts',
+  'adapters/jotai': 'src/adapters/jotai.ts',
   'adapters/react-native-mmkv': 'src/adapters/react-native-mmkv.ts',
   'adapters/expo-router': 'src/adapters/expo-router.ts',
+  'adapters/react-navigation': 'src/adapters/react-navigation.ts',
   'adapters/react-native-webview': 'src/adapters/react-native-webview.ts',
   'network/index': 'src/network/index.ts',
   'realtime/index': 'src/realtime/index.ts',
   'adapters/ably': 'src/adapters/ably.ts',
   'adapters/socket-io': 'src/adapters/socket-io.ts',
+  'adapters/async-storage': 'src/adapters/async-storage.ts',
+  'adapters/secure-store': 'src/adapters/secure-store.ts',
+  'adapters/device': 'src/adapters/device.ts',
 }
 
 const noopEntries = {
@@ -19,13 +25,19 @@ const noopEntries = {
   'noop/expo': 'src/noop/expo.ts',
   'noop/tanstack-query': 'src/noop/tanstack-query.ts',
   'noop/zustand': 'src/noop/zustand.ts',
+  'noop/redux': 'src/noop/redux.ts',
+  'noop/jotai': 'src/noop/jotai.ts',
   'noop/react-native-mmkv': 'src/noop/react-native-mmkv.ts',
   'noop/expo-router': 'src/noop/expo-router.ts',
+  'noop/react-navigation': 'src/noop/react-navigation.ts',
   'noop/react-native-webview': 'src/noop/react-native-webview.ts',
   'noop/network': 'src/noop/network.ts',
   'noop/realtime': 'src/noop/realtime.ts',
   'noop/ably': 'src/noop/ably.ts',
   'noop/socket-io': 'src/noop/socket-io.ts',
+  'noop/async-storage': 'src/noop/async-storage.ts',
+  'noop/secure-store': 'src/noop/secure-store.ts',
+  'noop/device': 'src/noop/device.ts',
 }
 
 export default defineConfig([

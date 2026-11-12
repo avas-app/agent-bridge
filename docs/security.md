@@ -6,6 +6,10 @@
 - **In the app:** the bridge only calls tools and scenarios the app registered. Arguments and scenario options arrive as JSON data. Over CDP the client evaluates one fixed call with the message as a JSON string; the Expo transport sends plain JSON. Nothing the agent sends is evaluated as code.
 - **Who can reach it:** anyone who can reach Metro's debugger can already run any code in a dev build. The bridge adds no new way in, and release builds carry none of it (`assert-absent` checks).
 
+## Storage values
+
+`mmkv.get` and `asyncStorage.get` return values as they are, so wire only storage without secrets. `secureStore.get` returns `[redacted, N chars]` unless called with `{full:true}`, `secureStore.list` never shows values, and `bridge.pending` shows no keys or values for it. `secureStore.set` and `secureStore.delete` still work, and `*.restore` keeps the old value in memory until it runs. `agent-bridge init` leaves all of these commented out.
+
 ## Release builds
 
 Every entry point is gated on `process.env.NODE_ENV`, like `react/index.js`: Metro inlines it and a release bundle gets empty stubs. Check a bundle in CI:

@@ -5,8 +5,10 @@ export const createRealtimeTap = () => ({
     listener,
     unsubscribe: () => {},
   }),
+  sent: (): void => {},
   tools: {},
 })
 export const tapListeners = (): void => {}
+export const tapOutgoing = (): void => {}
 export const fakeableConnection = (): undefined => undefined
 export const realtimeAdapter = () => () => ({})

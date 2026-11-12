@@ -7,14 +7,21 @@ npx @avasapp/agent-bridge session stop             # runs bridge.restore
 npx @avasapp/agent-bridge session stop --keep      # leaves the app as is; warns about anything still pending
 ```
 
-`bridge.restore` unpins queries, puts back store and MMKV values, removes
+`bridge.restore` unpins queries, puts back store, MMKV, AsyncStorage and SecureStore values, removes
 network mocks, unmutes realtime channels and ends a faked connection state,
 then undoes active scenarios (newest first), so the next run starts from the
 real state. With `session stop --keep`, a later restore will still apply what
 is pending.
 
-A JS reload throws away every pending restore; the session warns
-`app reloaded; N pending restores lost`. Redo your setup when you see it.
+A JS reload throws away the app's undo state. In a session, what lives in
+storage is kept: `mmkv.set`/`mmkv.delete` of string values and `store.set`/
+`store.call` on a persisted zustand store (one made with `persist`) are still
+undone by `bridge.restore` after the reload, and the next call says
+`app reloaded; kept N undos across the reload (...)`. A value the app changed
+after your write is left alone and named. Everything else (stores that are not
+persisted, redux, jotai, AsyncStorage and SecureStore changes, queries, mocks, `onRestore`) is lost: the session warns
+`app reloaded; N pending restores lost: ...`. Redo that setup when you see it. After a reload that also lost non-persisted changes, check `bridge.pending`: `kept N undos` does not list what was lost in the same area. `not kept across reload: store:key` means that key (a Set, Date, class instance, one `partialize` renames, or one `redact` hides) is not journaled, so the reload keeps the agent's value for it; `could not re-arm after the reload: ...` means a store or MMKV instance never became ready and its undo was dropped; `<tool> was cut off; ... that undo may be lost` means a write's reply was lost and may not be journaled.
+AsyncStorage and SecureStore values stay on disk across a reload with their old values gone, so run `bridge.restore` before `app.reload`. A key the app wrote after the agent did is left alone and returned under `skipped`.
 
 ## Mocked queries
 
@@ -37,6 +44,17 @@ with `store.set` snapshots the broken one.
 - If a value looks wrong: read `bridge.pending`, then `store.commit '"<store>"'`
   keeps the current value and drops the snapshot.
 - `store.set <store> {}` arms the snapshot before you drive the UI.
+
+`redux.*` and `jotai.*` work the same way, under their own names. `redux.set`
+snapshots each slice on its first change and restore puts back only those
+slices; `redux.dispatch` snapshots the whole state on its first call, so restore
+puts all of it back, including what the app changed in other slices after that.
+A slice or atom the app changed after the agent is left alone and returned in
+`{restored, skipped}`. `redux.commit` drops the snapshots. Jotai snapshots each
+atom on its first `jotai.set`; `jotai.commit <atom>` drops one. These snapshots
+live in memory, so **restore before `app.reload`**: with redux-persist or
+`atomWithStorage` the agent's values stay saved until then. With an async
+`atomWithStorage`, `jotai.get` the atom before the first set.
 
 ## WebViews
 

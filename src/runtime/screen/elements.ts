@@ -146,6 +146,12 @@ const MODAL_HOSTS = new Set(['RCTModalHostView', 'ModalHostView'])
 const OVERLAY_HOST = 'RNSFullWindowOverlay'
 const SCREEN_STACK = 'RNSScreenStack'
 const STACK_SCREENS = new Set(['RNSScreen', 'RNSModalScreen'])
+// Native tabs (Tabs.Host) have no focus prop on a tab screen: the host's
+// navStateRequest names the selected one, and UIKit/Android hide the rest.
+const TABS_HOSTS = new Set(['RNSTabsHostIOS', 'RNSTabsHostAndroid'])
+// react-native-screens before 4.25 named them RNSBottomTabsScreen / RNSTabsScreen and set `isFocused`.
+const OLD_TAB_SCREENS = new Set(['RNSBottomTabsScreen', 'RNSTabsScreen'])
+const TAB_SCREENS = new Set(['RNSTabsScreenIOS', 'RNSTabsScreenAndroid'])
 
 // react-native-screens presentations that leave what is beneath visible.
 const SEE_THROUGH = new Set(['transparentModal', 'containedTransparentModal', 'overFullScreen'])
@@ -213,6 +219,28 @@ function stackScreens(stack: Fiber): { covered: Fiber[]; presented: Fiber[] } {
   }
 }
 
+function unselectedTabs(tabs: Fiber): Fiber[] {
+  const selected = (propsOf(tabs)?.navStateRequest as { selectedScreenKey?: unknown } | undefined)
+    ?.selectedScreenKey
+  const out: Fiber[] = []
+  let matches = 0
+  if (typeof selected !== 'string') return out
+  const todo = tabs.child ? [tabs.child] : []
+  while (todo.length) {
+    const f = todo.pop() as Fiber
+    if (f.sibling) todo.push(f.sibling)
+    if (f.tag === HOST_COMPONENT && TAB_SCREENS.has(f.type as string)) {
+      if (propsOf(f)?.screenKey === selected) matches++
+      else out.push(f)
+    } else if (f.child) todo.push(f.child)
+  }
+  // A stale key (no tab, or two) says nothing about which tab is showing.
+  return matches === 1 ? out : []
+}
+
+const hasDom = (recs: Rec[]) =>
+  recs.some((r) => !!r.host.stateNode && 'getBoundingClientRect' in (r.host.stateNode as object))
+
 function hostAbove(host: Fiber): Fiber {
   let up = host.return
   while (up && up.tag !== HOST_COMPONENT) up = up.return
@@ -257,6 +285,44 @@ export function actionNamesOf(p: Props): string[] | null {
 
 /** Screen readers send `activate` on a double tap: a swipe-to-confirm with no onPress. */
 const activates = (rec: Found) => !!rec.actions && !!rec.element.actions?.includes('activate')
+
+const TEXT_HOSTS = /^RCT(Virtual)?Text$/
+
+const isControl = (p: Props) => isFn(p.onPress) || isFn(p.onValueChange) || activatesProps(p)
+const activatesProps = (p: Props) => !!actionNamesOf(p)?.includes('activate')
+
+/**
+ * Whether the control wraps an input, or two or more other controls (a card
+ * has at most one action). The control's own wrapper chain (Button over
+ * Pressable over View) counts once, and so does each nested control's; inline
+ * `<Text onPress>` links don't count.
+ */
+function wrapsControls(rec: Rec): boolean {
+  const skip = new Set<Fiber>()
+  const markChain = (from: Fiber) => {
+    for (let f: Fiber | null = from; f; f = f.child) {
+      skip.add(f)
+      if (f.tag === HOST_COMPONENT) break
+    }
+  }
+  markChain(rec.fiber)
+  let controls = 0
+  const stack = rec.fiber.child ? [rec.fiber.child] : []
+  while (stack.length) {
+    const f = stack.pop() as Fiber
+    if (f.sibling) stack.push(f.sibling)
+    if (f.child) stack.push(f.child)
+    const p = propsOf(f)
+    if (!p || skip.has(f)) continue
+    if (isInputProps(p)) return true
+    if (!isControl(p)) continue
+    const own = firstHost(f)
+    if (isFn(p.onPress) && !isFn(p.onValueChange) && own && TEXT_HOSTS.test(String(own.type))) continue
+    markChain(f)
+    if (++controls >= 2) return true
+  }
+  return false
+}
 
 const interesting = (p: Props) =>
   isFn(p.onPress) ||
@@ -451,7 +517,7 @@ function absorbChain(rec: Rec, fiber: Fiber, host: Fiber) {
 export function collectScreen(
   roots: Fiber[],
   window: Window,
-): { found: Found[]; scrollables: Scrollable[] } {
+): { found: Found[]; scrollables: Scrollable[]; unmeasured: boolean } {
   const byHost = new Map<Fiber, Rec>()
   const order: Rec[] = []
   const scrollByHost = new Map<Fiber, Scrollable>()
@@ -493,8 +559,16 @@ export function collectScreen(
   }
 
   // Buttons own the text beneath them; inputs don't (a field's label stays text).
+  // A pressable that wraps inputs or other controls is a layout wrapper (tap to
+  // dismiss the keyboard), not a button: its loose text stays text.
+  const wrapper = new Map<Rec, boolean>()
   const buttonOf = (rec: Rec | null) => {
-    for (let r = rec; r; r = r.parent) if (r.press || activates(r)) return r
+    for (let r = rec; r; r = r.parent)
+      if (r.press || activates(r)) {
+        let wraps = wrapper.get(r)
+        if (wraps === undefined) wrapper.set(r, (wraps = wrapsControls(r)))
+        return wraps ? null : r
+      }
     return null
   }
 
@@ -541,6 +615,8 @@ export function collectScreen(
         for (const s of screens.covered) covered.add(s)
         for (const s of screens.presented) presented.add(s)
       }
+      if (OLD_TAB_SCREENS.has(fiber.type as string) && p?.isFocused === false) hidden = true
+      if (TABS_HOSTS.has(fiber.type as string)) for (const s of unselectedTabs(fiber)) covered.add(s)
       if (fiber.type === OVERLAY_HOST) overlay = true
       if (p && !hidden && (p.accessibilityRole ?? p.role) === 'tablist') bars.push(fiber)
       // A presented native modal covers the window like an RN Modal, tab bar
@@ -602,6 +678,7 @@ export function collectScreen(
   for (const scrollable of scrollByHost.values())
     scrollable.hidden ||= covers(scrollable)
 
+  let measured = false
   for (const rec of order) {
     const e = rec.element
     rec.hidden ||= covers(rec)
@@ -621,6 +698,7 @@ export function collectScreen(
           : 'view'
     if (e.kind === 'input' && e.editable === undefined) e.editable = true
     const rect = measureHost(rec.host)
+    if (rect) measured = true
     e.rect = round(rect)
     // A ScrollView's own testID lands on its host, and the content container is
     // part of it: both scroll that scrollable, not the one around it.
@@ -628,6 +706,11 @@ export function collectScreen(
     if (own) rec.scroller = own
     rec.onScreen = isOnScreen(rec, rect, window, bars)
   }
+  const unmeasured =
+    order.length > 0 &&
+    !measured &&
+    !hasDom(order) &&
+    !(globalThis as { nativeFabricUIManager?: unknown }).nativeFabricUIManager
   // A text-only element whose glyphs were all icons has nothing to show.
   // A WebView's props reach a wrapper component and the native host under it,
   // which are two hosts for one element: keep the outermost.
@@ -645,8 +728,14 @@ export function collectScreen(
         (rec.element.kind !== 'text' || rec.element.text !== undefined) && single(rec),
     ),
     scrollables: [...scrollByHost.values()],
+    unmeasured,
   }
 }
+
+// Without Fabric's UIManager nothing can be measured, so everything would
+// silently read as off screen.
+export const UNMEASURED_ERROR =
+  "No Fabric UIManager found (React Native's old architecture, or a test renderer), so elements can't be measured. agent-bridge screen tools need the New Architecture."
 
 export const collectElements = (roots: Fiber[], window: Window): Found[] =>
   collectScreen(roots, window).found
@@ -660,14 +749,18 @@ export type PressVia = 'onPress' | 'accessibilityAction'
  * The fiber `press` should call and how: the element's own `onPress`, else its
  * `activate` accessibility action, else the nearest ancestor with either.
  */
-export function pressFiberOf(found: Found): { fiber: Fiber; via: PressVia } | null {
-  if (found.press) return { fiber: found.press, via: 'onPress' }
-  if (activates(found)) return { fiber: found.actions as Fiber, via: 'accessibilityAction' }
+export function pressFiberOf(
+  found: Found,
+): { fiber: Fiber; via: PressVia; ancestor: boolean } | null {
+  if (found.press) return { fiber: found.press, via: 'onPress', ancestor: false }
+  if (activates(found))
+    return { fiber: found.actions as Fiber, via: 'accessibilityAction', ancestor: false }
   for (let f = found.fiber.return; f; f = f.return) {
     const p = propsOf(f)
     if (!p) continue
-    if (isFn(p.onPress)) return { fiber: f, via: 'onPress' }
-    if (actionNamesOf(p)?.includes('activate')) return { fiber: f, via: 'accessibilityAction' }
+    if (isFn(p.onPress)) return { fiber: f, via: 'onPress', ancestor: true }
+    if (actionNamesOf(p)?.includes('activate'))
+      return { fiber: f, via: 'accessibilityAction', ancestor: true }
   }
   return null
 }

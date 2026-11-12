@@ -9,7 +9,15 @@ import {
   type SessionResponse,
   encodeLine,
 } from './protocol'
-import { type SessionState, pickSession } from './state'
+import { type SessionState, pickSession, projectRoot } from './state'
+
+/** The socket to a session closed or never opened (not an error the app or the session reported). */
+export class SessionLinkError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SessionLinkError'
+  }
+}
 
 type Link = {
   request: (req: Omit<SessionRequest, 'id'>) => Promise<SessionResponse>
@@ -30,7 +38,7 @@ export function openSessionLink(state: SessionState): Promise<Link> {
         request: (req) =>
           new Promise((done, fail) => {
             if (socket.destroyed || socket.writableEnded) {
-              fail(new Error(gone))
+              fail(new SessionLinkError(gone))
               return
             }
             const id = ++seq
@@ -43,13 +51,13 @@ export function openSessionLink(state: SessionState): Promise<Link> {
     socket.on('error', (error) => {
       if (!open)
         reject(
-          new Error(
+          new SessionLinkError(
             `Session "${state.name}" isn't answering on ${state.socket}: ${error.message}`,
           ),
         )
     })
     socket.on('close', () => {
-      for (const [id, done] of waiting) done({ id, error: gone })
+      for (const [id, done] of waiting) done({ id, error: gone, linkLost: true })
       waiting.clear()
     })
     createInterface({ input: socket }).on('line', (line) => {
@@ -95,10 +103,20 @@ export async function connectSession(
     device: options.device,
     transport: options.transport,
   })
-  if (!state)
+  if (!state) {
+    const where = [
+      explicitMetro(options.metro) && `on Metro ${explicitMetro(options.metro)}`,
+      options.device && `on a device matching "${options.device}"`,
+      options.transport && options.transport !== 'auto' && `using ${options.transport}`,
+    ].filter(Boolean)
     throw new Error(
-      'No single session matches. Start one with `agent-bridge session start`, or name it.',
+      `No single session matches (looked for sessions ${
+        where.length
+          ? where.join(', ')
+          : `started in ${projectRoot()}, or in an app folder under it`
+      }). Start one with \`agent-bridge session start\`, or name it.`,
     )
+  }
   const link = await openSessionLink(state)
   const info = await link.request({ op: 'info' })
   if (info.error || !info.device || !info.transport) {
@@ -119,6 +137,7 @@ export async function connectSession(
     })
     if (res.error || !res.result) {
       const why = res.error ?? 'No result'
+      if (res.linkLost) throw new SessionLinkError(why)
       // Keep the notice: the reload is often why the call failed.
       throw res.notice
         ? new AgentBridgeCallError(tool, why, [], res.notice)

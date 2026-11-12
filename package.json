@@ -38,6 +38,14 @@
       "types": "./dist/adapters/zustand.d.cts",
       "default": "./entries/zustand.cjs"
     },
+    "./redux": {
+      "types": "./dist/adapters/redux.d.cts",
+      "default": "./entries/redux.cjs"
+    },
+    "./jotai": {
+      "types": "./dist/adapters/jotai.d.cts",
+      "default": "./entries/jotai.cjs"
+    },
     "./react-native-mmkv": {
       "types": "./dist/adapters/react-native-mmkv.d.cts",
       "default": "./entries/react-native-mmkv.cjs"
@@ -45,6 +53,10 @@
     "./expo-router": {
       "types": "./dist/adapters/expo-router.d.cts",
       "default": "./entries/expo-router.cjs"
+    },
+    "./react-navigation": {
+      "types": "./dist/adapters/react-navigation.d.cts",
+      "default": "./entries/react-navigation.cjs"
     },
     "./react-native-webview": {
       "types": "./dist/adapters/react-native-webview.d.cts",
@@ -65,6 +77,18 @@
     "./socket.io": {
       "types": "./dist/adapters/socket-io.d.cts",
       "default": "./entries/socket.io.cjs"
+    },
+    "./async-storage": {
+      "types": "./dist/adapters/async-storage.d.cts",
+      "default": "./entries/async-storage.cjs"
+    },
+    "./secure-store": {
+      "types": "./dist/adapters/secure-store.d.cts",
+      "default": "./entries/secure-store.cjs"
+    },
+    "./device": {
+      "types": "./dist/adapters/device.d.cts",
+      "default": "./entries/device.cjs"
     },
     "./client": {
       "types": "./dist/client/index.d.ts",
@@ -92,7 +116,11 @@
     "cdp",
     "tanstack-query",
     "zustand",
+    "redux",
+    "jotai",
     "mmkv",
+    "async-storage",
+    "secure-store",
     "realtime",
     "ably",
     "socket.io",
@@ -135,12 +163,15 @@
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
     "@expo/devtools": "^57.0.1",
+    "@reduxjs/toolkit": "^2.14.0",
     "@tanstack/query-core": "^5.90.0",
     "@types/bun": "^1.4.2",
     "@types/react": "^19.3.0",
     "@types/ws": "^8.18.1",
     "ably": "^2.29.0",
     "happy-dom": "^20.14.5",
+    "jotai": "^3.0.2",
+    "redux-persist": "^6.0.0",
     "socket.io-client": "^4.8.4",
     "tsup": "^8.5.1",
     "typescript": "~6.0.3",

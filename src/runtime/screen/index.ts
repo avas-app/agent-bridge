@@ -4,6 +4,7 @@ import type { Fiber } from '../find-text-core'
 import { fillInput, pressElement } from './actions'
 import {
   collectScreen,
+  UNMEASURED_ERROR,
   focused,
   type Found,
   type Scrollable,
@@ -37,7 +38,12 @@ export function createScreen(env: {
   roots: () => Fiber[]
   window: () => Window
 }) {
-  const collectAll = () => collectScreen(env.roots(), env.window())
+  const collectLoose = () => collectScreen(env.roots(), env.window())
+  const collectAll = () => {
+    const all = collectLoose()
+    if (all.unmeasured) throw new Error(UNMEASURED_ERROR)
+    return all
+  }
   const collect = () => collectAll().found
 
   // Right after a push the layout is still moving (the native header's height
@@ -128,7 +134,7 @@ export function createScreen(env: {
 
   return {
     snapshot(options: { all?: boolean } = {}): { elements: ScreenElement[]; hidden?: number } {
-      const found = collect()
+      const found = options.all ? collectLoose().found : collect()
       if (options.all)
         return {
           elements: found.map((f) => ({
@@ -144,21 +150,35 @@ export function createScreen(env: {
     },
 
     findText: (text: string, options?: FindTextOptions) =>
-      findText(collect(), text, options),
+      findText(collectLoose().found, text, options),
 
     async fill(
       target: Target,
       text: string,
-      options: { submit?: boolean; index?: number; scroll?: boolean } = {},
-    ): Promise<{ filled: string; element: ScreenElement }> {
+      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean } = {},
+    ): Promise<{ filled: string; element: ScreenElement; warning?: string }> {
       const found = await resolve(target, (f) => !!f.input, {
         index: options.index,
         afterText: true,
         scroll: options.scroll,
       })
-      const filled = fillInput(found, String(text), options)
+      const { filled, native } = await fillInput(found, String(text), {
+        ...options,
+        between: async () => void (await settle()),
+        again: reread,
+      })
       await settle()
-      return { filled, element: reread(found).element }
+      const element = reread(found).element
+      // An uncontrolled input has no value prop to read back: report what was written natively.
+      if (native === true) return { filled, element: { ...element, value: filled } }
+      if (native === false)
+        return {
+          filled,
+          element,
+          warning:
+            'the input has no value prop and its native text could not be set from here, so the field may not show the text',
+        }
+      return { filled, element }
     },
 
     async press(

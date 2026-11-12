@@ -31,6 +31,11 @@ export type BridgeFileInput = {
   /** Undefined when zustand isn't a dependency; empty when the scan found no store. */
   stores?: Imported[]
   mmkv?: Imported[]
+  asyncStorage?: boolean
+  secureStore?: boolean
+  /** @reduxjs/toolkit or redux is a dependency. */
+  redux?: boolean
+  jotai?: boolean
   realtime: RealtimeTodo[]
   /** Realtime tools the app already exports, wired live. */
   realtimeTools?: Imported[]
@@ -45,6 +50,14 @@ export const STORES_WHY =
   'stores often hold tokens: add `redact` for those paths before wiring them'
 export const MMKV_WHY =
   'MMKV often holds tokens and mmkv.get returns values as they are: wire only instances without secrets'
+export const ASYNC_STORAGE_WHY =
+  'AsyncStorage often holds tokens and asyncStorage.get returns values as they are: wire it only if it holds no secrets'
+export const SECURE_STORE_WHY =
+  'SecureStore holds secrets: secureStore.get hides values unless the agent asks for {full:true}, but secureStore.set can still overwrite them'
+export const REDUX_WHY =
+  'the Redux state often holds tokens: add `redact` for those slices and paths, and wrap the root reducer in bridgeReducer() (inside persistReducer) before wiring it'
+export const JOTAI_WHY =
+  'atoms often hold tokens: list only the atoms you want the agent to read and set, and add `redact` for secret ones'
 export const REALTIME_WHY =
   'the adapter must wrap the client where it is created, before the app subscribes'
 export const NETWORK_PROMPT =
@@ -94,6 +107,13 @@ export function renderBridgeFile(o: BridgeFileInput): string {
   }
   if (o.expoRouter) L.push(`import { router, useNavigationContainerRef } from 'expo-router'`)
   if (o.reactQuery) L.push(`import { useContext } from 'react'`)
+  if (o.reactNavigation)
+    L.push(
+      '',
+      '// Pass the ref you give to <NavigationContainer ref={…}>, then uncomment navTools below.',
+      `// import { navTools } from '@avasapp/agent-bridge/react-navigation'`,
+      `// import { navigationRef } from './path-to-your-navigation-ref'`,
+    )
   if (o.realtimeTools?.length)
     L.push('', ...o.realtimeTools.map((t) => `import { ${t.name} } from '${t.from}'`))
 
@@ -119,6 +139,48 @@ export function renderBridgeFile(o: BridgeFileInput): string {
       ...mmkv.map((m) => `// import { ${m.name} } from '${m.from}'`),
     )
   }
+  if (o.asyncStorage)
+    L.push(
+      '',
+      '// AsyncStorage is left out: it often holds tokens, and asyncStorage.get returns',
+      '// values as they are. Uncomment these and asyncStorageTools below if it holds none,',
+      '// passing the storage the app uses (a createAsyncStorage(name) instance, if it has one).',
+      `// See ${DOCS}/adapters.md`,
+      `// import { asyncStorageTools } from '@avasapp/agent-bridge/async-storage'`,
+      `// import AsyncStorage from '@react-native-async-storage/async-storage'`,
+    )
+  if (o.secureStore)
+    L.push(
+      '',
+      '// SecureStore is left out: it holds secrets. secureStore.get hides values unless',
+      '// the agent asks for {full:true}. Uncomment these and secureStoreTools below,',
+      '// passing the keys the app uses so secureStore.list can show them, and the same',
+      '// options the app passes to SecureStore (keychainService, requireAuthentication).',
+      `// See ${DOCS}/adapters.md`,
+      `// import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'`,
+      `// import * as SecureStore from 'expo-secure-store'`,
+    )
+  if (o.redux)
+    L.push(
+      '',
+      '// Redux is left out: the state often holds tokens. Add `redact` for those slices,',
+      '// wrap the root reducer in bridgeReducer() (inside persistReducer) where the store',
+      '// is created, then uncomment these and reduxTools below.',
+      `// See ${DOCS}/adapters.md`,
+      `// import { reduxTools } from '@avasapp/agent-bridge/redux'`,
+      `// import { store } from '../store'`,
+    )
+  if (o.jotai)
+    L.push(
+      '',
+      '// Jotai is left out: atoms often hold tokens. List the atoms the agent may read and',
+      '// set, add `redact` for secret ones, then uncomment these and jotaiTools below.',
+      '// Use the store your app uses: a <Provider> without a store prop has its own, out of reach here.',
+      `// See ${DOCS}/adapters.md`,
+      `// import { jotaiTools } from '@avasapp/agent-bridge/jotai'`,
+      `// import { getDefaultStore } from 'jotai'`,
+      `// import { userAtom } from '../atoms'`,
+    )
   for (const todo of o.realtime) {
     const r = REALTIME[todo.kind]
     L.push(
@@ -194,16 +256,17 @@ export function renderBridgeFile(o: BridgeFileInput): string {
     const mmkv = o.mmkv.length ? o.mmkv : [{ name: 'storage', from: '' }]
     L.push(`      // ...mmkvTools({ ${mmkv.map((m) => m.name).join(', ')} }),`)
   }
+  if (o.asyncStorage) L.push('      // ...asyncStorageTools(AsyncStorage),')
+  if (o.secureStore) L.push(`      // ...secureStoreTools(SecureStore, ['authToken']),`)
+  if (o.redux) L.push(`      // ...reduxTools(store, { redact: { auth: ['token'] } }),`)
+  if (o.jotai) L.push('      // ...jotaiTools(getDefaultStore(), { user: userAtom }),')
   if (o.realtime.length) L.push('      // ...realtimeDevTools,')
-  if (o.reactNavigation) {
-    const params = o.ts ? 'name: string, params?: object' : 'name, params'
+  if (o.reactNavigation)
     L.push(
-      '      // React Navigation has no adapter. With your container ref',
-      '      // (createNavigationContainerRef from @react-navigation/native), tools like these work:',
-      `      // 'nav.navigate': (${params}) => navigationRef.navigate(name, params),`,
-      `      // 'nav.current': () => navigationRef.getCurrentRoute(),`,
+      '      // React Navigation: uncomment this and the imports above, with the ref you pass to',
+      '      // <NavigationContainer ref={…}> (createNavigationContainerRef from @react-navigation/native).',
+      '      // ...navTools(navigationRef),',
     )
-  }
   L.push(
     `      // Your own tools: any function, JSON in and out, e.g. 'cart.clear': () => clearCart(),`,
     '    },',
