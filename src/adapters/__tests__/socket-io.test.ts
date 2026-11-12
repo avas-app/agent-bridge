@@ -186,7 +186,7 @@ describe('socketIoTools', () => {
     const { socket, tools, connect } = setup()
     connect()
     ;(socket as unknown as { packet: unknown }).packet = mock()
-    const payload = { token: 'abc-secret', user: { password: 'pw', name: 'Ann' }, big: 'x'.repeat(5000) }
+    const payload = { token: 'demo-secret', user: { password: 'pw', name: 'Ann' }, big: 'x'.repeat(5000) }
     socket.emit('authenticate', payload)
     payload.user.name = 'changed'
     const [shown] = run(tools, 'realtime.log') as { data: [Record<string, any>] }[]
@@ -194,6 +194,6 @@ describe('socketIoTools', () => {
     expect(shown!.data[0]!.user).toEqual({ password: '[redacted]', name: 'Ann' })
     expect(shown!.data[0]!.big.length).toBeLessThan(2100)
     const [full] = run(tools, 'realtime.log', { full: true }) as { data: [Record<string, any>] }[]
-    expect(full!.data[0]!.token).toBe('abc-secret')
+    expect(full!.data[0]!.token).toBe('demo-secret')
   })
 })

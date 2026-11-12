@@ -33,7 +33,7 @@ export const scenarios: Scenarios = {
       onUndo(strictNetwork())
       onUndo(mockApi(API_URL, { 'GET /me': { json: user } }, { delayMs: 200 }))
       // Through the tool, so store.restore signs out again.
-      await call('store.set', 'auth', { token: 'local-token', user })
+      await call('store.set', 'auth', { token: 'demo-local-token', user })
       return { user }
     },
   },

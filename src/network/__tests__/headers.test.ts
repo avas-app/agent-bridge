@@ -97,7 +97,7 @@ for (const kind of ['web', 'rn'] as const) {
 
 describe('redactHeaders', () => {
   const secrets: Record<string, string> = {
-    apikey: 'sb_publishable_0123456789abcdef',
+    apikey: 'sb_publishable_0123456789example',
     'x-auth-token': 'tok_live_0123456789abcdef',
     'x-amz-security-token': 'FwoGZXIvYXdzEBYaDExample0123456789',
     'x-access-token': 'ya29.a0AfH6SMExample0123456',

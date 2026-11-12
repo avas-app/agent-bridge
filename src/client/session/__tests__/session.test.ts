@@ -1466,14 +1466,14 @@ describe('restores across a reload', () => {
     cleanups.push(bridge.close)
 
     await bridge.call('mmkv.set', 'kv', 'token', 'fake')
-    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    await bridge.call('store.set', 'auth', { token: 'demo-store' })
 
     first.ws.close()
     const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
     cleanups.push(() => second.ws.close())
     // The new load booted on the fake values; nothing is undone yet.
     expect(disk.get('kv:token')).toBe('fake')
-    expect(disk.get('auth')).toBe('fake-store')
+    expect(disk.get('auth')).toBe('demo-store')
 
     const next = await bridge.timed('bridge.pending')
     expect(next.notice).toContain('kept 2 undos across the reload')
@@ -1493,7 +1493,7 @@ describe('restores across a reload', () => {
       const store = createStore<{ token: string; seen: Set<string>; bump: () => void }>()((set) => ({
         token: disk.get('auth') ?? 'real-store',
         seen: new Set(['a']),
-        bump: () => set({ token: 'fake-store', seen: new Set(['b']) }),
+        bump: () => set({ token: 'demo-store', seen: new Set(['b']) }),
       }))
       store.subscribe((s) => void disk.set('auth', s.token))
       ;(store as unknown as { persist: unknown }).persist = { getOptions: () => ({}), hasHydrated: () => true }
@@ -1746,7 +1746,7 @@ describe('restores across a reload', () => {
     cleanups.push(() => daemon.stop(true))
     const bridge = await connectSession({ name: 'rl-late', timeoutMs: 8000 })
     cleanups.push(bridge.close)
-    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    await bridge.call('store.set', 'auth', { token: 'demo-store' })
     first.ws.close()
     const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
     cleanups.push(() => second.ws.close())
@@ -1767,7 +1767,7 @@ describe('restores across a reload', () => {
     cleanups.push(() => daemon.stop(true))
     const bridge = await connectSession({ name: 'rl-mid', timeoutMs: 8000 })
     cleanups.push(bridge.close)
-    await bridge.call('store.set', 'auth', { token: 'fake-store' })
+    await bridge.call('store.set', 'auth', { token: 'demo-store' })
     first.ws.close()
     const second = await fakeApp(metro.metro, 'dev-2', { ...opts, loadId: 'load-2' })
     cleanups.push(() => second.ws.close())
