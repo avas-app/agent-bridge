@@ -23,7 +23,37 @@ export type ToolDefinition =
        * call it bare, so build the detail only when asked.
        */
       pending?: (options?: { detail?: boolean }) => unknown
+      /**
+       * On a `*.restore` tool: what it could undo that lives in persistent
+       * storage (so it outlives a reload), as JSON, or undefined. A session
+       * keeps it, and hands it to `adopt` after the app reloads.
+       */
+      journal?: () => unknown
+      /**
+       * Takes what `journal` returned before a reload and re-arms the undo for
+       * it in the new load, without changing the app. Returns an
+       * `AdoptResult`.
+       */
+      adopt?: (data: unknown) => unknown
+      /** Goes up when `journal` may have changed. Not shared state: keep it in the adapter's own module. */
+      journalRev?: () => number
     }
+
+/** What `adopt` reports. `retry` is the part of the journal to offer again (the area was not ready). */
+export type AdoptResult = {
+  adopted: string[]
+  already: string[]
+  changed: string[]
+  retry?: unknown
+  /** Why `retry` is not ready. */
+  error?: string
+  /** Entries that were not the expected shape and were dropped. */
+  invalid?: string[]
+  /** Entries left alone because they belong to another storage instance than the one now registered. */
+  skipped?: string[]
+  /** Values that do not survive a JSON round trip, so the journal could not keep them. */
+  notKept?: string[]
+}
 
 /** Tools by name. Namespace them with a dot, e.g. `query.pin`. */
 export type Tools = Record<string, ToolDefinition>

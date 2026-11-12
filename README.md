@@ -92,7 +92,7 @@ npx @avasapp/agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the 
 npx @avasapp/agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
 
-Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is slower and can print npm warnings into their output. See [the CLI](docs/cli.md) for flows, batch mode, the REPL, sessions and the `connect()` client.
+Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is slower and can print npm warnings into their output. See [the CLI](docs/cli.md) for flows, batch mode, the REPL, sessions and the `connect()` client. Agents that prefer MCP tools to a shell can run `agent-bridge mcp`; see [the MCP server](docs/cli.md#mcp-server).
 
 No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
 
@@ -104,6 +104,7 @@ No device tool is needed. Pair one (such as agent-device) with the bridge for wh
 - [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, Expo Router, React Navigation, network
 - [WebViews](docs/webviews.md)
 - [Realtime](docs/realtime.md): Ably, socket.io, any other library
+- [Device events](docs/device-events.md): deep links, app state, offline, push notifications, the clock
 - [Security and release builds](docs/security.md)
 - [Benchmarks](docs/benchmarks.md)
 

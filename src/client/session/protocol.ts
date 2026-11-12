@@ -21,6 +21,8 @@ export type SessionResponse = {
   id: number
   /** A daemon-side failure (the app is gone, bad request). Tool errors come in `result`. */
   error?: string
+  /** Set by the client when the socket closed before the daemon answered. Never sent. */
+  linkLost?: boolean
   /** call: the app's ResultMessage, unchanged, so extra fields pass through. */
   result?: ResultMessage
   /** call: round trip from the daemon to the app, in ms. */
