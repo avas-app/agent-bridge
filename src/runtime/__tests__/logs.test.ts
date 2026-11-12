@@ -248,9 +248,10 @@ describe('registry with logs', () => {
 
     capture.record('error', ['from a timer'])
     const ping = await registry.dispatch({ id: '2', tool: 'bridge.ping' }, 'dev')
-    expect(ping.logs).toMatchObject([{ message: 'from a timer', after: 'app.logError' }])
-
-    expect(await registry.dispatch({ id: '3', tool: 'app.warn' }, 'dev')).not.toHaveProperty('logs')
+    // The ping leaves the error, and the tool it followed, for the next real call.
+    expect(ping).not.toHaveProperty('logs')
+    const warned = await registry.dispatch({ id: '3', tool: 'app.warn' }, 'dev')
+    expect(warned.logs).toMatchObject([{ message: 'from a timer', after: 'app.logError' }])
     const failed = await registry.dispatch({ id: '4', tool: 'app.fail' }, 'dev')
     expect(failed).toMatchObject({ ok: false, logs: [{ message: 'about to fail', during: 'app.fail' }] })
   })

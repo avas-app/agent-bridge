@@ -78,6 +78,10 @@
       "types": "./dist/adapters/secure-store.d.cts",
       "default": "./entries/secure-store.cjs"
     },
+    "./device": {
+      "types": "./dist/adapters/device.d.cts",
+      "default": "./entries/device.cjs"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js",

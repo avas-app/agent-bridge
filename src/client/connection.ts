@@ -1,6 +1,6 @@
 import WebSocket from 'ws'
 
-import type { DeviceInfo, ResultMessage } from '../shared/protocol'
+import type { CallMessage, DeviceInfo, ResultMessage } from '../shared/protocol'
 
 export type TransportName = 'expo' | 'cdp'
 
@@ -23,6 +23,7 @@ export type Connection = {
     tool: string,
     args: unknown[],
     timeoutMs: number,
+    extra?: Pick<CallMessage, 'journalAck' | 'journalKey'>,
   ) => Promise<ResultMessage>
   close: () => void
 }

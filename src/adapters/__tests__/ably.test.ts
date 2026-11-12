@@ -199,4 +199,23 @@ describe('ablyTools', () => {
     expect(changes).toHaveBeenLastCalledWith(expect.objectContaining({ previous: 'disconnected', current: 'connecting' }))
     expect(() => run(tools, 'realtime.connection', 'offline')).toThrow('Known: initialized, connecting')
   })
+
+  test('logs what the app publishes in each call form, and still publishes', () => {
+    const publish = mock()
+    const chat = { name: 'chat', subscribe: () => {}, unsubscribe: () => {}, publish }
+    const client = { channels: { get: () => chat } }
+    const tools = ablyTools(client as never)
+    const channel = client.channels.get() as typeof chat
+
+    channel.publish('typing', { user: 'sam' })
+    channel.publish({ name: 'message', data: 'hi', id: 'm1' })
+    channel.publish([{ name: 'a', data: 1 }, { name: 'b', data: 2 }])
+
+    expect(publish).toHaveBeenCalledTimes(3)
+    expect((run(tools, 'realtime.log', { channel: 'chat' }) as unknown[]).reverse()).toEqual([
+      expect.objectContaining({ event: 'typing', data: { user: 'sam' }, sent: true }),
+      expect.objectContaining({ event: 'message', data: 'hi', id: 'm1', sent: true }),
+      expect.objectContaining({ data: [{ event: 'a', data: 1 }, { event: 'b', data: 2 }], sent: true }),
+    ])
+  })
 })
