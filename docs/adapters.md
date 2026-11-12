@@ -18,6 +18,8 @@ A pin keeps seeded data in place through refetches until you unpin it. `net.mock
 
 `net.waitFor(match, { timeoutMs?, status?, sinceId? })` waits for a request that matches the same way to finish and returns its entry. Requests already in the log count, so pass `sinceId` (an id from `net.log`) to ignore older ones. Body and graphql matches need the logged request body (JSON up to 1 MB; a Request object's body is logged only when a mock read it). `networkTools({ logSize })` sets how many requests the log keeps (default 100).
 
+`router.navigate`, `push` and `replace` need the navigation container to wait for the new screen. They then return the route the app ended on, an object like `router.current`'s (not the href string they used to return), throw if it landed on `+not-found`, and add a `warning` when the route is not the href: a different path, or a `?key=value` of the href missing from the route's params (a redirect, or nothing happened). Before the container has mounted they return `{href, warning}`.
+
 **Modals.** `router.back` pops the navigator and knows nothing about modals or sheets your app renders itself, so it can pop the screen under an open one. `router.dismiss` and `router.dismissAll` close route-based modals. For app-rendered modals there is no reliable way to press hardware back from JS (iOS has no back button, and Android's `BackHandler` cannot be fired from outside), so register a tool with your own modal system and let the agent call it:
 
 ```ts

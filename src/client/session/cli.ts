@@ -36,13 +36,17 @@ export type SessionFlags = {
 }
 
 /** The session `call`, `tools`, `repl` and `run` should go through, or null to connect directly. */
-export function sessionFor(flags: SessionFlags): SessionState | null {
+export function sessionFor(
+  flags: SessionFlags,
+  skip?: (session: SessionState) => boolean,
+): SessionState | null {
   if (flags['no-session']) return null
   return pickSession({
     name: flags.session ?? process.env.AGENT_BRIDGE_SESSION,
     metro: explicitMetro(flags.metro),
     device: flags.device,
     transport: flags.transport,
+    skip,
   })
 }
 

@@ -1,3 +1,4 @@
+import { settle as settleScreen } from '../runtime/screen/settle'
 import type { Tools } from '../runtime/types'
 
 // `href` is `never` so any router fits: with typed routes on, expo-router
@@ -158,6 +159,26 @@ function settle(navigation: NavigationLike, go: () => void): Promise<void> {
   })
 }
 
+// The pathname an absolute href should end on; null for relative hrefs, which depend on where the app is.
+function targetPath(href: string): string | null {
+  if (!href.startsWith('/')) return null
+  const path = href.split(/[?#]/)[0] as string
+  const segments = path
+    .split('/')
+    .filter((s) => s && !isGroup(s))
+  if (segments.at(-1) === 'index') segments.pop()
+  return `/${segments.map(decode).join('/')}`
+}
+
+// Whether every `?key=value` of the href is among the route's params.
+function carriesQuery(href: string, params: Record<string, unknown>): boolean {
+  const query = href.split('#')[0]?.split('?')[1]
+  if (!query) return true
+  for (const [key, value] of new URLSearchParams(query))
+    if (!([params[key]].flat() as unknown[]).some((v) => String(v) === value)) return false
+  return true
+}
+
 function needDismiss<F>(fn: F | undefined): F {
   if (!fn)
     throw new Error(
@@ -174,19 +195,47 @@ export function routerTools(router: RouterLike, options: RouterToolsOptions = {}
   const { navigation } = options
   const go = (fn: () => void, value: unknown) =>
     navigation ? settle(navigation, fn).then(() => value) : (fn(), value)
+  const read = (nav: NavigationLike): CurrentRoute => ({
+    ...routeFromState(nav.getRootState() as StateLike | undefined),
+    canGoBack: router.canGoBack(),
+  })
+  // Resolves once the new screen has rendered, with the route it ended on.
+  const goTo = (fn: () => void, href: string) =>
+    navigation ? settle(navigation, fn).then(() => settleScreen()).then(() => landed(navigation, href)) : (fn(), href)
+  const landed = (navigation: NavigationLike, href: string) => {
+    if (navigation.isReady && !navigation.isReady())
+      return {
+        href,
+        warning: 'The navigation container has not mounted yet, so the route the app ended on could not be read.',
+      }
+    const route = read(navigation)
+    const onNotFound = route.segments.includes(NOT_FOUND)
+    if (onNotFound && !href.includes(NOT_FOUND))
+      throw new Error(
+        `${href} matched no route: the app is on +not-found (${route.pathname}). Check the href against the app's routes.`,
+      )
+    const want = targetPath(href)
+    if (want !== null && (want !== route.pathname || !carriesQuery(href, route.params)))
+      return {
+        ...route,
+        warning: `asked for ${href} but the app is on ${route.href}; it may have redirected, or the navigation did not run`,
+      }
+    return route
+  }
 
   return {
     'router.navigate': {
-      description: 'Go to a route, reusing it if it is already in the stack.',
-      run: (href: string) => go(() => router.navigate(href as never), href),
+      description:
+        'Go to a route, reusing it if it is already in the stack. With the navigation container it returns the route it ended on as an object (with a `warning` if that is not the href, path or query) and throws on +not-found.',
+      run: (href: string) => goTo(() => router.navigate(href as never), href),
     },
     'router.push': {
       description: 'Push a route.',
-      run: (href: string) => go(() => router.push(href as never), href),
+      run: (href: string) => goTo(() => router.push(href as never), href),
     },
     'router.replace': {
       description: 'Replace the current route.',
-      run: (href: string) => go(() => router.replace(href as never), href),
+      run: (href: string) => goTo(() => router.replace(href as never), href),
     },
     'router.back': {
       description:
@@ -221,8 +270,7 @@ export function routerTools(router: RouterLike, options: RouterToolsOptions = {}
           )
         if (navigation.isReady && !navigation.isReady())
           throw new Error('The navigation container has not mounted yet.')
-        const state = navigation.getRootState() as StateLike | undefined
-        return { ...routeFromState(state), canGoBack: router.canGoBack() }
+        return read(navigation)
       },
     },
   }
