@@ -9,6 +9,8 @@ export function withCompactSnapshot(tool: string, args: unknown[], json = false)
   if (options !== undefined && (options === null || typeof options !== 'object' || Array.isArray(options)))
     return args
   const given = (options ?? {}) as Record<string, unknown>
+  if (given.format === 'text' && json)
+    throw new Error('--json and {"format":"text"} ask for different formats; drop one')
   if (given.format !== undefined) return args
   return [{ ...given, format: json ? 'json' : 'text' }]
 }

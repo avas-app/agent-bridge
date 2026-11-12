@@ -102,17 +102,18 @@ const isAt = (target: Target) => typeof target === 'object' && target.at !== und
 export const indexOf = (target: Target) =>
   typeof target === 'object' ? target.index : undefined
 
-
 /** One line an agent can read, e.g. `button #save-plant "Save plant"`. */
-export function describe(e: ScreenElement, max = 40): string {
+export function describe(e: ScreenElement, max = 40, wholeIds = false): string {
   const clip = (s: string) => (s.length > max ? `${s.slice(0, max - 1)}…` : s)
+  // Labels and placeholders match a target exactly, so a snapshot must not cut them.
+  const id = (s: string) => (wholeIds ? s : clip(s))
   const stated = e.checked !== undefined || e.selected !== undefined || e.expanded !== undefined
   const bits: string[] = [stated && e.role ? e.role : e.kind]
   if (e.webview !== undefined) bits.push(JSON.stringify(e.webview))
   if (e.testID) bits.push(`#${e.testID}`)
   if (e.text) bits.push(JSON.stringify(clip(e.text)))
-  if (e.label && e.label !== e.text) bits.push(`label=${JSON.stringify(clip(e.label))}`)
-  if (e.placeholder) bits.push(`placeholder=${JSON.stringify(clip(e.placeholder))}`)
+  if (e.label && e.label !== e.text) bits.push(`label=${JSON.stringify(id(e.label))}`)
+  if (e.placeholder) bits.push(`placeholder=${JSON.stringify(id(e.placeholder))}`)
   if (e.value !== undefined) bits.push(`value=${JSON.stringify(clip(e.value))}`)
   if (e.checked !== undefined) bits.push(e.checked === true ? 'checked' : e.checked === false ? 'unchecked' : 'mixed')
   if (e.selected !== undefined) bits.push(e.selected ? 'selected' : 'unselected')

@@ -39,9 +39,9 @@ import {
   pagingList,
   wait,
 } from './scroll'
-import { ELEMENT_KINDS, insideRect, snapshotText } from './snapshot-text'
+import { ELEMENT_KINDS, snapshotText, underScope } from './snapshot-text'
 import { settle } from './settle'
-import { describe, indexOf, matchTarget, resolveTarget, type Target } from './targets'
+import { describe, indexOf, matchTarget, resolveTarget, showTarget, type Target } from './targets'
 import { type WaitForOptions, waitForTarget } from './wait-for'
 
 export type { ScreenElement } from './elements'
@@ -53,8 +53,21 @@ export type SnapshotOptions = {
   format?: 'json' | 'text'
   /** Only these kinds of element. */
   kinds?: ElementKind[]
-  /** Only elements inside this target's rect. */
+  /** Only elements under this target in the tree. */
   within?: Target
+}
+
+function snapshotKinds(kinds: unknown): ElementKind[] {
+  if (kinds === undefined) return []
+  const list = typeof kinds === 'string' ? [kinds] : kinds
+  if (!Array.isArray(list))
+    throw new Error(`screen.snapshot kinds is a list like ["button","input"], not ${JSON.stringify(kinds)}`)
+  for (const k of list)
+    if (!ELEMENT_KINDS.includes(k))
+      throw new Error(
+        `screen.snapshot kinds are ${ELEMENT_KINDS.join(', ')}; ${JSON.stringify(k)} is not one (a line that starts with switch, checkbox, tab or another role is a button: ask for "button")`,
+      )
+  return list
 }
 
 export function createScreen(env: {
@@ -342,42 +355,88 @@ export function createScreen(env: {
 
   const settleOn = async (found: Found) => (found.onScreen ? found : reveal(found))
 
+  const build = (options: SnapshotOptions) => {
+    const { all, format, within } = options
+    if (format !== undefined && format !== 'json' && format !== 'text')
+      throw new Error(`screen.snapshot format is "json" or "text", not ${JSON.stringify(format)}`)
+    const kinds = snapshotKinds(options.kinds)
+    const found = all ? collectLoose().found : collect()
+    let pool: Found[]
+    let hidden: number | undefined
+    if (all) {
+      pool = found
+    } else {
+      const shown = focused(found)
+      pool = shown.filter((f) => f.onScreen)
+      hidden = found.length - shown.length || undefined
+    }
+    let items = pool.map((f) => ({
+      found: f,
+      element: all
+        ? { ...f.element, onScreen: f.onScreen, ...(f.hidden && { hidden: true }) }
+        : f.element,
+    }))
+    let scoped = ''
+    if (within !== undefined) {
+      const scope = scopeOf(found, within, !!all)
+      if (!scope.element.rect)
+        throw new Error(`${describe(scope.element)} has no position, so it can't scope a snapshot`)
+      scoped = describe(scope.element)
+      items = items.filter((i) => i.found !== scope && underScope(i.found, scope))
+    }
+    if (kinds.length) items = items.filter((i) => kinds.includes(i.element.kind))
+    const empty =
+      kinds.length || scoped
+        ? `(no ${kinds.length ? kinds.join('/') : ''} elements${scoped ? ` inside ${scoped}` : ''})`.replace('(no  ', '(no ')
+        : undefined
+    return {
+      hidden,
+      empty,
+      items: items.map((i) => ({ element: i.element, index: matchIndex(pool, i.found) })),
+    }
+  }
+
+  /** The `index` that picks `f` when a target names it by its testID, label, placeholder or text. */
+  const matchIndex = (pool: Found[], f: Found): number | undefined => {
+    const e = f.element
+    const name = e.testID ?? e.label ?? e.placeholder ?? e.text
+    if (!name) return undefined
+    const at = matchTarget(pool, name).indexOf(f)
+    return at < 0 ? undefined : at
+  }
+
+  const scopeOf = (found: Found[], within: Target, all: boolean): Found => {
+    const ranged = indexOf(within) !== undefined
+    if (!ranged) {
+      const matches = matchTarget(found.filter((f) => !f.hidden && (all || f.onScreen)), within)
+      if (matches.length > 1) {
+        const first = matches[0]!.element
+        const fix =
+          typeof within === 'string'
+            ? {
+                [first.testID === within ? 'testID' : first.label === within ? 'label' : first.placeholder === within ? 'placeholder' : 'text']: within,
+                index: 1,
+              }
+            : { ...within, index: 1 }
+        throw new Error(
+          `within ${showTarget(within)} matches ${matches.length} elements; pick one with ${JSON.stringify({ within: fix })}`,
+        )
+      }
+    }
+    return resolveTarget(found, within, undefined, { offscreen: all })
+  }
+
   return {
     snapshot(options: SnapshotOptions = {}): { elements: ScreenElement[]; hidden?: number } {
-      const { all, format, kinds, within } = options
-      if (format !== undefined && format !== 'json' && format !== 'text')
-        throw new Error(`screen.snapshot format is "json" or "text", not ${JSON.stringify(format)}`)
-      for (const k of kinds ?? [])
-        if (!ELEMENT_KINDS.includes(k))
-          throw new Error(`screen.snapshot kinds are ${ELEMENT_KINDS.join(', ')}; ${JSON.stringify(k)} is not one`)
-      const found = all ? collectLoose().found : collect()
-      let elements: ScreenElement[]
-      let hidden: number | undefined
-      if (all) {
-        elements = found.map((f) => ({
-          ...f.element,
-          onScreen: f.onScreen,
-          ...(f.hidden && { hidden: true }),
-        }))
-      } else {
-        const shown = focused(found)
-        elements = shown.filter((f) => f.onScreen).map((f) => f.element)
-        hidden = found.length - shown.length || undefined
-      }
-      if (within !== undefined) {
-        const scope = resolveTarget(found, within, undefined, { offscreen: all }).element
-        const box = scope.rect
-        if (!box) throw new Error(`${describe(scope)} has no position, so it can't scope a snapshot`)
-        elements = elements.filter((e) => e.rect !== box && insideRect(e, box))
-      }
-      if (kinds?.length) elements = elements.filter((e) => kinds.includes(e.kind))
+      const { items, hidden } = build(options)
+      const elements = items.map((i) => i.element)
       return hidden ? { elements, hidden } : { elements }
     },
 
     /** `snapshot` as one line per element. */
     snapshotText(options: SnapshotOptions = {}): string {
-      const { elements, hidden } = this.snapshot(options)
-      return snapshotText(elements, hidden)
+      const { items, hidden, empty } = build(options)
+      return snapshotText(items, hidden, empty)
     },
 
     findText: (text: string, options?: FindTextOptions) =>

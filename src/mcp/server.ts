@@ -113,7 +113,7 @@ async function resultContent(
 ): Promise<Content[]> {
   const image = withImage(tool, value)
   if (image) return image
-  if (isSnapshotText(tool, value) && (full || value.length <= OUTPUT_LIMIT_BYTES)) return [text(value)]
+  if (isSnapshotText(tool, value) && (full || Buffer.byteLength(value) <= OUTPUT_LIMIT_BYTES)) return [text(value)]
   const shaped = await shapedResult(value, { full })
   const json = JSON.stringify(shaped, null, 2) ?? 'null'
   if (

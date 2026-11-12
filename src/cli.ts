@@ -20,7 +20,7 @@ import { parseCallArgv, readArgFile, runBatch } from './client/batch'
 import { metroHost } from './client/discover'
 import { logLine } from './client/log-lines'
 import { assertListening, noAppHint } from './client/metro-hint'
-import { renderResult } from './client/output'
+import { renderResult, renderText } from './client/output'
 import { isSnapshotText, withCompactSnapshot } from './client/snapshot-format'
 import { DEFAULT_HISTORY_FILE, runRepl } from './client/repl'
 import {
@@ -78,7 +78,7 @@ Options
                          run: the report file (with --reporter json|junit)
   --stop-on-error        call --batch: stop after the first failed call
   --full                 call: print results over 32 KB instead of a summary
-  --json                 call screen.snapshot: print JSON with rects, not one line per element
+  --json                 call screen.snapshot: print JSON with rects, not one line per element (call --batch and repl stay JSON)
                          (--out also writes JSON)
   --strict               run: fail a flow if the app logged an error
   --bail                 run: stop at the first failed flow
@@ -255,7 +255,7 @@ async function main() {
           })
         console.log(
           isSnapshotText(tool, value)
-            ? value
+            ? await renderText(value, { out: values.out, full: values.full })
             : await renderResult(value, { out: values.out, full: values.full }),
         )
         for (const e of logs) console.error(logLine(e))

@@ -80,7 +80,7 @@ On an error it prints `{ ok: false, error, workspaces? }` and exits 1. With `--d
 
 ## Big results and arguments
 
-`call screen.snapshot` prints one line per element (`button #save "Save plant" disabled`) instead of JSON with a rect for each, to keep the output short. `--json` (or `'{"format":"json"}'`, or `--out`) gives the JSON back; `{"kinds":["button"]}` and `{"within":"card"}` narrow it. `connect()` and flows still get the JSON.
+`call screen.snapshot` prints one line per element (`button #save "Save plant" disabled`) instead of JSON with a rect for each, to keep the output short. `--json` (or `'{"format":"json"}'`, or `--out`) gives the JSON back; `{"kinds":["button"]}` and `{"within":"card"}` narrow it. `connect()` and flows still get the JSON, and so do `call --batch` and the REPL. `--out file` with `'{"format":"text"}'` writes the text; `--json` with `{"format":"text"}` is an error. Text over 32 KB is summarised like JSON (`--full` prints it).
 
 `call` prints a result over 32 KB as a summary (`resultTooLarge`, size, shape, a hint) instead of flooding the terminal: pass `--out <file>` to write it to a file, or `--full` to print it. Flows and `connect()` always get the full value. To keep big values small at the source, `query.get` takes a last `{ pages: [from, to] }` (an infinite query's pages, `to` exclusive, with `totalPages`) or `{ path: "pages.0.items" }`, and `net.mocks` cuts response bodies over ~2 KB like `net.log` (`{ full: true }` returns them whole).
 

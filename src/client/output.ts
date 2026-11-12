@@ -89,3 +89,14 @@ export async function renderResult(
     return json
   return JSON.stringify(tooLarge(bytes, value), null, 2)
 }
+
+/** A text result (a compact snapshot): printed as it is, or written to `out`, or a summary when over the limit. */
+export async function renderText(text: string, options: RenderOptions = {}): Promise<string> {
+  const bytes = Buffer.byteLength(text)
+  if (options.out) {
+    await writeFile(options.out, `${text}\n`)
+    return JSON.stringify(fileSummary(options.out, bytes, text), null, 2)
+  }
+  if (options.full || bytes <= (options.limit ?? OUTPUT_LIMIT_BYTES)) return text
+  return JSON.stringify(tooLarge(bytes, text), null, 2)
+}

@@ -11,6 +11,10 @@ describe('withCompactSnapshot', () => {
   test('--json asks for json', () => {
     expect(withCompactSnapshot('screen.snapshot', [], true)).toEqual([{ format: 'json' }])
   })
+  test('--json with an explicit text format is an error', () => {
+    expect(() => withCompactSnapshot('screen.snapshot', [{ format: 'text' }], true)).toThrow('drop one')
+    expect(withCompactSnapshot('screen.snapshot', [{ format: 'text' }])).toEqual([{ format: 'text' }])
+  })
   test('leaves other tools and odd arguments alone', () => {
     expect(withCompactSnapshot('screen.press', ['x'])).toEqual(['x'])
     expect(withCompactSnapshot('screen.snapshot', ['x'])).toEqual(['x'])
