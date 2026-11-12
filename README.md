@@ -99,6 +99,7 @@ npx @avasapp/agent-bridge call query.pin '[["features"], {"beta": false}]'
 npx @avasapp/agent-bridge call screen.press '"add-plant"'
 npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'
 npx @avasapp/agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
+npx @avasapp/agent-bridge run flows/ --bail                        # every *.flow.mjs in order, restore after each
 npx @avasapp/agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
 

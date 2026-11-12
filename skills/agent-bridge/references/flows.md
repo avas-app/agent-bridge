@@ -35,11 +35,10 @@ result, and for timing checks. Name it `flows/<name>.flow.mjs` in the app: plain
 ```js
 export const scenario = 'signedIn'   // applied first, undone after, even on failure
 
-export default async ({ step }) => {
+export default async ({ step, expect }) => {
   await step('open form', 'screen.press', 'add-plant')
   await step('save empty', 'screen.press', 'save-plant')
-  await step('error shown', 'screen.waitFor', 'Name is required')
-  await step('undo', 'bridge.restore')
+  await expect.text('Name is required')   // also expect.gone, expect.route, expect.result
 }
 ```
 
@@ -55,6 +54,17 @@ A flow can declare several scenarios, with options:
 when the flow fails. The flow gets what each scenario's `apply` returned as
 `scenarios.signedIn`. A failed restorer makes the run exit non-zero.
 `--scenario` replaces a declared one of the same name.
+
+Run several at once: `run flows/` (a directory's `*.flow.mjs`), several files, or a
+glob, in order on one connection, with a pass/fail line each and a summary; exit 1 if
+any failed. `--bail` stops at the first failure, `--grep <text>` filters by name or path
+(relative to here), `--reporter json|junit` is for CI: report on stdout with all
+other output on stderr, or `--out report.xml`. Globs only match `*.flow.mjs`. Every flow ends with
+`bridge.restore`, pass or fail (it is global: through a session it also undoes what
+you set up by hand first); `--keep` skips it to debug. A failed flow prints the
+screen elements and route. `expect.text(t)`, `expect.gone(t)`, `expect.route(path)`
+and `expect.result(tool, args, match)` (a RegExp matches a string) throw readable
+messages.
 
 `step` takes the same argument shapes as `call`; see [state.md](state.md).
 

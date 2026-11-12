@@ -16,10 +16,25 @@ export type FlowApi = {
   step: (label: string, tool: string, ...args: unknown[]) => Promise<unknown>
   /** What each declared scenario's apply returned, by name. */
   scenarios: Record<string, unknown>
+  expect: FlowExpect
+}
+
+/** Checks that throw a readable message; each runs as a timed step. */
+export type FlowExpect = {
+  /** Text, label or testID is on screen (waits up to `timeoutMs`, default 5000). */
+  text: (target: string, options?: { timeoutMs?: number }) => Promise<void>
+  /** The target is not on screen (waits for it to leave). */
+  gone: (target: string, options?: { timeoutMs?: number }) => Promise<void>
+  /** `router.current` has this pathname (waits up to `timeoutMs`, default 2000). */
+  route: (pathname: string, options?: { timeoutMs?: number }) => Promise<void>
+  /** A tool's result contains `match`: objects by the keys given, arrays and values exactly. */
+  result: (tool: string, args: unknown[], match: unknown) => Promise<void>
 }
 
 /** A flow file: `export default async ({ step, call }) => {}`, plus what it needs. */
 export type FlowModule = {
+  /** Shown in the run summary and matched by `--grep`; default: the file name. */
+  name?: string
   default: (api: FlowApi) => Promise<void>
   /** Applied before the flow and undone after it, even when it fails. */
   scenario?: FlowScenario
@@ -34,6 +49,58 @@ export type FlowResult = {
   restoreErrors: string[]
   /** "app reloaded; N pending restores lost" warnings seen during the flow. */
   notices: string[]
+  /** The app stopped answering (a timeout or closed connection), so no restore was tried. */
+  unreachable: boolean
+}
+
+/** What was on screen when a flow failed. */
+export type FailureState = { screen?: string[]; route?: unknown }
+
+/** Whether `actual` holds everything in `expected`: objects by the keys given, arrays and values exactly, a RegExp against a string. */
+export function deepMatches(actual: unknown, expected: unknown): boolean {
+  if (expected instanceof RegExp) return typeof actual === 'string' && expected.test(actual)
+  if (Array.isArray(expected))
+    return (
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      expected.every((e, i) => deepMatches(actual[i], e))
+    )
+  if (expected && typeof expected === 'object') {
+    const proto = Object.getPrototypeOf(expected)
+    if (proto !== Object.prototype && proto !== null)
+      throw new Error(
+        `A match can hold plain objects, arrays, values and RegExps, not a ${(expected as object).constructor?.name ?? 'class instance'}`,
+      )
+    return (
+      !!actual &&
+      typeof actual === 'object' &&
+      Object.entries(expected).every(([k, v]) =>
+        deepMatches((actual as Record<string, unknown>)[k], v),
+      )
+    )
+  }
+  return Object.is(actual, expected)
+}
+
+const MAX_SCREEN_LINES = 40
+
+/** One line per element of a `screen.snapshot` result, capped. */
+export function compactScreen(snapshot: unknown): string[] {
+  const elements = (snapshot as { elements?: unknown[] } | null)?.elements
+  if (!Array.isArray(elements)) return []
+  const lines = elements.slice(0, MAX_SCREEN_LINES).map((raw) => {
+    const e = raw as Record<string, unknown>
+    const parts = [String(e.kind ?? 'element')]
+    if (e.testID) parts.push(`#${String(e.testID)}`)
+    for (const key of ['text', 'label', 'placeholder', 'value'])
+      if (typeof e[key] === 'string' && e[key]) parts.push(JSON.stringify(e[key]))
+    if (e.disabled) parts.push('disabled')
+    if (e.checked) parts.push(`checked=${String(e.checked)}`)
+    return parts.join(' ')
+  })
+  if (elements.length > MAX_SCREEN_LINES)
+    lines.push(`... ${elements.length - MAX_SCREEN_LINES} more`)
+  return lines
 }
 
 /** The scenarios a flow module declares, in order. */
@@ -94,11 +161,17 @@ export type RunFlowOptions = {
   print?: (line: string) => void
   /** More scenarios to apply, e.g. from `--scenario`; one of the same name replaces the flow's. */
   scenarios?: Array<{ name: string; options?: unknown }>
+  /** Leave the app as the flow left it: no closing bridge.restore (for debugging). */
+  keep?: boolean
+  /** Called with what was on screen when the flow failed. */
+  onFailure?: (state: FailureState) => void
+  /** Called once the flow and its restore are done, also when it failed. */
+  onFinish?: (result: FlowResult) => void
 }
 
 /**
- * Runs a flow module you imported: applies its scenarios, runs it, and when
- * there were any, undoes everything with bridge.restore afterwards, even
+ * Runs a flow module you imported: applies its scenarios, runs it, and
+ * undoes everything with bridge.restore afterwards (unless `keep`), even
  * when it fails. Throws what the flow threw; otherwise returns how it went.
  * It runs only the code you hand it, in this process.
  */
@@ -114,6 +187,11 @@ export async function runFlow(
   let errors = 0
   const t0 = performance.now()
   const notices: string[] = []
+  // Whether the last call failed without an answer from the app (timeout, closed socket).
+  let lost = false
+  const noteOutcome = (error?: unknown) => {
+    lost = error !== undefined && !(error instanceof AgentBridgeCallError)
+  }
   const report = (logs: LogEntry[], notice?: string) => {
     errors += logs.length
     for (const e of logs) print(`   ${logLine(e)}`)
@@ -129,33 +207,92 @@ export async function runFlow(
   ): Promise<Timed<T>> => {
     try {
       const result = await bridge.timed<T>(tool, ...args)
+      noteOutcome()
       report(result.logs, result.notice)
       return result
     } catch (error) {
+      noteOutcome(error)
       report(failedLogs(error), failedNotice(error))
       throw error
     }
   }
   const call = async <T>(tool: string, ...args: unknown[]) =>
     (await timed<T>(tool, ...args)).value
-  const step = async (label: string, tool: string, ...given: unknown[]) => {
-    // Same as `agent-bridge call`: one array is the argument list.
-    const args = given.length === 1 && Array.isArray(given[0]) ? given[0] : given
-    const { value, ms, logs, notice } = await bridge
-      .timed(tool, ...args)
-      .catch((error: unknown) => {
-        report(failedLogs(error), failedNotice(error))
-        throw error
-      })
+  const record = (label: string, ms: number) => {
     total += ms
     print(
       `${String(++n).padStart(2, '0')} ${label.padEnd(30)} ${ms.toFixed(1).padStart(7)} ms`,
     )
-    report(logs, notice)
-    return value
+  }
+  const step = async (label: string, tool: string, ...given: unknown[]) => {
+    // Same as `agent-bridge call`: one array is the argument list.
+    const args = given.length === 1 && Array.isArray(given[0]) ? given[0] : given
+    const result = await timed(tool, ...args)
+    record(label, result.ms)
+    return result.value
+  }
+
+  const message = (error: unknown) =>
+    error instanceof Error ? error.message : String(error)
+  const expectApi: FlowExpect = {
+    text: async (target, o) => {
+      await step(`expect text ${JSON.stringify(target)}`, 'screen.waitFor', target, o ?? {}).catch(
+        (error: unknown) => {
+          throw new Error(`expected ${JSON.stringify(target)} on screen: ${message(error)}`)
+        },
+      )
+    },
+    gone: async (target, o) => {
+      await step(`expect gone ${JSON.stringify(target)}`, 'screen.waitFor', target, {
+        ...o,
+        gone: true,
+      }).catch((error: unknown) => {
+        throw new Error(`expected ${JSON.stringify(target)} to be off screen: ${message(error)}`)
+      })
+    },
+    route: async (pathname, o) => {
+      const label = `expect route ${pathname}`
+      const t0 = performance.now()
+      const deadline = t0 + (o?.timeoutMs ?? 2000)
+      for (;;) {
+        // Polls without a step line each; one step is recorded at the end.
+        const route = (await call('router.current').catch((error: unknown) => {
+          record(label, performance.now() - t0)
+          throw error
+        })) as { pathname?: string } | null
+        if (route?.pathname === pathname) return record(label, performance.now() - t0)
+        if (performance.now() >= deadline) {
+          record(label, performance.now() - t0)
+          throw new Error(`expected route ${pathname}, got ${route?.pathname ?? JSON.stringify(route)}`)
+        }
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    },
+    result: async (tool, args, match) => {
+      const value = await step(`expect ${tool}`, tool, args)
+      if (!deepMatches(value, match))
+        throw new Error(
+          `expected ${tool} to match ${JSON.stringify(match)}, got ${JSON.stringify(value)}`,
+        )
+    },
+  }
+  // The app may be gone or reloading, so every read here is best effort.
+  const failureState = async (): Promise<FailureState> => {
+    const has = (name: string) => bridge.tools().some((t) => t.name === name)
+    const state: FailureState = {}
+    if (has('screen.snapshot'))
+      state.screen = await call('screen.snapshot')
+        .then(compactScreen)
+        .catch(() => undefined)
+    // Nothing answered the snapshot, so don't wait out another timeout.
+    if (has('router.current') && !lost)
+      state.route = await call('router.current').catch(() => undefined)
+    return state
   }
 
   const restoreErrors: string[] = []
+  let flowErrors = 0
+  let unreachable = false
   const applied: Record<string, unknown> = {}
   if (
     needs.length &&
@@ -174,9 +311,26 @@ export async function runFlow(
       call,
       step,
       scenarios: applied,
+      expect: expectApi,
     })
+  } catch (error) {
+    const state = lost ? {} : await failureState()
+    if (state.route !== undefined) print(`   route: ${JSON.stringify(state.route)}`)
+    if (state.screen?.length) {
+      print('   on screen:')
+      for (const line of state.screen) print(`     ${line}`)
+    }
+    options.onFailure?.(state)
+    throw error
   } finally {
-    if (needs.length) {
+    // Errors the closing restore reports are printed but are not the flow's.
+    flowErrors = errors
+    unreachable = lost
+    if (
+      !lost &&
+      !options.keep &&
+      (needs.length || bridge.tools().some((t) => t.name === 'bridge.restore'))
+    ) {
       try {
         const result = (await step('restore', 'bridge.restore')) as Record<
           string,
@@ -187,15 +341,106 @@ export async function runFlow(
           if (error !== undefined) restoreErrors.push(`${name}: ${String(error)}`)
         }
       } catch (error) {
+        // An answer with an error is a broken restorer; no answer means the app is gone.
+        unreachable = lost
         restoreErrors.push(
           `bridge.restore: ${error instanceof Error ? error.message : String(error)}`,
         )
       }
       for (const e of restoreErrors) print(`   ! restore failed: ${e}`)
     }
+    options.onFinish?.({ steps: n, errors: flowErrors, restoreErrors, notices, unreachable })
   }
   print(
-    `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})${errors ? `, ${errors} error${errors === 1 ? '' : 's'}` : ''}${notices.length ? ', the app reloaded' : ''}`,
+    `${n} steps, ${total.toFixed(1)} ms in calls, ${(performance.now() - t0).toFixed(0)} ms wall (${bridge.transport})${flowErrors ? `, ${flowErrors} error${flowErrors === 1 ? '' : 's'}` : ''}${notices.length ? ', the app reloaded' : ''}`,
   )
-  return { steps: n, errors, restoreErrors, notices }
+  return { steps: n, errors: flowErrors, restoreErrors, notices, unreachable }
+}
+
+export type FlowEntry = { file: string; name: string; module: FlowModule }
+
+export type FlowRun = {
+  file: string
+  name: string
+  status: 'passed' | 'failed' | 'skipped'
+  ms: number
+  steps: number
+  errors: number
+  /** Why it failed: what the flow threw, restore failures, or app errors under `strict`. */
+  error?: string
+  state?: FailureState
+  restoreErrors: string[]
+  notices: string[]
+}
+
+export type RunFlowsOptions = RunFlowOptions & {
+  /** Stop at the first failure; the rest are reported as skipped. */
+  bail?: boolean
+  /** Count an error the app logged as a failure. */
+  strict?: boolean
+  /** One flow, text output: no name header, and the failure goes to `printError`. */
+  single?: boolean
+  /** Where a failed flow's reason goes when `single`. Default: console.error. */
+  printError?: (line: string) => void
+}
+
+/** Runs flows in order on one connection, each followed by a restore (see `keep`), and never throws for a failing flow. */
+export async function runFlows(
+  bridge: AgentBridge,
+  entries: FlowEntry[],
+  options: RunFlowsOptions = {},
+): Promise<FlowRun[]> {
+  const print = options.print ?? console.log
+  const printError = options.single ? (options.printError ?? console.error) : print
+  const runs: FlowRun[] = []
+  let unreachable = false
+  for (const entry of entries) {
+    const base = { file: entry.file, name: entry.name, restoreErrors: [], notices: [] }
+    const skip = unreachable
+      ? 'skipped: the app stopped answering in an earlier flow'
+      : options.bail && runs.some((r) => r.status === 'failed')
+        ? 'skipped: an earlier flow failed (--bail)'
+        : undefined
+    if (skip) {
+      runs.push({ ...base, status: 'skipped', ms: 0, steps: 0, errors: 0, error: skip })
+      continue
+    }
+    if (!options.single) print(`\n${entry.name}`)
+    const t0 = performance.now()
+    let state: FailureState | undefined
+    let done: FlowResult = { steps: 0, errors: 0, restoreErrors: [], notices: [], unreachable: false }
+    const reasons: string[] = []
+    try {
+      await runFlow(bridge, entry.module, {
+        ...options,
+        onFailure: (s) => {
+          state = s
+        },
+        onFinish: (r) => {
+          done = r
+        },
+      })
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error)
+      printError(`   FAILED: ${why}`)
+      reasons.push(why)
+    }
+    if (done.restoreErrors.length) reasons.push(`restore failed: ${done.restoreErrors.join('; ')}`)
+    if (options.strict && done.errors)
+      reasons.push(`the app logged ${done.errors} error${done.errors === 1 ? '' : 's'}`)
+    if (done.notices.length)
+      print('   ! the app reloaded: changes made before the reload could not be undone')
+    const { unreachable: gone, ...result } = done
+    runs.push({
+      ...base,
+      ...result,
+      status: reasons.length ? 'failed' : 'passed',
+      ms: performance.now() - t0,
+      ...(reasons.length && { error: reasons.join('; ') }),
+      ...(state && { state }),
+    })
+    // No answer from the app: don't wait out a timeout per flow.
+    if (gone) unreachable = true
+  }
+  return runs
 }

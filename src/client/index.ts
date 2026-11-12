@@ -117,11 +117,14 @@ export async function listDevices(
 
 export {
   type FlowApi,
+  type FlowExpect,
   type FlowModule,
   type FlowResult,
+  type FlowRun,
   type FlowScenario,
   type RunFlowOptions,
   runFlow,
+  runFlows,
 } from './flow'
 export { type SessionConnectOptions, connectSession } from './session/client'
 export { type SessionState, listSessions } from './session/state'
