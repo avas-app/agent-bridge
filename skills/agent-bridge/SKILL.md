@@ -53,12 +53,14 @@ check it's yours before switching to it.
 A session holds one connection for all your calls. It stops itself after 15
 minutes without calls and runs `bridge.restore` when it does.
 
-A JS reload (an error screen's Retry, or `app.reload`) throws away every pending
-restore. The session notices the app is a new runtime and reports
-`app reloaded; N pending restores lost: store, query` (the areas that
-had something to undo) as a warning on the next call (also on a failed one) and
-again in `session stop`. When you see it, redo your setup: nothing you changed
-before the reload will be undone.
+A JS reload (an error screen's Retry, or `app.reload`) throws away the app's
+undo state, except what lives in storage: string `mmkv.set`/`mmkv.delete` and
+persisted zustand stores are kept by the session and still undone by
+`bridge.restore`. The session reports what it kept, and
+`app reloaded; N pending restores lost: query, ...` (the areas that had
+something to undo) for the rest, as a warning on the next call (also on a
+failed one) and again in `session stop`. For the lost ones, redo your setup:
+they will not be undone.
 
 If a call fails with `app not connected; reconnecting` or `The app is gone`, the
 session lost the app (Metro or the app is down, or mid-reload). It retries on

@@ -134,7 +134,7 @@ export async function connectExpo(
     transport: 'expo',
     device: info,
     pin: { name: info.name, platform: info.platform },
-    call(tool, args, timeoutMs) {
+    call(tool, args, timeoutMs, extra) {
       if (superseded)
         return Promise.resolve<ResultMessage>({
           id: '',
@@ -148,6 +148,7 @@ export async function connectExpo(
         tool,
         args,
         to: info.deviceId,
+        ...extra,
       }
       const reply = pending.wait(call.id, tool, timeoutMs)
       send('call', call)

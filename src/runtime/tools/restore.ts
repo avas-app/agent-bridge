@@ -31,6 +31,37 @@ export function pendingByArea(
   return out
 }
 
+/** What each area could undo from persistent storage; see `ToolDefinition.journal`. */
+export function journalByArea(tools: Tools): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [name, d] of restorers(tools)) {
+    try {
+      const data = d.journal?.()
+      if (data !== undefined) out[name] = data
+    } catch {
+      // An area that can't say is left out; its undo is lost on reload, as before.
+    }
+  }
+  return out
+}
+
+/** Sum of the areas' `journalRev`. */
+export function journalRev(tools: Tools): number {
+  let rev = 0
+  for (const [, d] of restorers(tools)) rev += d.journalRev?.() ?? 0
+  return rev
+}
+
+function restorers(tools: Tools) {
+  return Object.entries(tools)
+    .filter(([name, d]) => name.endsWith(SUFFIX) && name !== SELF && typeof d !== 'function')
+    .map(([name, d]) => [name.slice(0, -SUFFIX.length), d] as const)
+    .filter((e): e is [string, Exclude<typeof e[1], (...a: never[]) => unknown>] => typeof e[1] !== 'function')
+}
+
+/** Names a session reads and writes itself; hidden from the tool list because they carry raw values. */
+export const INTERNAL_TOOLS = ['bridge.adopt']
+
 /**
  * `bridge.restore` runs every tool whose name ends in `.restore`, so each
  * adapter (and the app) can undo what the agent changed in its own area.
@@ -43,6 +74,26 @@ export function restoreTools(getTools: () => Tools): Tools {
       description:
         'What bridge.restore would undo right now, per area (store, query, net, app, ...): the value is true, or detail such as a store\'s snapshot against its current value. Empty when nothing is pending. Changes nothing.',
       run: () => pendingByArea(getTools(), true),
+    },
+    'bridge.adopt': {
+      maxArgs: 1,
+      description: 'Internal: a session hands back its journal after a reload.',
+      run: async (data: Record<string, unknown>) => {
+        const tools = getTools()
+        const out: Record<string, unknown> = {}
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('bridge.adopt takes an object')
+        for (const [area, part] of Object.entries(data)) {
+          const d = tools[`${area}${SUFFIX}`]
+          if (typeof d === 'function' || !d?.adopt) out[area] = { adopted: [], already: [], changed: [], retry: part, error: 'this area has no adopt' }
+          else
+            try {
+              out[area] = await d.adopt(part)
+            } catch (error) {
+              out[area] = { adopted: [], already: [], changed: [], retry: part, error: error instanceof Error ? error.message : String(error) }
+            }
+        }
+        return out
+      },
     },
     [SELF]: {
       description:
