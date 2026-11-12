@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -586,6 +586,30 @@ describe('session daemon', () => {
     cleanups.push(bridge.close)
     return { metro, app, daemon, bridge }
   }
+  test('a client that closes with its reply unread does not take the session down', async () => {
+    await session('reset')
+    const state = listSessions()[0]!
+    const uncaught: unknown[] = []
+    const onUncaught = (error: unknown) => uncaught.push(error)
+    process.on('uncaughtException', onUncaught)
+    try {
+      const raw = connect(state.socket)
+      raw.on('error', () => {})
+      await new Promise<void>((r) => raw.once('connect', r))
+      // Only bytes left unread in the kernel make the close a reset; a small reply is read at once.
+      const big = 'x'.repeat(3_000_000)
+      raw.write(`${JSON.stringify({ id: 1, op: 'call', tool: 'store.get', args: [big] })}\n`)
+      raw.pause()
+      await new Promise((r) => setTimeout(r, 300))
+      raw.destroy()
+      await new Promise((r) => setTimeout(r, 100))
+      expect(uncaught).toEqual([])
+      expect((await sessionRequest(state, { op: 'info' })).error).toBeUndefined()
+    } finally {
+      process.off('uncaughtException', onUncaught)
+    }
+  })
+
   const LOST = 'app reloaded; 1 pending restore lost: demo'
 
   test('reports the restores a reload lost, once in the next call and again on stop', async () => {
@@ -832,7 +856,9 @@ describe('session daemon', () => {
       const server = createServer((socket) => {
         socket.on('error', () => {})
         if (!respond) return void socket.end()
-        createInterface({ input: socket }).on('line', (line) =>
+        const lines = createInterface({ input: socket })
+        lines.on('error', () => {})
+        lines.on('line', (line) =>
           socket.write(`${JSON.stringify(respond(JSON.parse(line)))}\n`),
         )
       })
