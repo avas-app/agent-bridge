@@ -108,6 +108,28 @@ A session stops itself, restore included, after 15 minutes without calls (`--idl
 
 A `timeoutMs` in the options of `screen.waitFor` or `webview.waitFor`, longer than the call timeout (`--timeout`, default 10 s), such as `screen.waitFor '["Done", {"timeoutMs": 15000}]'`, stretches the call timeout to that plus 2 s (7 s for `webview.waitFor`, at most 10 minutes), so the app's own timeout error arrives instead of the client's. Other tools' arguments never change it. This applies to the CLI, sessions and `connect()`.
 
+## MCP server
+
+`agent-bridge mcp` serves the connected app's tools to an agent that prefers MCP tools over a shell. It speaks MCP over stdio (protocol 2025-06-18 and 2024-11-05; no batches) and writes nothing else to stdout. Connect failures go to stderr, once per distinct message.
+
+```sh
+claude mcp add agent-bridge -- ./node_modules/.bin/agent-bridge mcp   # Claude Code
+codex mcp add agent-bridge -- ./node_modules/.bin/agent-bridge mcp    # Codex
+```
+
+Cursor, in `.cursor/mcp.json` (Codex also reads `[mcp_servers.agent-bridge]` with `command` and `args` in `~/.codex/config.toml`):
+
+```json
+{ "mcpServers": { "agent-bridge": { "command": "./node_modules/.bin/agent-bridge", "args": ["mcp"] } } }
+```
+
+Add `"--metro", "host:port"` to the args when Metro isn't on `localhost:8081`, and start the server in the app's project directory: the directory picks the session. Use the installed binary rather than `npx`, which can fetch a newer release than the one in the app (if you must, `npx -y @avasapp/agent-bridge@<the app's version> mcp`). It takes the same `--metro`, `--device`, `--transport`, `--timeout`, `--session` and `--no-session` options as the other commands.
+
+- **Session.** It uses the project's running session, like `call`, and stays on that one by name once attached, even if another session starts. It never attaches to another server's `mcp-*` session. With none running it starts its own and, when the server exits, runs `bridge.restore` (`--keep` leaves the app as it is). Reload notices, pending restores and the lost-reply rules are the session's. Servers attached to one session share it: stopping it (`session stop`, or its 15-minute idle time running out) runs `bridge.restore` for all of them, and only the first call to see a reload gets its notice. If the session a server was using stops, its next call fails once with a message saying so, and the call after that uses a new session.
+- **Tools.** Each app tool is an MCP tool with a dot-free name: `screen.snapshot` is `screen_snapshot` (the tool's `title` keeps the real name; a clash gets `_2`). Every tool takes `args`, an array of its arguments in order, and `full`. Whenever the list a client last received differs from the current one (the app reloaded, a different app connected, or an app appeared after the agent started), the server sends `notifications/tools/list_changed`. `agent_bridge_status` is always listed, even with no app: it returns whether the server is connected, the app, the session and the last connect error.
+- **Results.** The value as JSON text. A result over 32 KB is a summary of its size and shape unless the call passes `full: true`. `screen.capture` with `{base64: true}` comes back as an image, typed by its content (PNG, JPEG, WebP or GIF); no other tool's output becomes an image. App errors logged during the call and the session's reload notice are added as extra text.
+- **Errors.** A failed call is a result with `isError` and the app's or session's own error text, such as `may or may not have run`, unchanged. Only when the socket to the session closes mid-call does the server say the connection was lost and that the call may not have run; it reconnects on the next call. A client's `notifications/cancelled` stops the wait and drops the reply, but a call already sent to the app still runs.
+
 ## From code
 
 ```ts
