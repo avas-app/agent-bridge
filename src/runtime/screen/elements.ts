@@ -148,6 +148,12 @@ const MODAL_HOSTS = new Set(['RCTModalHostView', 'ModalHostView'])
 const OVERLAY_HOST = 'RNSFullWindowOverlay'
 const SCREEN_STACK = 'RNSScreenStack'
 const STACK_SCREENS = new Set(['RNSScreen', 'RNSModalScreen'])
+// Native tabs (Tabs.Host) have no focus prop on a tab screen: the host's
+// navStateRequest names the selected one, and UIKit/Android hide the rest.
+const TABS_HOSTS = new Set(['RNSTabsHostIOS', 'RNSTabsHostAndroid'])
+// react-native-screens before 4.25 named them RNSBottomTabsScreen / RNSTabsScreen and set `isFocused`.
+const OLD_TAB_SCREENS = new Set(['RNSBottomTabsScreen', 'RNSTabsScreen'])
+const TAB_SCREENS = new Set(['RNSTabsScreenIOS', 'RNSTabsScreenAndroid'])
 
 // react-native-screens presentations that leave what is beneath visible.
 const SEE_THROUGH = new Set(['transparentModal', 'containedTransparentModal', 'overFullScreen'])
@@ -214,6 +220,28 @@ function stackScreens(stack: Fiber): { covered: Fiber[]; presented: Fiber[] } {
     presented: screens.slice(1).filter(coversWindow),
   }
 }
+
+function unselectedTabs(tabs: Fiber): Fiber[] {
+  const selected = (propsOf(tabs)?.navStateRequest as { selectedScreenKey?: unknown } | undefined)
+    ?.selectedScreenKey
+  const out: Fiber[] = []
+  let matches = 0
+  if (typeof selected !== 'string') return out
+  const todo = tabs.child ? [tabs.child] : []
+  while (todo.length) {
+    const f = todo.pop() as Fiber
+    if (f.sibling) todo.push(f.sibling)
+    if (f.tag === HOST_COMPONENT && TAB_SCREENS.has(f.type as string)) {
+      if (propsOf(f)?.screenKey === selected) matches++
+      else out.push(f)
+    } else if (f.child) todo.push(f.child)
+  }
+  // A stale key (no tab, or two) says nothing about which tab is showing.
+  return matches === 1 ? out : []
+}
+
+const hasDom = (recs: Rec[]) =>
+  recs.some((r) => !!r.host.stateNode && 'getBoundingClientRect' in (r.host.stateNode as object))
 
 function hostAbove(host: Fiber): Fiber {
   let up = host.return
@@ -504,7 +532,7 @@ function absorbChain(rec: Rec, fiber: Fiber, host: Fiber) {
 export function collectScreen(
   roots: Fiber[],
   window: Window,
-): { found: Found[]; scrollables: Scrollable[] } {
+): { found: Found[]; scrollables: Scrollable[]; unmeasured: boolean } {
   const byHost = new Map<Fiber, Rec>()
   const order: Rec[] = []
   const scrollByHost = new Map<Fiber, Scrollable>()
@@ -603,6 +631,8 @@ export function collectScreen(
         for (const s of screens.covered) covered.add(s)
         for (const s of screens.presented) presented.add(s)
       }
+      if (OLD_TAB_SCREENS.has(fiber.type as string) && p?.isFocused === false) hidden = true
+      if (TABS_HOSTS.has(fiber.type as string)) for (const s of unselectedTabs(fiber)) covered.add(s)
       if (fiber.type === OVERLAY_HOST) overlay = true
       if (p && !hidden && (p.accessibilityRole ?? p.role) === 'tablist') bars.push(fiber)
       // A presented native modal covers the window like an RN Modal, tab bar
@@ -664,6 +694,7 @@ export function collectScreen(
   for (const scrollable of scrollByHost.values())
     scrollable.hidden ||= covers(scrollable)
 
+  let measured = false
   for (const rec of order) {
     const e = rec.element
     rec.hidden ||= covers(rec)
@@ -683,6 +714,7 @@ export function collectScreen(
           : 'view'
     if (e.kind === 'input' && e.editable === undefined) e.editable = true
     const rect = measureHost(rec.host)
+    if (rect) measured = true
     e.rect = round(rect)
     // A ScrollView's own testID lands on its host, and the content container is
     // part of it: both scroll that scrollable, not the one around it.
@@ -690,6 +722,11 @@ export function collectScreen(
     if (own) rec.scroller = own
     rec.onScreen = isOnScreen(rec, rect, window, bars)
   }
+  const unmeasured =
+    order.length > 0 &&
+    !measured &&
+    !hasDom(order) &&
+    !(globalThis as { nativeFabricUIManager?: unknown }).nativeFabricUIManager
   // A text-only element whose glyphs were all icons has nothing to show.
   // A WebView's props reach a wrapper component and the native host under it,
   // which are two hosts for one element: keep the outermost.
@@ -707,8 +744,14 @@ export function collectScreen(
         (rec.element.kind !== 'text' || rec.element.text !== undefined) && single(rec),
     ),
     scrollables: [...scrollByHost.values()],
+    unmeasured,
   }
 }
+
+// Without Fabric's UIManager nothing can be measured, so everything would
+// silently read as off screen.
+export const UNMEASURED_ERROR =
+  "No Fabric UIManager found (React Native's old architecture, or a test renderer), so elements can't be measured. agent-bridge screen tools need the New Architecture."
 
 export const collectElements = (roots: Fiber[], window: Window): Found[] =>
   collectScreen(roots, window).found

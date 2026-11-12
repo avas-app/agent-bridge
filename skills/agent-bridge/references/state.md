@@ -6,7 +6,7 @@
 npx @avasapp/agent-bridge call query.pin '[["features"], <data>]'       # stays through refetches
 npx @avasapp/agent-bridge call store.call '["settings", "setTheme", "dark"]'
 npx @avasapp/agent-bridge call router.navigate /inbox
-npx @avasapp/agent-bridge call router.current
+npx @avasapp/agent-bridge call router.current                            # React Navigation apps: nav.navigate Inbox, nav.current
 npx @avasapp/agent-bridge call router.dismiss                            # closes a route-based modal
 ```
 
@@ -30,6 +30,26 @@ npx @avasapp/agent-bridge call store.get '["app", {"keys": true}]'  # top-level 
 `query.get` errors on a key that is not cached (with similar keys), so a
 `null` reply means the data is undefined. For a large query, narrow it with
 `pages` or `path`; see [large-data.md](large-data.md).
+
+## Redux and Jotai
+
+Same ideas under their own prefixes, so a Zustand `store.*` and these can coexist.
+
+```sh
+npx @avasapp/agent-bridge call redux.list
+npx @avasapp/agent-bridge call redux.get '["auth", "user.name"]'      # or [] for the whole state
+npx @avasapp/agent-bridge call redux.dispatch '[{"type":"cart/add","payload":"apple"}]'
+npx @avasapp/agent-bridge call redux.set '["auth", {"token": "abc"}]'  # merge into a slice
+npx @avasapp/agent-bridge call jotai.list                              # read-write or read-only
+npx @avasapp/agent-bridge call jotai.get '["user", "name"]'
+npx @avasapp/agent-bridge call jotai.set '["count", 5]'                # writable atoms only
+```
+
+`redux.set` and restore need the app to wrap its root reducer in
+`bridgeReducer()` (inside `persistReducer` with redux-persist); without it they
+fail and say so. `redux.set` merges into object slices only. `redux.dispatch`
+sends plain actions only. `jotai.set` refuses atoms whose value isn't the one
+sent (action atoms, `atomWithReducer`). Redacted slices, atoms and paths print as `"[redacted]"`.
 
 ## Argument shapes
 

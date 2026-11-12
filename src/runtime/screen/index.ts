@@ -12,6 +12,7 @@ import {
 } from './actions'
 import {
   collectScreen,
+  UNMEASURED_ERROR,
   focused,
   type Found,
   type Scrollable,
@@ -48,7 +49,12 @@ export function createScreen(env: {
   roots: () => Fiber[]
   window: () => Window
 }) {
-  const collectAll = () => collectScreen(env.roots(), env.window())
+  const collectLoose = () => collectScreen(env.roots(), env.window())
+  const collectAll = () => {
+    const all = collectLoose()
+    if (all.unmeasured) throw new Error(UNMEASURED_ERROR)
+    return all
+  }
   const collect = () => collectAll().found
 
   // Right after a push the layout is still moving (the native header's height
@@ -326,7 +332,7 @@ export function createScreen(env: {
 
   return {
     snapshot(options: { all?: boolean } = {}): { elements: ScreenElement[]; hidden?: number } {
-      const found = collect()
+      const found = options.all ? collectLoose().found : collect()
       if (options.all)
         return {
           elements: found.map((f) => ({
@@ -342,7 +348,7 @@ export function createScreen(env: {
     },
 
     findText: (text: string, options?: FindTextOptions) =>
-      findText(collect(), text, options),
+      findText(collectLoose().found, text, options),
 
     async fill(
       target: Target,

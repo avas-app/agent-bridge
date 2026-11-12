@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import type { TransportName } from '../connection'
 
@@ -38,6 +38,24 @@ export function projectRoot(from = process.cwd()): string {
     if (existsSync(join(dir, 'package.json'))) return dir
     if (dirname(dir) === dir) return resolve(from)
   }
+}
+
+const isPackage = (dir: string) => existsSync(join(dir, 'package.json'))
+
+/**
+ * The session's project is this directory's project, or an app folder inside
+ * it (a monorepo root) with no package, checkout (.git) or other project
+ * between them.
+ */
+function inProject(session: string | undefined, project: string): boolean {
+  if (!session) return false
+  if (session === project) return true
+  if (!session.startsWith(project + sep) || !isPackage(project)) return false
+  for (let dir = session; dir !== project; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return false
+    if (dir !== session && isPackage(dir)) return false
+  }
+  return true
 }
 
 const uid = () => process.getuid?.() ?? userInfo().username
@@ -163,7 +181,8 @@ export function readSession(name: string, dir = stateDir()) {
  * The session a command should use: the one named, else the only live one that
  * matches whatever was given explicitly (metro, device filter, forced
  * transport). With nothing given, only this project's sessions count, so an
- * agent never drives another project's app. Returns null when none match;
+ * agent never drives another project's app. Returns null when none match (or
+ * when several app folders under a monorepo root do);
  * throws when several do.
  */
 export function pickSession(filter: {
@@ -171,6 +190,8 @@ export function pickSession(filter: {
   metro?: string
   device?: string
   transport?: string
+  /** Sessions to leave out when nothing is named. */
+  skip?: (session: SessionState) => boolean
 }): SessionState | null {
   if (filter.name) {
     const named = readSession(checkName(filter.name))
@@ -186,7 +207,8 @@ export function pickSession(filter: {
   const project = projectRoot()
   const matching = listSessions().filter(
     (s) =>
-      (explicit || s.project === project) &&
+      !filter.skip?.(s) &&
+      (explicit || inProject(s.project, project)) &&
       (!filter.metro || s.metro === filter.metro) &&
       (!device ||
         s.device.name.toLowerCase().includes(device) ||
@@ -195,6 +217,13 @@ export function pickSession(filter: {
         filter.transport === 'auto' ||
         filter.transport === s.transport),
   )
+  // Several app folders under a monorepo root: no single one is meant.
+  if (
+    !explicit &&
+    matching.length > 1 &&
+    matching.every((s) => s.project !== project)
+  )
+    return null
   if (matching.length > 1)
     throw new Error(
       `Several sessions match (${matching

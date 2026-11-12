@@ -45,6 +45,10 @@ import { expoTransport } from '@avasapp/agent-bridge/expo'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
 import { mmkvTools } from '@avasapp/agent-bridge/react-native-mmkv'
+// import { asyncStorageTools } from '@avasapp/agent-bridge/async-storage'
+// import { secureStoreTools } from '@avasapp/agent-bridge/secure-store'
+// import { reduxTools } from '@avasapp/agent-bridge/redux'
+// import { jotaiTools } from '@avasapp/agent-bridge/jotai'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
 import { networkTools } from '@avasapp/agent-bridge/network'
 import { router, useNavigationContainerRef } from 'expo-router'
@@ -65,6 +69,12 @@ export function AgentBridge() {
         { redact: { auth: ['accessToken', 'refreshToken', 'user.phone'] } },
       ),
       ...mmkvTools({ storage }),
+      // Redux and Jotai state often holds tokens: add `redact` before wiring them.
+      // ...reduxTools(store, { redact: { auth: ['token'] } }),
+      // ...jotaiTools(getDefaultStore(), { user: userAtom }),
+      // AsyncStorage and SecureStore often hold tokens: wire them only if you accept that.
+      // ...asyncStorageTools(AsyncStorage),
+      // ...secureStoreTools(SecureStore, ['authToken'], { keychainService: 'auth' }),
       ...routerTools(router, { navigation: useNavigationContainerRef() }),
       ...networkTools(),
       // Your own tools: any function, JSON in and out.
@@ -89,21 +99,25 @@ npx @avasapp/agent-bridge call query.pin '[["features"], {"beta": false}]'
 npx @avasapp/agent-bridge call screen.press '"add-plant"'
 npx @avasapp/agent-bridge call screen.waitFor '"Name is required"'
 npx @avasapp/agent-bridge run flows/add-plant.flow.mjs --strict   # fail if the app logged an error
+npx @avasapp/agent-bridge run flows/ --bail                        # every *.flow.mjs in order, restore after each
 npx @avasapp/agent-bridge session stop             # runs bridge.restore, then disconnects
 ```
 
-Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is slower and can print npm warnings into their output. See [the CLI](docs/cli.md) for flows, batch mode, the REPL, sessions and the `connect()` client.
+Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is slower and can print npm warnings into their output. See [the CLI](docs/cli.md) for flows, batch mode, the REPL, sessions and the `connect()` client. Agents that prefer MCP tools to a shell can run `agent-bridge mcp`; see [the MCP server](docs/cli.md#mcp-server).
 
 No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
+
+The screen tools measure with Fabric, so they need React Native's New Architecture; on the old one the tools that need positions fail with an error that says so (`snapshot {all: true}` and `findText` still return text, without rects).
 
 ## Docs
 
 - [Built-in tools and restore](docs/built-in-tools.md)
 - [The CLI, flows and the client](docs/cli.md)
 - [Scenarios](docs/scenarios.md): signed-in state, strict network, fixtures, gates
-- [Adapters](docs/adapters.md): TanStack Query, Zustand, MMKV, Expo Router, network
+- [Adapters](docs/adapters.md): TanStack Query, Zustand, Redux, Jotai, MMKV, AsyncStorage, SecureStore, Expo Router, React Navigation, network
 - [WebViews](docs/webviews.md)
 - [Realtime](docs/realtime.md): Ably, socket.io, any other library
+- [Device events](docs/device-events.md): deep links, app state, offline, push notifications, the clock
 - [Security and release builds](docs/security.md)
 - [Benchmarks](docs/benchmarks.md)
 
