@@ -47,8 +47,11 @@ async function fakeApp(metro: string, deviceId: string, extra: Tools = {}) {
   }
   const registry = createRegistry(() => tools, undefined, `load-${deviceId}`)
   const ws = new WebSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
+  await new Promise((res, rej) => {
+    ws.once('open', res)
+    ws.once('error', rej)
+  })
   ws.on('error', () => {})
-  await new Promise((r) => ws.once('open', r))
   const send = (method: string, payload: unknown) =>
     ws.send(JSON.stringify({ messageKey: { pluginName: PLUGIN_NAME, method }, payload }))
   ws.on('message', async (data) => {

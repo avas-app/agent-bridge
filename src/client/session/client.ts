@@ -31,14 +31,16 @@ export function openSessionLink(state: SessionState): Promise<Link> {
     const waiting = new Map<number, (res: SessionResponse) => void>()
     let seq = 0
     let open = false
-    const gone = `Session "${state.name}" closed the connection`
+    let lastError = ''
+    const gone = () =>
+      `Session "${state.name}" closed the connection${lastError && `: ${lastError}`}`
     socket.once('connect', () => {
       open = true
       resolve({
         request: (req) =>
           new Promise((done, fail) => {
             if (socket.destroyed || socket.writableEnded) {
-              fail(new SessionLinkError(gone))
+              fail(new SessionLinkError(gone()))
               return
             }
             const id = ++seq
@@ -49,6 +51,7 @@ export function openSessionLink(state: SessionState): Promise<Link> {
       })
     })
     socket.on('error', (error) => {
+      lastError = error.message
       if (!open)
         reject(
           new SessionLinkError(
@@ -57,7 +60,7 @@ export function openSessionLink(state: SessionState): Promise<Link> {
         )
     })
     socket.on('close', () => {
-      for (const [id, done] of waiting) done({ id, error: gone, linkLost: true })
+      for (const [id, done] of waiting) done({ id, error: gone(), linkLost: true })
       waiting.clear()
     })
     // readline re-emits the socket's errors; without a listener they go uncaught
