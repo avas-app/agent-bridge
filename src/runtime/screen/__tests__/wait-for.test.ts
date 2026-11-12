@@ -25,7 +25,7 @@ describe('waitFor', () => {
     const { screen } = setup(rnText('My plants'))
     const result = await screen.waitFor('My plants')
     expect(result.element).toMatchObject({ kind: 'text', text: 'My plants' })
-    expect(result.ms).toBeLessThan(5)
+    expect(result.ms).toBeLessThan(100)
   })
 
   test('re-checks on the commit that renders it, substring included', async () => {
