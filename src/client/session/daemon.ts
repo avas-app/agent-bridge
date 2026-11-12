@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { appendFileSync, chmodSync, rmSync } from 'node:fs'
 import { type Server, type Socket, createServer } from 'node:net'
 import { createInterface } from 'node:readline'
@@ -8,6 +9,7 @@ import { callTimeout } from '../call-timeout'
 import { metroHost } from '../discover'
 import { explainConnectError } from '../metro-hint'
 import { openConnection } from '../open'
+import { createJournal, lostConnection } from './journal'
 import {
   type SessionRequest,
   type SessionResponse,
@@ -42,6 +44,10 @@ export type DaemonOptions = {
   reloadWaitMs?: number
   /** Longest each transport (Expo, then CDP) may take in one reconnect attempt. Default 12 s. */
   attemptMs?: number
+  /** Pause between tries to re-arm the journal after a reload. Default 1 s. */
+  adoptRetryMs?: number
+  /** Longest one bridge.adopt call may take. Default: `timeoutMs`, at least 3.5 s (a persisted store may wait 2 s to hydrate). */
+  adoptTimeoutMs?: number
 }
 
 export type SessionDaemon = {
@@ -118,13 +124,6 @@ const pause = (ms: number, signal: AbortSignal) =>
 
 const message = (error: unknown) =>
   error instanceof Error ? error.message : String(error)
-
-/** A failed result that means the connection, not the tool, broke. */
-const lostConnection = (
-  r: ResultMessage,
-): r is Extract<ResultMessage, { ok: false }> =>
-  !r.ok &&
-  (r.from === '' || /socket closed|closed the debugger|not open/i.test(r.error))
 
 /**
  * Connects to one app and serves calls on a local socket until stopped or
@@ -213,19 +212,75 @@ export async function runSessionDaemon(
   let lastPending: string[] = []
   const reloads: string[] = []
   let unseen: string[] = []
-  const noteReload = () => {
-    const lost = lastPending
-    lastPending = []
-    const note = `app reloaded; ${lost.length} pending restore${lost.length === 1 ? '' : 's'} lost${lost.length ? `: ${lost.join(', ')}` : ''}`
+  // Persistent undo state (MMKV, persisted stores) outlives a reload here.
+  // The key proves to the runtime that a call is this session's.
+  const journalKey = randomBytes(16).toString('hex')
+  const send = (tool: string, args: unknown[], ms: number) =>
+    conn.call(tool, args, ms, { journalAck: journal.ack(), journalKey })
+  const adoptTimeoutMs = options.adoptTimeoutMs ?? Math.max(timeoutMs, 3500)
+  const journal = createJournal(
+    (tool, args) => send(tool, args, adoptTimeoutMs),
+    conn.device.loadId,
+    () => ping(),
+  )
+  const addNote = (note: string) => {
     reloads.push(note)
     unseen.push(note)
     log(`warning: ${note}`)
   }
+  // One adopt at a time; everyone who needs it waits for the one in flight.
+  const adoptRetryMs = options.adoptRetryMs ?? 1000
+  let adoptRun: Promise<void> | null = null
+  let adoptLoad: string | undefined
+  let nextAdopt = 0
+  const adoptJournal = async (force = false): Promise<void> => {
+    if (adoptRun) {
+      const startedFor = adoptLoad
+      await adoptRun
+      // A run for the load before a reload says nothing about the new one: whatever is still carried needs its own try.
+      if (!force || startedFor === journal.currentLoad()) return
+      if (adoptRun) return adoptRun
+    }
+    if (!journal.hasCarry() || (!force && Date.now() < nextAdopt)) return
+    inflight++
+    adoptLoad = journal.currentLoad()
+    adoptRun = journal
+      .adopt()
+      .then(
+        (note) => {
+          if (note) addNote(`app reloaded; ${note}`)
+        },
+        () => {},
+      )
+      .finally(() => {
+        inflight--
+        nextAdopt = Date.now() + adoptRetryMs
+        adoptRun = null
+      })
+    return adoptRun
+  }
+  const noteReload = (newLoad?: string) => {
+    const lost = journal.reloaded(lastPending, newLoad)
+    lastPending = []
+    if (lost.length || !journal.hasCarry())
+      addNote(
+        `app reloaded; ${lost.length} pending restore${lost.length === 1 ? '' : 's'} lost${lost.length ? `: ${lost.join(', ')}` : ''}`,
+      )
+    nextAdopt = 0
+    void adoptJournal(true)
+  }
   const observe = (r: ResultMessage) => {
     if (!r.loadId) return
-    if (knownLoad && r.loadId !== knownLoad) noteReload()
+    if (knownLoad && r.loadId !== knownLoad) noteReload(r.loadId)
     knownLoad = r.loadId
     lastPending = r.pending ?? []
+  }
+  // Order matters: a reload seen in the reply moves the journal before its stamp is read.
+  const seen = (r: ResultMessage): ResultMessage => {
+    observe(r)
+    journal.accept(r)
+    const { journalData: _, ...rest } = r
+    return rest as ResultMessage
   }
   const takeNotice = () => {
     const notice = unseen.join('; ')
@@ -271,7 +326,7 @@ export async function runSessionDaemon(
       stale = false
       reloadingUntil = 0
       if (conn.device.loadId) {
-        if (knownLoad && conn.device.loadId !== knownLoad) noteReload()
+        if (knownLoad && conn.device.loadId !== knownLoad) noteReload(conn.device.loadId)
         knownLoad = conn.device.loadId
       }
       state.device = deviceOf(conn)
@@ -316,9 +371,9 @@ export async function runSessionDaemon(
   }
 
   const ping = (ms = 1500) =>
-    conn.call('bridge.ping', [], Math.min(ms, 1500)).then(
+    send('bridge.ping', [], Math.min(ms, 1500)).then(
       (r) => {
-        if (r.ok) observe(r)
+        if (r.ok) seen(r)
         return r.ok
       },
       () => false,
@@ -327,7 +382,7 @@ export async function runSessionDaemon(
   // One attempt; `lost` says the connection broke rather than the tool.
   const attempt = async (tool: string, args: unknown[], ms: number) => {
     try {
-      const result = await conn.call(tool, args, ms)
+      const result = await send(tool, args, ms)
       return lostConnection(result) ? { lost: result.error } : { result }
     } catch (error) {
       // A timeout is a slow tool if the app still answers a ping.
@@ -338,13 +393,17 @@ export async function runSessionDaemon(
 
   const callApp = async (tool: string, args: unknown[], ms: number) => {
     if (stale || reconnecting) await connected()
+    // bridge.restore must see the re-armed journal, so it never waits out the retry pause.
+    await adoptJournal(tool === 'bridge.restore')
+    // A write by another client may not be in the journal yet.
+    if (tool === RELOAD) await ping()
     let t0 = performance.now()
     const start = t0
     const first = await attempt(tool, args, ms)
     if (first.result) {
-      observe(first.result)
-      if (tool === RELOAD && first.result.ok) waitForReload()
-      return { result: first.result, ms: performance.now() - t0 }
+      const result = seen(first.result)
+      if (tool === RELOAD && result.ok) waitForReload()
+      return { result, ms: performance.now() - t0 }
     }
     if (tool === RELOAD) {
       // The reply was lost with the socket; running it again would reload twice.
@@ -369,10 +428,16 @@ export async function runSessionDaemon(
       reconnectFailure = message(error)
     }
     const reloaded = knownLoad !== before
+    // Same app, lost reply: a ping brings the journal of a write that did run.
+    if (!reconnectFailure) await sync()
     const again = repeatable(tool, args) && !(goneWait && reloaded)
     // A read-only call has nothing to warn about: the reconnect error says it.
     if (again && reconnectFailure) throw new Error(reconnectFailure)
     if (!again) {
+      if ((reloaded || reconnectFailure) && /^(mmkv|store)\./.test(tool))
+        addNote(
+          `${tool} was cut off; if it wrote to MMKV or a persisted store, that undo may be lost`,
+        )
       const how = reloaded
         ? 'the app reloaded'
         : before
@@ -398,12 +463,15 @@ export async function runSessionDaemon(
       throw new Error(
         `The app stopped answering after a reconnect: ${second.lost}`,
       )
-    observe(second.result)
     return {
-      result: second.result,
+      result: seen(second.result),
       ms: performance.now() - t0,
       reconnected: true,
     }
+  }
+  const sync = async () => {
+    if (journal.hasCarry()) await adoptJournal(true)
+    else await ping()
   }
   const waitForReload = () => {
     reloadingUntil = Date.now() + reloadWaitMs
@@ -443,6 +511,38 @@ export async function runSessionDaemon(
   const timer = health as { unref?: () => void } | undefined
   timer?.unref?.()
 
+  // Not callApp: #83 never repeats bridge.restore after a lost reply, but a stop must
+  // not leave fakes behind, so it re-checks what is pending and restores once more only if needed.
+  const restoreOnce = async (): Promise<ResultMessage> => {
+    const fail = (error: string): ResultMessage => ({ id: 'restore', from: '', ok: false, error, ms: 0 })
+    const run = (tool: string) => attempt(tool, [], timeoutMs)
+    try {
+      // A quick ping tells a dead connection apart from a slow restore.
+      if (stale || reconnecting || !(await ping())) await connected('no answer before restore')
+      // A persisted store may not be ready yet: try up to the cap, with a short pause, before restoring.
+      for (let i = 0; i < 3 && journal.hasCarry(); i++) {
+        if (i) await new Promise((r) => setTimeout(r, Math.min(adoptRetryMs, 500)))
+        await adoptJournal(true)
+      }
+      const first = await run('bridge.restore')
+      if (first.result) return seen(first.result)
+      await connected(first.lost)
+      await adoptJournal(true)
+      const check = await run('bridge.pending')
+      if (!check.result) return fail(`restore may or may not have run (${first.lost})`)
+      const left = seen(check.result)
+      if (!left.ok) return fail(`restore may or may not have run (${first.lost}); ${left.error}`)
+      if (!Object.keys(left.value as object).length)
+        return { ...left, id: 'restore', value: { note: 'the reply was lost; nothing is pending now' } }
+      const second = await run('bridge.restore')
+      return second.result
+        ? seen(second.result)
+        : fail(`The app stopped answering after a reconnect: ${second.lost}`)
+    } catch (error) {
+      return fail(message(error))
+    }
+  }
+
   let finishing: Promise<ResultMessage | null> | null = null
   let resolveDone: (reason: string) => void = () => {}
   const done = new Promise<string>((r) => {
@@ -459,16 +559,9 @@ export async function runSessionDaemon(
       const cut = setTimeout(() => cutOff.abort(), Math.min(attemptMs, 5000))
       let restore: ResultMessage | null = null
       if (!keep) {
-        restore = await callApp('bridge.restore', [], timeoutMs).then(
-          (r) => r.result,
-          (error): ResultMessage => ({
-            id: 'restore',
-            from: '',
-            ok: false,
-            error: message(error),
-            ms: 0,
-          }),
-        )
+        restore = await restoreOnce()
+        const left = journal.giveUp()
+        if (left) addNote(`app reloaded; ${left}`)
       }
       clearTimeout(cut)
       cutOff.abort()
@@ -509,6 +602,8 @@ export async function runSessionDaemon(
     switch (req.op) {
       case 'call': {
         if (!req.tool) return { id: req.id, error: 'call needs a tool' }
+        if (req.tool === 'bridge.adopt')
+          return { id: req.id, error: 'bridge.adopt is for a session\'s own use' }
         inflight++
         touch()
         try {
@@ -518,9 +613,11 @@ export async function runSessionDaemon(
             args,
             callTimeout(req.timeoutMs ?? timeoutMs, req.tool, args),
           )
+          await adoptRun
           return { id: req.id, ...answer, ...takeNotice() }
         } catch (error) {
           // The reload is often why the call failed; don't lose the notice.
+          await adoptRun
           return { id: req.id, error: message(error), ...takeNotice() }
         } finally {
           inflight--
