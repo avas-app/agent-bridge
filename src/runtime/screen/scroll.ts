@@ -309,3 +309,52 @@ export function mainScrollable(
     )
   return best.s
 }
+
+/** A FlatList, SectionList or FlashList: it renders only the rows near its window. */
+export const isVirtualized = (s: Scrollable) =>
+  s.fibers.some((f) => typeof propsOf(f)?.renderItem === 'function')
+
+/**
+ * The one list to page for a row: the largest vertical one on screen (a
+ * horizontal one only when there is no vertical one). The rest are named, never scrolled.
+ */
+export function pagingList(
+  scrollables: Scrollable[],
+  window: Window,
+): { list: Scrollable | null; skipped: Scrollable[] } {
+  const all = scrollables
+    .filter((s) => !s.hidden && scrollEnabled(s) && isVirtualized(s))
+    .map((s) => ({ s, rect: measureHost(s.host) }))
+    .filter(({ rect }) => onWindow(rect, window))
+    .sort((a, b) => area(b.rect) - area(a.rect))
+    .map(({ s }) => s)
+  const list = all.find((s) => !isHorizontal(s)) ?? all[0] ?? null
+  return { list, skipped: all.filter((s) => s !== list) }
+}
+
+/**
+ * After an offset lands, rows render a few frames later (onScroll, then the
+ * list's state, then a commit). Waits until `has()` is true or the row count,
+ * content size and offset have held still for ~64 ms, for at most `maxMs`.
+ */
+export async function awaitRows(
+  read: () => { metrics: Metrics | null; rows: number },
+  has: () => boolean,
+  maxMs = 250,
+): Promise<Metrics | null> {
+  const sig = () => {
+    const { metrics, rows } = read()
+    return { metrics, rows, key: `${rows}|${metrics?.max}|${metrics?.offset}` }
+  }
+  let cur = sig()
+  let still = 0
+  for (let waited = 0; waited < maxMs; waited += 16) {
+    if (has()) break
+    await wait(16)
+    const next = sig()
+    still = next.key === cur.key ? still + 1 : 0
+    cur = next
+    if (cur.rows > 0 && still >= 4) break
+  }
+  return cur.metrics
+}

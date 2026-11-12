@@ -14,6 +14,9 @@ export type WaitForResult = { ms: number; element?: ScreenElement }
 
 const POLL_MS = 50
 
+const NO_PAGING =
+  'waitFor does not page lists for rows they have not rendered; wait for the list, then use press, fill or setValue with {scroll:true}'
+
 function nearMissNote(found: Found[], target: Target): string {
   const text = typeof target === 'string' ? target : target.text
   const near = text ? nearMisses(found, text) : []
@@ -78,7 +81,7 @@ export function waitForTarget(
           const what = options.gone ? 'to disappear' : 'to appear'
           reject(
             new Error(
-              `Timed out after ${timeoutMs} ms waiting for ${showTarget(target)} ${what}. On screen: ${onScreenSummary(found)}${nearMissNote(found, target)}`,
+              `Timed out after ${timeoutMs} ms waiting for ${showTarget(target)} ${what}. On screen: ${onScreenSummary(found)}${nearMissNote(found, target)}${options.scroll && !options.gone ? `. ${NO_PAGING}` : ''}`,
             ),
           )
         }

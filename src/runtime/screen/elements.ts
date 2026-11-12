@@ -48,6 +48,8 @@ export type Found = {
   press: Fiber | null
   /** Outermost fiber with text-input handlers, when the element is an input. */
   input: Fiber | null
+  /** Outermost fiber with `onValueChange` (or a Slider's `onSlidingComplete`): a Switch, Slider, Picker or SegmentedControl. */
+  change: Fiber | null
   /** Outermost fiber with `onAccessibilityAction`, when it names `accessibilityActions`. */
   actions: Fiber | null
   maxLength?: number
@@ -266,6 +268,14 @@ const SWITCH_HOSTS = new Set(['RCTSwitch', 'AndroidSwitch'])
 
 const isFn = (v: unknown) => typeof v === 'function'
 
+/** A Switch: its host is the native switch, or it says so with its role. */
+export function isSwitchFiber(fiber: Fiber): boolean {
+  const p = propsOf(fiber)
+  if ((p?.accessibilityRole ?? p?.role) === 'switch') return true
+  const own = firstHost(fiber)
+  return !!own && SWITCH_HOSTS.has(String(own.type))
+}
+
 export const isInputProps = (p: Props) =>
   isFn(p.onChangeText) ||
   (isFn(p.onChange) &&
@@ -288,7 +298,11 @@ const activates = (rec: Found) => !!rec.actions && !!rec.element.actions?.includ
 
 const TEXT_HOSTS = /^RCT(Virtual)?Text$/
 
-const isControl = (p: Props) => isFn(p.onPress) || isFn(p.onValueChange) || activatesProps(p)
+// A Slider may have only onSlidingComplete; a SegmentedControl's documented handler is onChange.
+const changesValue = (p: Props) =>
+  isFn(p.onValueChange) || isFn(p.onSlidingComplete) || (Array.isArray(p.values) && isFn(p.onChange))
+
+const isControl = (p: Props) => isFn(p.onPress) || changesValue(p) || activatesProps(p)
 const activatesProps = (p: Props) => !!actionNamesOf(p)?.includes('activate')
 
 /**
@@ -327,7 +341,7 @@ function wrapsControls(rec: Rec): boolean {
 const interesting = (p: Props) =>
   isFn(p.onPress) ||
   actionNamesOf(p) !== null ||
-  isFn(p.onValueChange) ||
+  changesValue(p) ||
   isInputProps(p) ||
   typeof p.testID === 'string' ||
   typeof labelOf(p) === 'string' ||
@@ -336,7 +350,7 @@ const interesting = (p: Props) =>
 // Icon fonts (Ionicons and friends) render glyphs from the private use area.
 const ICON_GLYPHS = /[\uE000-\uF8FF]/g
 
-function firstHost(fiber: Fiber): Fiber | null {
+export function firstHost(fiber: Fiber): Fiber | null {
   if (fiber.tag === HOST_COMPONENT) return fiber
   const stack = fiber.child ? [fiber.child] : []
   while (stack.length) {
@@ -352,6 +366,7 @@ function absorb(rec: Rec, fiber: Fiber, p: Props) {
   const e = rec.element
   if (!rec.input && isInputProps(p)) rec.input = fiber
   if (!rec.press && isFn(p.onPress)) rec.press = fiber
+  if (!rec.change && changesValue(p)) rec.change = fiber
   const actions = actionNamesOf(p)
   if (!rec.actions && actions) {
     rec.actions = fiber
@@ -544,6 +559,7 @@ export function collectScreen(
       host,
       press: null,
       input: null,
+      change: null,
       actions: null,
       hidden,
       scroller,

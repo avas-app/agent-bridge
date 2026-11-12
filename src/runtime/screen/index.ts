@@ -1,7 +1,15 @@
 // The screen tools' logic, given a way to read the fiber roots and the window
 // size. tools/screen.ts wires it to React Native.
-import type { Fiber } from '../find-text-core'
-import { fillInput, pressElement } from './actions'
+import { type Fiber, measureHost } from '../find-text-core'
+import {
+  fillInput,
+  isSlider,
+  isToggle,
+  longPressFiberOf,
+  pressElement,
+  setControlValue,
+  valueOf,
+} from './actions'
 import {
   collectScreen,
   UNMEASURED_ERROR,
@@ -13,8 +21,10 @@ import {
 } from './elements'
 import { findText, type FindTextOptions } from './find-text'
 import {
+  awaitRows,
   awaitScroll,
   draggable,
+  isHorizontal,
   layoutOf,
   mainScrollable,
   type Metrics,
@@ -25,10 +35,11 @@ import {
   scrollerFor,
   scrollToEnd,
   scrollToOffset,
+  pagingList,
   wait,
 } from './scroll'
 import { settle } from './settle'
-import { describe, resolveTarget, type Target } from './targets'
+import { describe, indexOf, matchTarget, resolveTarget, type Target } from './targets'
 import { type WaitForOptions, waitForTarget } from './wait-for'
 
 export type { ScreenElement } from './elements'
@@ -118,19 +129,206 @@ export function createScreen(env: {
     return shown
   }
 
+  const PAGE_LIMIT = 40
+  const PAGE_MS = 10_000
+
+  // `scroll` is true, or {timeoutMs} to change the paging time budget.
+  const pagingBudget = (scroll: boolean | { timeoutMs?: number } | undefined): number => {
+    if (scroll === null || typeof scroll !== 'object') return PAGE_MS
+    const bad = Object.keys(scroll).filter((k) => k !== 'timeoutMs')
+    if (bad.length)
+      throw new Error(`Unknown scroll option ${bad.map((k) => JSON.stringify(k)).join(', ')}. Valid: timeoutMs`)
+    const ms = scroll.timeoutMs
+    if (ms === undefined) return PAGE_MS
+    if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0)
+      throw new Error(`scroll.timeoutMs is a positive number of milliseconds; got ${JSON.stringify(ms)}`)
+    return ms
+  }
+
+  const scrollableAgain = (host: Fiber): Scrollable | undefined => {
+    const node = host.stateNode
+    return collectAll().scrollables.find(
+      (s) => s.host === host || (node != null && s.host.stateNode === node),
+    )
+  }
+
+  // Whether the target has rendered (the `index`th match, when one is asked for).
+  const rendered = (target: Target, index?: number) => () =>
+    matchTarget(collect().filter((f) => !f.hidden), target).length > (indexOf(target) ?? index ?? 0)
+
+  const nameOf = (host: Fiber) => {
+    const el = collectAll().found.find((f) => f.host === host || f.host.stateNode === host.stateNode)
+    return el ? describe(el.element) : 'the list'
+  }
+
+  // Pages one list from where it is, outward in both directions (the nearer end first),
+  // until the target renders, both ends are reached, or the budget is spent. A list that
+  // does not have it is scrolled back to where it was; one that does is left in place.
+  const pageList = async (
+    first: Scrollable,
+    skipped: Scrollable[],
+    has: () => boolean,
+    budgetMs: number,
+  ): Promise<{ found: boolean; note: string }> => {
+    const { host } = first
+    const name = nameOf(host)
+    const first0 = metricsOf(first)
+    if (!first0) return { found: false, note: `${name} has no readable scroll position` }
+    const start: Metrics = first0
+    const size = Math.max(1, ((isHorizontal(first) ? start.view?.width : start.view?.height) ?? 400) * 0.9)
+    const deadline = performance.now() + budgetMs
+    let pages = 0
+    let lowest = start.offset
+    let highest = start.offset
+    let max = start.max
+    let stop = 'both ends'
+    const horizontal = isHorizontal(first)
+    const node = host.stateNode
+    let span: { top: number; bottom: number } | null = null
+    const readRows = () => {
+      const now = scrollableAgain(host)
+      const metrics = now ? metricsOf(now) : null
+      let rows = 0
+      let top = Infinity
+      let bottom = -Infinity
+      for (const f of collectAll().found) {
+        let inList = false
+        for (let x = f.scroller; x; x = x.parent)
+          if (x.host === host || (node != null && x.host.stateNode === node)) inList = true
+        if (!inList) continue
+        if (f.onScreen) rows++
+        // Rendered rows as offsets along the scroll axis, off screen ones too.
+        const box = metrics?.view && !metrics.inverted ? measureHost(f.host) : null
+        if (!metrics?.view || !box) continue
+        const at = (horizontal ? box.x - metrics.view.x : box.y - metrics.view.y) + metrics.offset
+        top = Math.min(top, at)
+        bottom = Math.max(bottom, at + (horizontal ? box.width : box.height))
+      }
+      span = top <= bottom ? { top, bottom } : null
+      return { metrics, rows }
+    }
+    // Lands the offset, then looks for the target before waiting for rows to render.
+    const go = async (offset: number) => {
+      const now = scrollableAgain(host)
+      if (!now) return false
+      const before = metricsOf(now)
+      scrollToOffset(now, offset)
+      await awaitScroll(now, before?.offset, offset)
+      pages++
+      if (has()) return true
+      const m = await awaitRows(readRows, has)
+      if (m) {
+        lowest = Math.min(lowest, m.offset)
+        highest = Math.max(highest, m.offset)
+        max = m.max
+      }
+      return has()
+    }
+    // One direction: true when the row rendered. A budget share ends it early.
+    const sweep = async (dir: 1 | -1, until: number, limit: number): Promise<boolean> => {
+      const from = pages
+      while (true) {
+        if (pages - from >= limit || performance.now() >= until) {
+          stop = pages >= PAGE_LIMIT ? `the ${PAGE_LIMIT}-page limit` : `the ${budgetMs} ms budget`
+          return false
+        }
+        const m = readRows().metrics
+        if (!m) return false
+        // Step to just past the rendered rows (a virtualized list renders several
+        // viewports), so each page brings new rows; at least one viewport.
+        const viewSize = size / 0.9
+        const reach = span as { top: number; bottom: number } | null
+        const want =
+          dir === 1
+            ? Math.max(m.offset + size, reach ? reach.bottom : -Infinity)
+            : Math.min(m.offset - size, reach ? reach.top - viewSize : Infinity)
+        const next = dir === 1 ? Math.min(m.max ?? Infinity, want) : Math.max(0, want)
+        if (Math.abs(next - m.offset) < 1) {
+          // At the end: rows measured late (or onEndReached) may have grown the content.
+          const grown = await awaitRows(readRows, has, 400)
+          if (has()) return true
+          if (dir === 1 && grown && (grown.max ?? 0) - m.offset >= 1) continue
+          return false
+        }
+        if (await go(next)) return true
+      }
+    }
+    let found = false
+    try {
+      const downFirst = start.max == null || start.max - start.offset <= start.offset
+      const order: (1 | -1)[] = downFirst ? [1, -1] : [-1, 1]
+      const now = performance.now()
+      for (const [i, dir] of order.entries()) {
+        // The first direction keeps half unless the other has no room (a list at an end).
+        const otherRoom = dir === -1 ? start.max == null || start.max - start.offset >= 1 : start.offset >= 1
+        const half = i === 0 && otherRoom
+        const share = half ? now + budgetMs / 2 : deadline
+        const limit = half ? PAGE_LIMIT / 2 : PAGE_LIMIT - pages
+        if (dir === -1 && start.offset < 1) continue
+        // The second direction starts back at the start offset.
+        if (i === 1 && pages) await go(start.offset)
+        if (await sweep(dir, share, limit)) return (found = true), done()
+      }
+    } finally {
+      if (!found) {
+        const now = scrollableAgain(host)
+        if (now) {
+          await scrolled(now, () => (scrollToOffset(now, start.offset), start.offset))
+          await settle()
+        }
+      }
+    }
+    return done()
+    function done() {
+      const where = `up to offset ${Math.round(lowest)} and down to offset ${Math.round(highest)} of ${max == null ? '?' : Math.round(max)}`
+      const left = skipped.length ? `. Not paged: ${skipped.map((s) => nameOf(s.host)).join(', ')}` : ''
+      return {
+        found,
+        note: found
+          ? ''
+          : `{scroll:true} paged ${name} ${pages} page(s), ${where}, without rendering a match, then scrolled back to offset ${Math.round(start.offset)}. Stopped at: ${stop}${left}`,
+      }
+    }
+  }
+
+  // For a target no rendered row matches: pages the main virtualized list on screen, looking for it.
+  const pageFor = async (has: () => boolean, budgetMs: number): Promise<{ found: boolean; note: string }> => {
+    const { list, skipped } = pagingList(collectAll().scrollables, env.window())
+    if (!list)
+      return { found: false, note: '{scroll:true} found no FlatList, SectionList or FlashList on screen to page' }
+    return pageList(list, skipped, has, budgetMs)
+  }
+
   // The element a target means, scrolled into view first when it is off
-  // screen and `scroll` is set.
+  // screen and `scroll` is set; a row a list has not rendered is paged to.
   const resolve = async (
     target: Target,
     prefer: (f: Found) => boolean,
-    options: { index?: number; afterText?: boolean; scroll?: boolean },
+    options: { index?: number; afterText?: boolean; scroll?: boolean | { timeoutMs?: number } },
   ): Promise<Found> => {
-    const found = resolveTarget(collect(), target, prefer, {
-      ...options,
-      offscreen: options.scroll,
-    })
-    return found.onScreen ? found : reveal(found)
+    const pick = () =>
+      resolveTarget(collect(), target, prefer, { ...options, offscreen: !!options.scroll })
+    let note = ''
+    if (options.scroll && typeof target === 'object' && target.at !== undefined)
+      throw new Error(
+        '{at:[x,y]} is a point on the screen and can\'t be scrolled to; drop {scroll:true} or target by text or testID',
+      )
+    const has = rendered(target, options.index)
+    if (options.scroll && !has()) {
+      const paged = await pageFor(has, pagingBudget(options.scroll))
+      note = paged.note
+      if (!paged.found) {
+        try {
+          return await settleOn(pick())
+        } catch (error) {
+          throw note ? new Error(`${(error as Error).message}. ${note}`) : error
+        }
+      }
+    }
+    return settleOn(pick())
   }
+
+  const settleOn = async (found: Found) => (found.onScreen ? found : reveal(found))
 
   return {
     snapshot(options: { all?: boolean } = {}): { elements: ScreenElement[]; hidden?: number } {
@@ -155,7 +353,7 @@ export function createScreen(env: {
     async fill(
       target: Target,
       text: string,
-      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean } = {},
+      options: { submit?: boolean; type?: boolean; index?: number; scroll?: boolean | { timeoutMs?: number } } = {},
     ): Promise<{ filled: string; element: ScreenElement; warning?: string }> {
       const found = await resolve(target, (f) => !!f.input, {
         index: options.index,
@@ -183,7 +381,13 @@ export function createScreen(env: {
 
     async press(
       target: Target,
-      options: { force?: boolean; index?: number; scroll?: boolean; action?: string } = {},
+      options: {
+        force?: boolean
+        index?: number
+        scroll?: boolean | { timeoutMs?: number }
+        action?: string
+        long?: boolean
+      } = {},
     ): Promise<ScreenElement & { via?: string }> {
       const { action } = options
       if (action !== undefined && typeof action !== 'string')
@@ -191,15 +395,40 @@ export function createScreen(env: {
       const found = await resolve(
         target,
         (f) =>
-          action === undefined
-            ? !!f.press || f.element.kind === 'button'
-            : !!f.element.actions?.includes(action),
+          options.long
+            ? !!longPressFiberOf(f)
+            : action === undefined
+              ? !!f.press || f.element.kind === 'button' || isToggle(f)
+              : !!f.element.actions?.includes(action),
         options,
       )
       const via = pressElement(found, options)
       await settle()
       // Only a press that skipped onPress says so, to keep the usual reply unchanged.
       return via === 'onPress' ? found.element : { ...found.element, via }
+    },
+
+    /** Sets a Switch, Slider, Picker or SegmentedControl through its onValueChange, and reads the value back. */
+    async setValue(
+      target: Target,
+      value: unknown,
+      options: { force?: boolean; index?: number; scroll?: boolean | { timeoutMs?: number } } = {},
+    ): Promise<{ value: unknown; element: ScreenElement; warning?: string }> {
+      const found = await resolve(target, (f) => !!f.change, options)
+      const before = valueOf(found)
+      setControlValue(found, value, options)
+      await settle()
+      const again = reread(found)
+      const now = valueOf(again)
+      const result = { value: now, element: again.element }
+      // A Slider's `value` is often only its start value, and an uncontrolled control keeps none to read back.
+      const same = typeof now === 'number' && typeof value === 'number' ? Math.abs(now - value) < 1e-6 : now === value
+      if (before !== undefined && !same && !(found.change && isSlider(found.change)))
+        return {
+          ...result,
+          warning: `the control still shows ${JSON.stringify(now)}; the app did not apply ${JSON.stringify(value)}`,
+        }
+      return result
     },
 
     /**

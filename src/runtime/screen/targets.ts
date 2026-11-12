@@ -151,7 +151,10 @@ export function resolveTarget(
     reachable.filter((f) => f.onScreen),
     target,
   )
-  if (!matches.length && options?.offscreen) matches = matchTarget(reachable, target)
+  // An {index} counts every rendered match, as paging does, so a page that lands with
+  // only some of them on screen still finds the one asked for.
+  const hasIndex = (options?.index ?? indexOf(target)) !== undefined
+  if (options?.offscreen && (!matches.length || hasIndex)) matches = matchTarget(reachable, target)
   if (!matches.length) {
     const hidden = matchTarget(found, target)[0]
     if (hidden?.hidden)
@@ -163,8 +166,8 @@ export function resolveTarget(
         `${showTarget(target)} matches ${describe(hidden.element)}, which is not on screen. Pass {scroll:true} to scroll it into view, or use screen.scroll`,
       )
     const unrendered = options?.offscreen
-      ? '. A list renders only the rows near its window: for a row it has not rendered yet, screen.scroll {toEnd:true} or {by: points} first'
-      : ''
+      ? ''
+      : '. A list renders only the rows near its window: pass {scroll:true} to page it for a row it has not rendered yet'
     throw new Error(
       `Nothing on screen matches ${showTarget(target)}. On screen: ${onScreenSummary(found)}${unrendered}`,
     )
