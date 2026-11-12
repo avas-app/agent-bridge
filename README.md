@@ -1,6 +1,6 @@
 # @avasapp/agent-bridge
 
-Let coding agents drive any running Expo or React Native app directly. Seed data, flip flags, fake realtime messages, navigate and check the screen in **milliseconds**, without tapping through the app. It works alongside [agent-device](https://github.com/callstack/agent-device): agent-device opens the app and handles native UI, and agent-bridge handles everything inside the app.
+Let coding agents drive any running Expo or React Native app directly. Seed data, flip flags, fake realtime messages, navigate and check the screen in **milliseconds**, without tapping through the app. It works alongside device tools such as [agent-device](https://github.com/callstack/agent-device) and [Argent](https://github.com/software-mansion/argent): they open the app and handle native UI, and agent-bridge handles everything inside the app. Use it from a shell, from [flows](docs/cli.md) or as an [MCP server](docs/cli.md#mcp-server).
 
 ![The same checks with agent-device alone (22.4 s) and with agent-bridge (1.4 s): hide a tab, turn on dark mode, fill in a form, seed data, fake a live message and undo it all](example/media/demo.gif)
 
@@ -85,7 +85,7 @@ export function AgentBridge() {
 }
 ```
 
-Every app also gets `screen.snapshot`, `screen.press`, `screen.fill`, `screen.scroll`, `screen.waitFor`, `screen.findText`, `app.reload`, and `bridge.restore` to undo everything the agent changed. See [built-in tools and restore](docs/built-in-tools.md), including how to give agents your own hooks and register their undo.
+Every app also gets `screen.snapshot` (one short line per element), `screen.press` (taps, long presses, Switch toggles), `screen.fill`, `screen.setValue` (Switch, Slider, Picker, SegmentedControl), `screen.scroll`, `screen.waitFor`, `screen.findText`, `app.reload`, and `bridge.restore` to undo everything the agent changed, even across a reload in a session. See [built-in tools and restore](docs/built-in-tools.md), including how to give agents your own hooks and register their undo.
 
 Most flows need the app in a known state first, such as a user signed in locally with every request mocked. Define that once as a [scenario](docs/scenarios.md).
 
@@ -105,7 +105,7 @@ npx @avasapp/agent-bridge session stop             # runs bridge.restore, then d
 
 Agents should run `./node_modules/.bin/agent-bridge` rather than `npx`, which is slower and can print npm warnings into their output. See [the CLI](docs/cli.md) for flows, batch mode, the REPL, sessions and the `connect()` client. Agents that prefer MCP tools to a shell can run `agent-bridge mcp`; see [the MCP server](docs/cli.md#mcp-server).
 
-No device tool is needed. Pair one (such as agent-device) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow.
+No device tool is needed. Pair one (such as agent-device or Argent) with the bridge for what it can't reach: system alerts, permission prompts, the keyboard, screenshots, and one real tap per flow. On bare React Native the bridge talks over Metro's debugger socket, which React Native before 0.85 gives to one client at a time, so a tool that holds the debugger open (Argent's debugger tools, React Native DevTools) and the bridge take it from each other; Expo apps use the dev-tools socket and are not affected.
 
 The screen tools measure with Fabric, so they need React Native's New Architecture; on the old one the tools that need positions fail with an error that says so (`snapshot {all: true}` and `findText` still return text, without rects).
 
