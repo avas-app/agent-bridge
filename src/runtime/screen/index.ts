@@ -14,6 +14,7 @@ import {
   collectScreen,
   UNMEASURED_ERROR,
   focused,
+  type ElementKind,
   type Found,
   type Scrollable,
   type ScreenElement,
@@ -38,12 +39,23 @@ import {
   pagingList,
   wait,
 } from './scroll'
+import { ELEMENT_KINDS, insideRect, snapshotText } from './snapshot-text'
 import { settle } from './settle'
 import { describe, indexOf, matchTarget, resolveTarget, type Target } from './targets'
 import { type WaitForOptions, waitForTarget } from './wait-for'
 
 export type { ScreenElement } from './elements'
 export type { Target } from './targets'
+
+export type SnapshotOptions = {
+  all?: boolean
+  /** `"text"`: one line per element, as a string. Default `"json"`. */
+  format?: 'json' | 'text'
+  /** Only these kinds of element. */
+  kinds?: ElementKind[]
+  /** Only elements inside this target's rect. */
+  within?: Target
+}
 
 export function createScreen(env: {
   roots: () => Fiber[]
@@ -331,20 +343,41 @@ export function createScreen(env: {
   const settleOn = async (found: Found) => (found.onScreen ? found : reveal(found))
 
   return {
-    snapshot(options: { all?: boolean } = {}): { elements: ScreenElement[]; hidden?: number } {
-      const found = options.all ? collectLoose().found : collect()
-      if (options.all)
-        return {
-          elements: found.map((f) => ({
-            ...f.element,
-            onScreen: f.onScreen,
-            ...(f.hidden && { hidden: true }),
-          })),
-        }
-      const shown = focused(found)
-      const elements = shown.filter((f) => f.onScreen).map((f) => f.element)
-      const hidden = found.length - shown.length
+    snapshot(options: SnapshotOptions = {}): { elements: ScreenElement[]; hidden?: number } {
+      const { all, format, kinds, within } = options
+      if (format !== undefined && format !== 'json' && format !== 'text')
+        throw new Error(`screen.snapshot format is "json" or "text", not ${JSON.stringify(format)}`)
+      for (const k of kinds ?? [])
+        if (!ELEMENT_KINDS.includes(k))
+          throw new Error(`screen.snapshot kinds are ${ELEMENT_KINDS.join(', ')}; ${JSON.stringify(k)} is not one`)
+      const found = all ? collectLoose().found : collect()
+      let elements: ScreenElement[]
+      let hidden: number | undefined
+      if (all) {
+        elements = found.map((f) => ({
+          ...f.element,
+          onScreen: f.onScreen,
+          ...(f.hidden && { hidden: true }),
+        }))
+      } else {
+        const shown = focused(found)
+        elements = shown.filter((f) => f.onScreen).map((f) => f.element)
+        hidden = found.length - shown.length || undefined
+      }
+      if (within !== undefined) {
+        const scope = resolveTarget(found, within, undefined, { offscreen: all }).element
+        const box = scope.rect
+        if (!box) throw new Error(`${describe(scope)} has no position, so it can't scope a snapshot`)
+        elements = elements.filter((e) => e.rect !== box && insideRect(e, box))
+      }
+      if (kinds?.length) elements = elements.filter((e) => kinds.includes(e.kind))
       return hidden ? { elements, hidden } : { elements }
+    },
+
+    /** `snapshot` as one line per element. */
+    snapshotText(options: SnapshotOptions = {}): string {
+      const { elements, hidden } = this.snapshot(options)
+      return snapshotText(elements, hidden)
     },
 
     findText: (text: string, options?: FindTextOptions) =>

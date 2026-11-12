@@ -1,7 +1,7 @@
 import { Dimensions } from 'react-native'
 
 import { fiberRoots } from '../find-text-core'
-import { createScreen, type Target } from '../screen'
+import { createScreen, type SnapshotOptions, type Target } from '../screen'
 import type { Tools } from '../types'
 
 const devToolsHook = () =>
@@ -26,8 +26,9 @@ export function screenTools(): Tools {
     },
     'screen.snapshot': {
       description:
-        'Buttons, inputs, text, and testID or labelled views on screen, with rects and checked/selected/expanded state (a Switch\'s value is checked). `actions` lists the accessibility actions an element handles; one with "activate" and no onPress (a swipe-to-confirm) is a button screen.press can press. Only the focused screen: unfocused tabs and stack screens, content under an open modal, display:none and accessibility-hidden subtrees are left out, and `hidden` counts the elements skipped. {all:true} lists everything, marking off-screen (onScreen:false) and hidden (hidden:true) ones. A WebView registered with the react-native-webview adapter shows as one `webview` element with its name: use webview.* inside it.',
-      run: (options?: { all?: boolean }) => screen.snapshot(options),
+        'Buttons, inputs, text, and testID or labelled views on screen, with rects and checked/selected/expanded state (a Switch\'s value is checked). `actions` lists the accessibility actions an element handles; one with "activate" and no onPress (a swipe-to-confirm) is a button screen.press can press. Only the focused screen: unfocused tabs and stack screens, content under an open modal, display:none and accessibility-hidden subtrees are left out, and `hidden` counts the elements skipped. {all:true} lists everything, marking off-screen (onScreen:false) and hidden (hidden:true) ones. A WebView registered with the react-native-webview adapter shows as one `webview` element with its name: use webview.* inside it. Options: {format:"text"} returns one line per element (kind, #testID, text, label, value, state; `@x,y` only on lines that repeat) instead of JSON with rects; {kinds:["button","input"]} keeps only those kinds; {within: target} keeps only elements inside that target (a target as for screen.press).',
+      run: (options?: SnapshotOptions) =>
+        options?.format === 'text' ? screen.snapshotText(options) : screen.snapshot(options),
     },
     'screen.fill': {
       description:

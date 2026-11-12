@@ -21,6 +21,7 @@ import { metroHost } from './client/discover'
 import { logLine } from './client/log-lines'
 import { assertListening, noAppHint } from './client/metro-hint'
 import { renderResult } from './client/output'
+import { isSnapshotText, withCompactSnapshot } from './client/snapshot-format'
 import { DEFAULT_HISTORY_FILE, runRepl } from './client/repl'
 import {
   DAEMON_COMMAND,
@@ -77,6 +78,8 @@ Options
                          run: the report file (with --reporter json|junit)
   --stop-on-error        call --batch: stop after the first failed call
   --full                 call: print results over 32 KB instead of a summary
+  --json                 call screen.snapshot: print JSON with rects, not one line per element
+                         (--out also writes JSON)
   --strict               run: fail a flow if the app logged an error
   --bail                 run: stop at the first failed flow
   --grep <text>          run: only flows whose name or path (relative to here) contains text
@@ -245,13 +248,15 @@ async function main() {
       )
       return withBridge(async (bridge) => {
         const { value, ms, appMs, logs, notice } = await bridge
-          .timed(tool, ...args)
+          .timed(tool, ...withCompactSnapshot(tool, args, values.json || !!values.out))
           .catch((error: unknown) => {
             for (const e of failedLogs(error)) console.error(logLine(e))
             throw error
           })
         console.log(
-          await renderResult(value, { out: values.out, full: values.full }),
+          isSnapshotText(tool, value)
+            ? value
+            : await renderResult(value, { out: values.out, full: values.full }),
         )
         for (const e of logs) console.error(logLine(e))
         if (notice) console.error(`Warning: ${notice}`)

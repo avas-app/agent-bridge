@@ -37,6 +37,8 @@ async function fakeApp(metro: string, deviceId: string, extra: Tools = {}) {
         : kind === 'text'
           ? { base64: 'aGVsbG8gd29ybGQ=', name: 'notes.txt' }
           : { base64: `data:image/png;base64,${PNG}` },
+    'screen.snapshot': (o?: { format?: string }) =>
+      o?.format === 'text' ? 'button #ok "OK"' : { elements: [{ kind: 'button', testID: 'ok', text: 'OK', rect: { x: 1, y: 2, width: 3, height: 4 } }] },
     'demo.file': () => ({ base64: 'aGVsbG8gd29ybGQ=', name: 'notes.txt' }),
     'demo.slow': () => new Promise((r) => setTimeout(() => r('slow'), 400)),
     'bridge.restore': () => {
@@ -511,4 +513,15 @@ describe('connector', () => {
     expect(c.takeNotice()).toMatch(/"default".*stopped/)
     if (!(next instanceof Error)) next.close()
   }, 30_000)
+})
+
+describe('screen.snapshot over MCP', () => {
+  test('is compact text by default, JSON when the caller asks for it', async () => {
+    const s = await setup()
+    await s.request('tools/list')
+    const text = (await s.call('screen_snapshot')).result.content[0].text
+    expect(text).toBe('button #ok "OK"')
+    const json = (await s.call('screen_snapshot', [{ format: 'json' }])).result.content[0].text
+    expect(JSON.parse(json).elements[0].rect.width).toBe(3)
+  })
 })

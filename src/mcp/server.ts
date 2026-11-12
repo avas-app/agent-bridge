@@ -7,6 +7,7 @@ import type { Readable, Writable } from 'node:stream'
 import { type AgentBridge, AgentBridgeCallError, type LogEntry } from '../client/index'
 import { logLine } from '../client/log-lines'
 import { OUTPUT_LIMIT_BYTES, shapedResult } from '../client/output'
+import { isSnapshotText, withCompactSnapshot } from '../client/snapshot-format'
 import { SessionLinkError } from '../client/session/client'
 import { encodeLine } from '../client/session/protocol'
 
@@ -112,6 +113,7 @@ async function resultContent(
 ): Promise<Content[]> {
   const image = withImage(tool, value)
   if (image) return image
+  if (isSnapshotText(tool, value) && (full || value.length <= OUTPUT_LIMIT_BYTES)) return [text(value)]
   const shaped = await shapedResult(value, { full })
   const json = JSON.stringify(shaped, null, 2) ?? 'null'
   if (
@@ -315,7 +317,7 @@ export function startMcpServer(options: McpOptions): McpServer {
       if (!Array.isArray(args))
         return failure(text('`args` must be an array of the tool\'s arguments.'))
       try {
-        const timed = await b.timed(tool, ...args)
+        const timed = await b.timed(tool, ...withCompactSnapshot(tool, args))
         const content = await resultContent(tool, timed.value, input.full === true)
         content.push(...logBlock(timed.logs))
         if (timed.notice) content.push(text(`Warning: ${timed.notice}`))

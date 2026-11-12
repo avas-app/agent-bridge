@@ -102,10 +102,10 @@ const isAt = (target: Target) => typeof target === 'object' && target.at !== und
 export const indexOf = (target: Target) =>
   typeof target === 'object' ? target.index : undefined
 
-const clip = (s: string) => (s.length > 40 ? `${s.slice(0, 39)}…` : s)
 
 /** One line an agent can read, e.g. `button #save-plant "Save plant"`. */
-export function describe(e: ScreenElement): string {
+export function describe(e: ScreenElement, max = 40): string {
+  const clip = (s: string) => (s.length > max ? `${s.slice(0, max - 1)}…` : s)
   const stated = e.checked !== undefined || e.selected !== undefined || e.expanded !== undefined
   const bits: string[] = [stated && e.role ? e.role : e.kind]
   if (e.webview !== undefined) bits.push(JSON.stringify(e.webview))

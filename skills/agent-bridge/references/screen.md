@@ -1,7 +1,9 @@
 # See and use the screen
 
 ```sh
-npx @avasapp/agent-bridge call screen.snapshot                          # buttons, inputs, text on the focused screen (`hidden` counts what was skipped; {"all":true} lists everything)
+npx @avasapp/agent-bridge call screen.snapshot                          # one line per element: `button #save "Save" disabled` (`hidden` counts what was skipped; {"all":true} lists everything)
+npx @avasapp/agent-bridge call screen.snapshot '{"kinds":["input","button"],"within":"checkout-form"}'   # only those kinds, only inside that target
+npx @avasapp/agent-bridge call screen.snapshot --json                  # JSON with rects, `actions` and `editable`
 npx @avasapp/agent-bridge call screen.findText "Payment"                 # text or accessibility label; {"labels":false} for text only
 npx @avasapp/agent-bridge call screen.press '"add-plant"'               # by testID, label or text
 npx @avasapp/agent-bridge call screen.press '[{"at":[350,60]}]'          # icon-only button: by point; {"index":1} picks among matches; {"force":true} presses disabled
