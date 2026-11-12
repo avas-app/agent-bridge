@@ -11,6 +11,14 @@ import {
 } from './protocol'
 import { type SessionState, pickSession } from './state'
 
+/** The socket to a session closed or never opened (not an error the app or the session reported). */
+export class SessionLinkError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SessionLinkError'
+  }
+}
+
 type Link = {
   request: (req: Omit<SessionRequest, 'id'>) => Promise<SessionResponse>
   close: () => void
@@ -30,7 +38,7 @@ export function openSessionLink(state: SessionState): Promise<Link> {
         request: (req) =>
           new Promise((done, fail) => {
             if (socket.destroyed || socket.writableEnded) {
-              fail(new Error(gone))
+              fail(new SessionLinkError(gone))
               return
             }
             const id = ++seq
@@ -43,13 +51,13 @@ export function openSessionLink(state: SessionState): Promise<Link> {
     socket.on('error', (error) => {
       if (!open)
         reject(
-          new Error(
+          new SessionLinkError(
             `Session "${state.name}" isn't answering on ${state.socket}: ${error.message}`,
           ),
         )
     })
     socket.on('close', () => {
-      for (const [id, done] of waiting) done({ id, error: gone })
+      for (const [id, done] of waiting) done({ id, error: gone, linkLost: true })
       waiting.clear()
     })
     createInterface({ input: socket }).on('line', (line) => {
@@ -119,6 +127,7 @@ export async function connectSession(
     })
     if (res.error || !res.result) {
       const why = res.error ?? 'No result'
+      if (res.linkLost) throw new SessionLinkError(why)
       // Keep the notice: the reload is often why the call failed.
       throw res.notice
         ? new AgentBridgeCallError(tool, why, [], res.notice)

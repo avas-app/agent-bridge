@@ -84,10 +84,12 @@ export function differences(
   snapshot: unknown,
   current: unknown,
   show: (key: string, value: unknown) => unknown,
+  only?: Set<string>,
 ): Record<string, { snapshot: unknown; current: unknown }> {
   if (!isObject(snapshot) || !isObject(current)) return {}
   const out: Record<string, { snapshot: unknown; current: unknown }> = {}
   for (const k of new Set([...Object.keys(snapshot), ...Object.keys(current)])) {
+    if (only && !only.has(k)) continue
     const a = snapshot[k]
     const b = current[k]
     if (typeof a === 'function' || typeof b === 'function') continue

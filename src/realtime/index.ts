@@ -1,5 +1,5 @@
-export { fakeableConnection, realtimeAdapter, tapListeners } from './patch'
-export type { FakeableConnectionOptions, TapListenersOptions } from './patch'
+export { fakeableConnection, realtimeAdapter, tapListeners, tapOutgoing } from './patch'
+export type { FakeableConnectionOptions, TapListenersOptions, TapOutgoingOptions } from './patch'
 export { createRealtimeTap } from './tap'
 export type {
   MessageSummary,

@@ -1,4 +1,5 @@
 import type { Tools } from '../runtime/types'
+import { redact, snapshot } from './snapshot'
 
 export const LOG_SIZE = 50
 
@@ -65,6 +66,8 @@ export type RealtimeTap<M> = {
     listener: (message: M, ...rest: unknown[]) => void
     unsubscribe: () => void
   }
+  /** Logs a message the app sent, so an agent can check "did the app send X". */
+  sent: (channel: string, summary: MessageSummary) => void
   /** `realtime.*`, or `<namespace>.*`. */
   tools: Tools
 }
@@ -75,6 +78,8 @@ export type RealtimeLogEntry = MessageSummary & {
   injected: boolean
   /** Why the app didn't get it. */
   dropped?: 'muted' | 'connection'
+  /** True for a message the app sent (`socket.emit`, an Ably `publish`), not one it received. */
+  sent?: true
 }
 
 type Entry<M> = {
@@ -166,6 +171,18 @@ export function createRealtimeTap<M = unknown>(
     if (!dropped) entry.deliver(message, ...rest)
   }
 
+  const sent: RealtimeTap<M>['sent'] = (channel, summary) => {
+    log.push({
+      at: new Date().toISOString(),
+      channel,
+      ...summary,
+      ...('data' in summary && { data: snapshot(summary.data) }),
+      injected: false,
+      sent: true,
+    })
+    if (log.length > LOG_SIZE) log.splice(0, log.length - LOG_SIZE)
+  }
+
   const wrap: RealtimeTap<M>['wrap'] = (channel, listener, wrapOptions = {}) => {
     const entry: Entry<M> = {
       deliver: listener as Entry<M>['deliver'],
@@ -220,12 +237,13 @@ export function createRealtimeTap<M = unknown>(
         })),
     },
     [`${ns}.log`]: {
-      description: `Recent messages, real and injected, newest first (last ${LOG_SIZE}). Filter: { channel?, event?, limit? }; clear: true empties the log after reading.`,
+      description: `Recent messages, real, injected, and ones the app sent (sent: true) (socket.emit, Ably publish), newest first (last ${LOG_SIZE}). Filter: { channel?, event?, limit?, full? }; clear: true empties the log after reading. Sent messages are copied and cut, and keys like token, password or authorization show [redacted] unless full: true.`,
       run: (
         filter: {
           channel?: string
           event?: string
           limit?: number
+          full?: boolean
           clear?: boolean
         } = {},
       ) => {
@@ -237,6 +255,7 @@ export function createRealtimeTap<M = unknown>(
           )
           .reverse()
           .slice(0, filter.limit ?? 20)
+          .map((e) => (e.sent && !filter.full && 'data' in e ? { ...e, data: redact(e.data) } : e))
         if (filter.clear) log.length = 0
         return entries
       },
@@ -304,5 +323,5 @@ export function createRealtimeTap<M = unknown>(
       },
     }
 
-  return { wrap, tools }
+  return { wrap, sent, tools }
 }

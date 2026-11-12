@@ -17,6 +17,7 @@ const appEntries = {
   'adapters/socket-io': 'src/adapters/socket-io.ts',
   'adapters/async-storage': 'src/adapters/async-storage.ts',
   'adapters/secure-store': 'src/adapters/secure-store.ts',
+  'adapters/device': 'src/adapters/device.ts',
 }
 
 const noopEntries = {
@@ -36,6 +37,7 @@ const noopEntries = {
   'noop/socket-io': 'src/noop/socket-io.ts',
   'noop/async-storage': 'src/noop/async-storage.ts',
   'noop/secure-store': 'src/noop/secure-store.ts',
+  'noop/device': 'src/noop/device.ts',
 }
 
 export default defineConfig([

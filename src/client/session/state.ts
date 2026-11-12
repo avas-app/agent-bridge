@@ -171,6 +171,8 @@ export function pickSession(filter: {
   metro?: string
   device?: string
   transport?: string
+  /** Sessions to leave out when nothing is named. */
+  skip?: (session: SessionState) => boolean
 }): SessionState | null {
   if (filter.name) {
     const named = readSession(checkName(filter.name))
@@ -186,6 +188,7 @@ export function pickSession(filter: {
   const project = projectRoot()
   const matching = listSessions().filter(
     (s) =>
+      !filter.skip?.(s) &&
       (explicit || s.project === project) &&
       (!filter.metro || s.metro === filter.metro) &&
       (!device ||

@@ -35,24 +35,32 @@ const ROUTE = /^(?:([A-Za-z]+)\s+)?(\/\S*)$/
 /**
  * Compiles "GET /plants/:id" against `baseUrl`. `:name` matches one path
  * segment, `*` the rest of the path; any query string or hash is allowed.
+ * `loose` is for `net.mock`'s `path`: `:name` only as a whole segment (so
+ * "/items:batchGet" is literal), and a trailing slash is optional either way.
  */
 export function compileRoute(
   baseUrl: string,
   route: string,
+  { loose = false }: { loose?: boolean } = {},
 ): { method?: string; regex: RegExp; names: string[] } {
   const parsed = ROUTE.exec(route.trim())
   if (!parsed)
     throw new Error(`Bad route "${route}": use "METHOD /path" or "/path"`)
-  const [, method, path] = parsed as unknown as [string, string | undefined, string]
+  const [, method, rawPath] = parsed as unknown as [string, string | undefined, string]
+  const path = loose && rawPath.length > 1 ? rawPath.replace(/\/+$/, '') : rawPath
   const names: string[] = []
-  const pattern = path
-    .split(/(:[A-Za-z_][A-Za-z0-9_]*|\*)/)
+  const pattern = (path === '/' && loose ? '' : path)
+    .split(loose ? /(\/:[A-Za-z_][A-Za-z0-9_]*(?=\/|$)|\*)/ : /(:[A-Za-z_][A-Za-z0-9_]*|\*)/)
     .map((part) => {
       if (part === '*') {
         names.push('*')
         return '([^?#]*)'
       }
-      if (part.startsWith(':')) {
+      if (loose && part.startsWith('/:')) {
+        names.push(part.slice(2))
+        return '/([^/?#]+)'
+      }
+      if (!loose && part.startsWith(':')) {
         names.push(part.slice(1))
         return '([^/?#]+)'
       }
@@ -65,12 +73,12 @@ export function compileRoute(
     : '(?:[a-z][a-z0-9+.-]*://[^/?#]*)?'
   return {
     method: method?.toUpperCase(),
-    regex: new RegExp(`^${base}${pattern}(?:[?#].*)?$`, 'i'),
+    regex: new RegExp(`^${base}${pattern}${loose ? '/?' : ''}(?:[?#].*)?$`, 'i'),
     names,
   }
 }
 
-function queryOf(url: string): Record<string, string> {
+export function queryOf(url: string): Record<string, string> {
   const search = /\?([^#]*)/.exec(url)?.[1]
   const out: Record<string, string> = {}
   if (!search) return out

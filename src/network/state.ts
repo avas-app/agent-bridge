@@ -1,5 +1,7 @@
 import { signalRequestStarted } from '../shared/mock-signal'
 import { compactBody, FULL_BUDGET, MAX_FULL_BODY, truncateBody } from './body'
+import { keepHeaders, redactHeaders } from './headers'
+import { type Compiled, compileMatch, operationName } from './match'
 import type {
   LogEntry,
   MockHandler,
@@ -24,13 +26,23 @@ export type Mock = {
   priority: number
   hits: number
   seq: number
-  test: (method: string, url: string) => boolean
+  test: Compiled['test']
+  needsBody: boolean
+  testBody: Compiled['testBody']
+  /** The match in words. */
+  matches: string
+  matchKey: string
+  substring?: string
+  plain: boolean
+  method?: string
 }
 
 export type NetworkState = {
   installed: boolean
   log: LogEntry[]
   nextLogId: number
+  /** How many requests the log keeps. */
+  logSize: number
   mocks: Mock[]
   nextSeq: number
   /** Above zero while the patched fetch calls the original, which on React Native builds an XHR. */
@@ -44,7 +56,9 @@ export type NetworkState = {
   /** From `net.strict`: a rule, false for off, null to follow the app. */
   strictAgent: StrictRule | false | null
   /** Requests strict mode failed, by "METHOD url". */
-  blocked: Map<string, { method: string; url: string; count: number }>
+  blocked: Map<string, { method: string; url: string; count: number; operation?: string }>
+  /** From `device.offline`: every request fails like offline, mocks included. */
+  deviceOffline?: boolean
 }
 
 export type StrictRule = {
@@ -65,6 +79,7 @@ export function networkState(): NetworkState {
     installed: false,
     log: [],
     nextLogId: 1,
+    logSize: LOG_SIZE,
     mocks: [],
     nextSeq: 1,
     insideFetch: 0,
@@ -140,6 +155,8 @@ type FullBodies = {
   responseBody?: string
   response?: ResponseState
   contentType?: string
+  requestHeaders?: Record<string, string>
+  responseHeaders?: Record<string, string>
 }
 
 /** Untruncated bodies, kept off the entries so `net.log` stays small. */
@@ -210,7 +227,12 @@ export function markResponse(entry: LogEntry, response: 'pending' | 'none'): voi
 
 export function startEntry(
   state: NetworkState,
-  fields: { method: string; url: string; requestBody?: string },
+  fields: {
+    method: string
+    url: string
+    requestBody?: string
+    requestHeaders?: Record<string, string>
+  },
 ): LogEntry {
   const entry: LogEntry = {
     id: state.nextLogId++,
@@ -221,27 +243,42 @@ export function startEntry(
     pending: true,
   }
   keepRequestBody(entry, fields.requestBody)
+  const requestHeaders = keepHeaders(fields.requestHeaders)
+  if (requestHeaders) fullOf(entry).requestHeaders = requestHeaders
   state.log.push(entry)
   signalRequestStarted(entry.id)
-  if (state.log.length > LOG_SIZE)
-    state.log.splice(0, state.log.length - LOG_SIZE)
+  if (state.log.length > state.logSize)
+    state.log.splice(0, state.log.length - state.logSize)
   return entry
 }
 
 export function finishEntry(
   entry: LogEntry,
-  fields: Pick<LogEntry, 'status' | 'error' | 'responseBody'> & { contentType?: string },
+  fields: Pick<LogEntry, 'status' | 'error' | 'responseBody'> & {
+    contentType?: string
+    responseHeaders?: Record<string, string>
+  },
 ): void {
   entry.ms = Date.now() - entry.startedAt
   delete entry.pending
-  const { responseBody, contentType, ...rest } = fields
+  const { responseBody, contentType, responseHeaders, ...rest } = fields
+  const kept = keepHeaders(responseHeaders)
+  if (kept) fullOf(entry).responseHeaders = kept
   for (const [key, value] of Object.entries(rest))
     if (value !== undefined) (entry as Record<string, unknown>)[key] = value
   if (responseBody !== undefined) setResponseBody(entry, responseBody, contentType)
 }
 
-/** A copy, pending ones with their time so far; `full` puts the untruncated bodies back. */
-export function publicEntry(entry: LogEntry, full = false): LogEntry {
+/**
+ * A copy, pending ones with their time so far; `full` puts the untruncated
+ * bodies back. `headers` adds the request and response headers: credentials
+ * cut to a prefix, or whole with 'full'.
+ */
+export function publicEntry(
+  entry: LogEntry,
+  full = false,
+  headers?: 'cut' | 'full',
+): LogEntry {
   const out = entry.pending ? { ...entry, ms: Date.now() - entry.startedAt } : { ...entry }
   if (full) {
     const { requestBody, responseBody } = FULL.get(entry) ?? {}
@@ -252,7 +289,33 @@ export function publicEntry(entry: LogEntry, full = false): LogEntry {
     const cutRequest = entry.requestBody !== undefined && requestBody === undefined
     if (cut || cutRequest) out.truncated = true
   }
+  if (headers) {
+    const { requestHeaders, responseHeaders } = FULL.get(entry) ?? {}
+    const shown = (h: Record<string, string> | undefined) =>
+      h && (headers === 'full' ? { ...h } : redactHeaders(h))
+    if (requestHeaders) out.requestHeaders = shown(requestHeaders)
+    if (responseHeaders) out.responseHeaders = shown(responseHeaders)
+  }
   return out
+}
+
+/** Stores a request body read after the entry started (a Request object's). */
+export function setRequestBody(entry: LogEntry, text: string | undefined): void {
+  if (entry.requestBody === undefined) keepRequestBody(entry, text)
+}
+
+/** The request body for matching: whole when kept, else the preview if that is the whole JSON. */
+export function requestBodyForMatch(entry: LogEntry): string | undefined {
+  const whole = FULL.get(entry)?.requestBody
+  if (whole !== undefined) return whole
+  const preview = entry.requestBody
+  if (preview === undefined) return undefined
+  try {
+    JSON.parse(preview)
+    return preview
+  } catch {
+    return undefined
+  }
 }
 
 /** A logged response's whole body, when it was kept, with why not otherwise. */
@@ -267,22 +330,13 @@ export function fullResponse(entry: LogEntry): {
 
 // ---- mocks ----
 
-function urlTest(url: Exclude<MockMatch, string>['url']): (u: string) => boolean {
+function urlTest(url: NonNullable<Exclude<MockMatch, string>['url']>): (u: string) => boolean {
   if (typeof url === 'string') return (u) => u.includes(url)
   const regex = url instanceof RegExp ? url : new RegExp(url.regex, url.flags)
   return (u) => {
     regex.lastIndex = 0
     return regex.test(u)
   }
-}
-
-function compileMatch(match: MockMatch): Mock['test'] {
-  const spec = typeof match === 'string' ? { url: match } : match
-  if (!spec || spec.url === undefined)
-    throw new Error('A mock needs a match: a URL substring or { url, method? }')
-  const testUrl = urlTest(spec.url)
-  const method = spec.method?.toUpperCase()
-  return (m, u) => (!method || method === m) && testUrl(u)
 }
 
 export function addMock(
@@ -296,6 +350,7 @@ export function addMock(
     throw new Error('A mock needs a response: { status?, json?, body?, headers? }, { offline: true } or a handler')
   if (options.priority !== undefined && !Number.isFinite(options.priority))
     throw new Error('priority must be a finite number')
+  const compiled = compileMatch(match)
   const seq = state.nextSeq++
   const id = options.id ?? `${source}-${seq}`
   removeMocks(state, (m) => m.id === id)
@@ -309,7 +364,7 @@ export function addMock(
     priority: options.priority ?? 0,
     hits: 0,
     seq,
-    test: compileMatch(match),
+    ...(({ key, ...rest }) => ({ ...rest, matchKey: key }))(compiled),
   }
   state.mocks.push(mock)
   return mock
@@ -330,59 +385,77 @@ export const mockOrder = (a: Mock, b: Mock) =>
   b.priority - a.priority ||
   b.seq - a.seq
 
-const substringMatch = (match: MockMatch) => {
-  const spec = typeof match === 'string' ? { url: match } : match
-  return typeof spec.url === 'string'
-    ? { url: spec.url, method: spec.method?.toUpperCase() }
-    : null
-}
-
 /**
- * Agent mocks the new one is tried before and certainly answers instead: both
- * match on a plain URL substring, the new one has a static response and covers
- * the old one's method. Anything less certain isn't reported.
+ * Agent mocks the new one is tried before and certainly answers instead: the
+ * new one has a static response and either matches the same as the old one
+ * exactly, or is only a URL substring (and method) that the old one's URL
+ * substring contains and whose method it covers; the old one may have more
+ * conditions (path, body, graphql), which only narrow it. Anything less
+ * certain isn't reported.
  */
 export function shadowedMocks(state: NetworkState, added: Mock): Mock[] {
-  const next = substringMatch(added.match)
-  if (!next || typeof added.response === 'function') return []
+  if (typeof added.response === 'function') return []
   return state.mocks.filter((old) => {
-    if (old === added || old.source !== 'agent' || mockOrder(added, old) >= 0)
+    // A mock with `times` runs out and then the old one answers, so it is not certain.
+    if (old === added || old.source !== 'agent' || mockOrder(added, old) >= 0 || added.times !== undefined)
       return false
-    const prev = substringMatch(old.match)
+    if (old.matchKey === added.matchKey) return true
     return (
-      !!prev &&
-      prev.url.includes(next.url) &&
-      (!next.method || next.method === prev.method)
+      added.plain &&
+      old.substring !== undefined &&
+      old.substring.includes(added.substring!) &&
+      (!added.method || added.method === old.method)
     )
   })
 }
 
+/** Makes every request fail like offline (mocks included) until false. */
+export function setDeviceOffline(offline: boolean): void {
+  networkState().deviceOffline = offline
+}
+
+/**
+ * Mocks that match a method and URL, in the order they are tried. When the
+ * request body is known (`body`, possibly undefined), body and graphql checks
+ * run here; otherwise, such mocks stay in and `answer` checks them once the
+ * body has been read.
+ */
 export function matchingMocks(
   state: NetworkState,
   method: string,
   url: string,
+  body?: { text: string | undefined },
 ): Mock[] {
-  return state.mocks.filter((m) => m.test(method, url)).sort(mockOrder)
+  if (state.deviceOffline) return []
+  const found = state.mocks.filter((m) => m.test(method, url))
+  const probe = body && found.some((m) => m.needsBody) ? mockRequest(method, url, {}, body.text) : null
+  return found
+    .filter((m) => !m.needsBody || !probe || m.testBody(probe))
+    .sort(mockOrder)
 }
 
 export type Answer = { mock: Mock; response: MockResponse }
 
 /**
  * The first matching mock that answers. Handlers returning undefined pass.
- * Counts the use against `times` and drops a spent mock.
+ * Counts the use against `times` and drops a spent mock. `bodyKnown`: the
+ * candidates' body checks were already done, so none is left to run here.
  */
 export async function answer(
   state: NetworkState,
   candidates: Mock[],
   request: () => Promise<MockRequest>,
+  bodyKnown = true,
 ): Promise<Answer | null> {
   for (const mock of candidates) {
+    if (mock.needsBody && !bodyKnown && !mock.testBody(await request())) continue
     if (!state.mocks.includes(mock)) continue
     const response =
       typeof mock.response === 'function'
         ? await mock.response(await request())
         : mock.response
-    if (!response) continue
+    // A handler can take a while: another request may have spent `times` meanwhile.
+    if (!response || !state.mocks.includes(mock)) continue
     mock.hits += 1
     if (mock.times !== undefined && mock.hits >= mock.times)
       removeMocks(state, (m) => m === mock)
@@ -397,17 +470,21 @@ export function mockRequest(
   headers: Record<string, string>,
   body: string | undefined,
 ): MockRequest {
+  let parsed: { value: unknown } | undefined
   return {
     method,
     url,
     headers,
     body,
     json: () => {
-      try {
-        return body === undefined ? undefined : JSON.parse(body)
-      } catch {
-        return undefined
+      if (!parsed) {
+        try {
+          parsed = { value: body === undefined ? undefined : JSON.parse(body) }
+        } catch {
+          parsed = { value: undefined }
+        }
       }
+      return parsed.value
     },
   }
 }
@@ -470,15 +547,24 @@ export function blockedResponse(
   state: NetworkState,
   method: string,
   url: string,
+  body?: string,
 ): MockResponse | null {
+  if (state.deviceOffline) return { offline: true }
   const rules = strictRules(state)
   if (!rules.length || rules.some((r) => r.allow.some((test) => test(url))))
     return null
-  const key = `${method} ${url}`
+  const operation = operationName(mockRequest(method, url, {}, body))
+  const key = operation ? `${method} ${url} (${operation})` : `${method} ${url}`
+  const probe = mockRequest(method, url, {}, body)
+  const near = state.mocks
+    .filter((m) => m.needsBody && m.test(method, url) && !m.testBody(probe))
+    .map((m) => m.id)
   const seen = state.blocked.get(key)
   if (seen) seen.count += 1
-  else state.blocked.set(key, { method, url, count: 1 })
-  const error = `agent-bridge strict network: no mock for ${key}`
+  else state.blocked.set(key, { method, url, count: 1, ...(operation && { operation }) })
+  const error = `agent-bridge strict network: no mock for ${key}${
+    near.length ? ` (${near.join(', ')} matched the URL but not the body)` : ''
+  }`
   console.error(`${error}. Mock it, or allow it in strict mode.`)
   if (rules[0]!.offline) return { offline: true }
   return {
