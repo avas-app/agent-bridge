@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { runInThisContext } from 'node:vm'
 import { Window } from 'happy-dom'
 
 import { startLogCapture } from '../../runtime/logs'
@@ -27,6 +28,7 @@ const ORIGIN = 'https://shop.example.com'
 // page posts comes back through the handler the app gave the WebView.
 function fakeWebView(html = '<button data-testid="pay">Pay</button><input data-testid="name">') {
   const win = new Window({ url: `${ORIGIN}/cart` })
+  const inWindow = (script: string) => runInThisContext(`(function (window) {\n${script}\n})`)(win)
   win.document.body.innerHTML = html
   const injected: string[] = []
   const posted: string[] = []
@@ -35,7 +37,7 @@ function fakeWebView(html = '<button data-testid="pay">Pay</button><input data-t
   ;(win as any).ReactNativeWebView = { postMessage: (s: string) => void toApp(s) }
   const web = {
     // What the page does with an injected script; tests swap it.
-    behave: (script: string) => void new Function('window', script)(win),
+    behave: (script: string) => void inWindow(script),
   }
   const view: WebViewLike & { reloads: number } = {
     reloads: 0,
@@ -58,7 +60,7 @@ function fakeWebView(html = '<button data-testid="pay">Pay</button><input data-t
     pageSays: (data: unknown) => toApp(typeof data === 'string' ? data : JSON.stringify(data)),
     /** What the WebView runs before the page's scripts. */
     boot: (props: { injectedJavaScriptBeforeContentLoaded: string }) =>
-      new Function('window', props.injectedJavaScriptBeforeContentLoaded)(win),
+      inWindow(props.injectedJavaScriptBeforeContentLoaded),
   })
 }
 

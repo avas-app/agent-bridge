@@ -109,7 +109,7 @@ describe('storeTools', () => {
     type Auth = { accessToken: string; user: { name: string; phone: string }; isLoggedIn: boolean; logout: () => void; whoami: () => unknown; refresh: () => Promise<unknown> }
     const makeAuth = () =>
       createStore<Auth>()((set, get) => ({
-        accessToken: 'secret-token',
+        accessToken: 'demo-secret-token',
         user: { name: 'Ada', phone: '555-0100' },
         isLoggedIn: true,
         logout: () => set({ isLoggedIn: false }),
@@ -124,14 +124,14 @@ describe('storeTools', () => {
       const auth = makeAuth()
       const result = run(storeTools({ auth }), 'store.set', 'auth', { isLoggedIn: false })
       expect(result).toEqual({ isLoggedIn: false })
-      expect(JSON.stringify(result)).not.toContain('secret-token')
+      expect(JSON.stringify(result)).not.toContain('demo-secret-token')
     })
 
     test('store.call reports changed keys instead of the state', async () => {
       const auth = makeAuth()
       const result = await run(storeTools({ auth }), 'store.call', 'auth', 'logout')
       expect(result).toEqual({ changed: ['isLoggedIn'] })
-      expect(JSON.stringify(result)).not.toContain('secret-token')
+      expect(JSON.stringify(result)).not.toContain('demo-secret-token')
       expect(await run(storeTools({ auth }), 'store.call', 'auth', 'whoami')).toEqual({ name: 'Ada', phone: '555-0100' })
     })
 

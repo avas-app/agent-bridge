@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { runInThisContext } from 'node:vm'
 import { Window } from 'happy-dom'
 
 import { bundle, render } from '../../../scripts/generate-webview-page.mjs'
 import { PAGE_BUNDLE } from '../webview-page.generated'
 
 // The string the WebView runs, not the functions it was built from.
-const { bootMain, pageMain } = new Function(`return ${PAGE_BUNDLE}`)() as {
+const { bootMain, pageMain } = runInThisContext(`(${PAGE_BUNDLE})`) as {
   bootMain: (win: unknown, post: (s: string) => void, token: string) => void
   pageMain: (win: unknown, args: string, post: (s: string) => void) => void
 }
