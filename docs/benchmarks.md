@@ -7,7 +7,7 @@ The same checks on [the example app](../example) in Expo Go, both at real speed,
 - **agent-device alone** ([`demo-agent-device.mjs`](../example/flows/demo-agent-device.mjs)) taps and types through the UI, edits the fake backend and reloads to change the flag and the data, and asks the realtime server to push a message.
 - **agent-device + agent-bridge** ([`demo.flow.mjs`](../example/flows/demo.flow.mjs)) makes each change with one call, then undoes them all with `bridge.restore`.
 
-[Argent](https://github.com/software-mansion/argent) 0.32.0 gets the same comparison on the same Mac, simulator and Metro ([`demo-argent.mjs`](../example/flows/demo-argent.mjs) against the same `demo.flow.mjs`):
+[Argent](https://github.com/software-mansion/argent) 0.32.0 gets the same comparison, Argent alone against Argent + agent-bridge on one Mac, simulator and Metro (a different simulator from the agent-device recording, so compare within each pair; [`demo-argent.mjs`](../example/flows/demo-argent.mjs) against the same `demo.flow.mjs`):
 
 ![The same checks with Argent alone (17.1 s) and with Argent + agent-bridge (1.4 s)](../example/media/demo-argent.gif)
 
