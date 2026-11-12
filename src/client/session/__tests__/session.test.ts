@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -1222,6 +1229,155 @@ describe('session CLI', () => {
       /Several sessions match \(.*mine.*mine2|mine2.*mine/,
     )
     expect(sessionFor({ metro: 'localhost:8084' })?.name).toBe('mine2')
+  })
+
+  test('a command in a monorepo root finds the one session started in a child app', () => {
+    const root = projectRoot()
+    writePrivate(
+      sessionFiles('child', dir).state,
+      JSON.stringify({
+        name: 'child',
+        pid: process.pid,
+        socket: '',
+        metro: 'localhost:8085',
+        project: join(root, 'apps', 'mobile'),
+        device: { name: 'Fake App', deviceId: 'child', platform: 'ios' },
+        transport: 'expo',
+        startedAt: Date.now(),
+        lastCallAt: Date.now(),
+        idleMs: 0,
+      }),
+    )
+    expect(sessionFor({})?.name).toBe('child')
+    writePrivate(
+      sessionFiles('sibling', dir).state,
+      JSON.stringify({
+        name: 'sibling',
+        pid: process.pid,
+        socket: '',
+        metro: 'localhost:8086',
+        project: root + '-other',
+        device: { name: 'Fake App', deviceId: 'sibling', platform: 'ios' },
+        transport: 'expo',
+        startedAt: Date.now(),
+        lastCallAt: Date.now(),
+        idleMs: 0,
+      }),
+    )
+    expect(sessionFor({})?.name).toBe('child')
+  })
+
+  describe('child-app lookup', () => {
+    const fakeAt = (name: string, project: string, metro: string) =>
+      writePrivate(
+        sessionFiles(name, dir).state,
+        JSON.stringify({
+          name,
+          pid: process.pid,
+          socket: '',
+          metro,
+          project,
+          device: { name: 'Fake App', deviceId: name, platform: 'ios' },
+          transport: 'expo',
+          startedAt: Date.now(),
+          lastCallAt: Date.now(),
+          idleMs: 0,
+        }),
+      )
+
+    test('a session in a nested checkout of its own is not driven from the outer project', () => {
+      const root = mkdtempSync(join(tmpdir(), 'ab-nested-'))
+      try {
+        const inner = join(root, '.claude', 'worktrees', 'x')
+        mkdirSync(inner, { recursive: true })
+        writeFileSync(join(root, 'package.json'), '{}')
+        writeFileSync(join(inner, '.git'), 'gitdir: elsewhere')
+        writeFileSync(join(inner, 'package.json'), '{}')
+        fakeAt('inner', inner, 'localhost:8091')
+        const cwd = process.cwd()
+        process.chdir(root)
+        try {
+          expect(sessionFor({})).toBeNull()
+        } finally {
+          process.chdir(cwd)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    test('a session under a package of its own is not found from above it', () => {
+      const root = mkdtempSync(join(tmpdir(), 'ab-pkg-'))
+      try {
+        const app = join(root, 'apps', 'mobile')
+        const lib = join(app, 'packages', 'lib')
+        mkdirSync(lib, { recursive: true })
+        for (const d of [root, app, lib])
+          writeFileSync(join(d, 'package.json'), '{}')
+        fakeAt('lib', lib, 'localhost:8092')
+        const cwd = process.cwd()
+        process.chdir(root)
+        try {
+          expect(sessionFor({})).toBeNull()
+        } finally {
+          process.chdir(cwd)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    test('with no package.json anywhere, only an exact match counts', () => {
+      const root = mkdtempSync(join(tmpdir(), 'ab-nopkg-'))
+      try {
+        const other = join(root, 'other')
+        mkdirSync(other, { recursive: true })
+        writeFileSync(join(other, 'package.json'), '{}')
+        fakeAt('other', other, 'localhost:8093')
+        const cwd = process.cwd()
+        process.chdir(root)
+        try {
+          expect(sessionFor({})).toBeNull()
+        } finally {
+          process.chdir(cwd)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    test('several child sessions from the root fall back to a direct connection', () => {
+      const root = mkdtempSync(join(tmpdir(), 'ab-multi-'))
+      try {
+        writeFileSync(join(root, 'package.json'), '{}')
+        for (const app of ['a', 'b']) {
+          mkdirSync(join(root, 'apps', app), { recursive: true })
+          writeFileSync(join(root, 'apps', app, 'package.json'), '{}')
+        }
+        fakeAt('a', join(root, 'apps', 'a'), 'localhost:8094')
+        fakeAt('b', join(root, 'apps', 'b'), 'localhost:8095')
+        const cwd = process.cwd()
+        process.chdir(root)
+        try {
+          expect(sessionFor({})).toBeNull()
+          expect(sessionFor({ metro: 'localhost:8095' })?.name).toBe('b')
+        } finally {
+          process.chdir(cwd)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+
+    test('the no-match error names the filter that was applied', async () => {
+      await expect(connectSession({ metro: 'localhost:9' })).rejects.toThrow(
+        /localhost:9/,
+      )
+      await expect(connectSession({ metro: 'localhost:9' })).rejects.not.toThrow(
+        /started in/,
+      )
+      await expect(connectSession({})).rejects.toThrow(/started in/)
+    })
   })
 
   test('start reports the connect error', async () => {
