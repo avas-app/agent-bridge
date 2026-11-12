@@ -7,6 +7,18 @@ The same checks on [the example app](../example) in Expo Go, both at real speed,
 - **agent-device alone** ([`demo-agent-device.mjs`](../example/flows/demo-agent-device.mjs)) taps and types through the UI, edits the fake backend and reloads to change the flag and the data, and asks the realtime server to push a message.
 - **agent-device + agent-bridge** ([`demo.flow.mjs`](../example/flows/demo.flow.mjs)) makes each change with one call, then undoes them all with `bridge.restore`.
 
+[Argent](https://github.com/software-mansion-labs/argent) 0.32.0 gets the same comparison on the same Mac, simulator and Metro ([`demo-argent.mjs`](../example/flows/demo-argent.mjs) against the same `demo.flow.mjs`):
+
+![The same checks with Argent alone (17.1 s) and with Argent + agent-bridge (1.4 s)](../example/media/demo-argent.gif)
+
+| Take | Wall time |
+| --- | --- |
+| Argent alone, while screen recording | 16.4 s and 17.1 s (two takes, 20 steps) |
+| Argent alone, not recording | 11.6 s and 11.7 s |
+| Argent + agent-bridge, while screen recording | 1.38 s |
+
+Argent does the taps and typing with a `describe` lookup and a `gesture-tap` per element, and `await-ui-element` for the checks. Its `debugger-reload-metro` leaves Expo Go 57 with "Cannot find native module 'ExpoAsset'", and opening the project URL again does not reload, so the reload is `shake` plus a tap on the dev menu's Reload button. That, and the fixed 0.9 s wait for the menu, are 3 s of the total. Argent alone takes 20 steps against agent-bridge's 19 plus `bridge.restore`. Full-size clips: [Argent](../example/media/demo-argent.mp4), [Argent + agent-bridge](../example/media/demo-argent-bridge.mp4), [side by side](../example/media/demo-argent-x.mp4).
+
 agent-device 0.21.15 won't press or fill most of this screen by selector on the iOS 27 simulator ([callstack/agent-device#2996](https://github.com/callstack/agent-device/issues/2996)), so the agent-device side looks up each element's frame and taps its centre. That adds one lookup per tap or fill.
 
 | Call | Round trip |
