@@ -12,7 +12,7 @@ export default async ({ step, call, bridge, scenarios }) => {
   check(scenarios.signedIn.user.name === 'Grace Gardener', `apply returned ${JSON.stringify(scenarios.signedIn)}`)
 
   const auth = await step('auth store', 'store.get', 'auth')
-  check(auth.token === 'local-token', `not signed in: ${JSON.stringify(auth)}`)
+  check(auth.token === 'demo-local-token', `not signed in: ${JSON.stringify(auth)}`)
 
   await step('open settings', 'router.navigate', '/settings')
   await step('signed in as Grace', 'screen.waitFor', 'Grace Gardener')

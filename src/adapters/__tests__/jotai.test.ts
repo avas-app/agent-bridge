@@ -27,7 +27,7 @@ function setup() {
     (_get, set, c: number) => set(countAtom, c * 2 + 32),
   )
   const asyncAtom = atom(async (get) => get(countAtom) + 1)
-  const atoms = { count: countAtom, user: userAtom, token: tokenAtom, double: doubleAtom, celsius: celsiusAtom, async: asyncAtom }
+  const atoms = { count: countAtom, user: userAtom, auth: tokenAtom, double: doubleAtom, celsius: celsiusAtom, async: asyncAtom }
   return { store, atoms, countAtom, userAtom, tokenAtom }
 }
 
@@ -37,7 +37,7 @@ describe('jotaiTools', () => {
     expect(await run(jotaiTools(store, atoms), 'jotai.list')).toEqual({
       count: 'read-write',
       user: 'read-write',
-      token: 'read-write',
+      auth: 'read-write',
       double: 'read-only',
       celsius: 'read-write',
       async: 'read-only',
@@ -110,13 +110,13 @@ describe('jotaiTools', () => {
 
   test('redact hides whole atoms and paths in get, set and pending', async () => {
     const { store, atoms } = setup()
-    const tools = jotaiTools(store, atoms, { redact: { token: true, user: ['phone'] } })
-    expect(await run(tools, 'jotai.get', 'token')).toBe('[redacted]')
+    const tools = jotaiTools(store, atoms, { redact: { auth: true, user: ['phone'] } })
+    expect(await run(tools, 'jotai.get', 'auth')).toBe('[redacted]')
     expect(await run(tools, 'jotai.get', 'user')).toEqual({ name: 'Ada', phone: '[redacted]' })
-    expect(await run(tools, 'jotai.set', 'token', 'new')).toBe('[redacted]')
+    expect(await run(tools, 'jotai.set', 'auth', 'new')).toBe('[redacted]')
     await run(tools, 'jotai.set', 'user', { name: 'Bob', phone: '2' })
     expect(await pending(tools, true)).toEqual({
-      token: { snapshot: '[redacted]', current: '[redacted]' },
+      auth: { snapshot: '[redacted]', current: '[redacted]' },
       user: {
         snapshot: { name: 'Ada', phone: '[redacted]' },
         current: { name: 'Bob', phone: '[redacted]' },
@@ -224,10 +224,10 @@ describe('jotaiTools', () => {
   test('errors name the jotai tool, and redact keys that match no atom are warned about once', async () => {
     const { store, atoms } = setup()
     const warn = spyOn(console, 'warn').mockImplementation(() => {})
-    const tools = jotaiTools(store, atoms, { redact: { tokenn: true } })
-    jotaiTools(store, atoms, { redact: { tokenn: true } })
+    const tools = jotaiTools(store, atoms, { redact: { authh: true } })
+    jotaiTools(store, atoms, { redact: { authh: true } })
     await fails(() => run(tools, 'jotai.get', 'user', { bogus: true })).toThrow(/jotai\.get option/)
-    expect(warn.mock.calls.filter((c) => String(c[0]).includes('tokenn'))).toHaveLength(1)
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('authh'))).toHaveLength(1)
     warn.mockRestore()
   })
 })
