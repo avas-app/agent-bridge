@@ -1,6 +1,7 @@
 import { pendingUndos, runUndos } from '../undo'
 import type { Tools } from '../types'
 import { pendingByArea } from './restore'
+import { TOOL_DESCRIPTIONS } from './descriptions'
 
 /** The part of Expo's runtime global (`globalThis.expo`) that `app.reload` uses. */
 export type ExpoHost = {
@@ -36,8 +37,7 @@ export function selectReload(
 export function appTools(reload: () => void, getTools?: () => Tools): Tools {
   return {
     'app.reload': {
-      description:
-        "Reload the app's JS (Expo's reloadAppAsync, else DevSettings.reload). Pending restores (store, query, mocks, pins, storage) are lost, and the reply names them: restore first. Returns before it reloads; a session waits for the new bridge and reports what was lost.",
+      description: TOOL_DESCRIPTIONS['app.reload'],
       run: () => {
         // Later, so this reply gets out first.
         setTimeout(reload, 50)
@@ -54,8 +54,7 @@ export function appTools(reload: () => void, getTools?: () => Tools): Tools {
         const labels = pendingUndos()
         return labels.length ? labels : false
       },
-      description:
-        "Undo what the app's own tools changed: runs the undos they registered with onRestore, newest first, once. Returns how many ran.",
+      description: TOOL_DESCRIPTIONS['app.restore'],
       run: async () => {
         const { ran, errors } = await runUndos()
         // Throws so bridge.restore and flows still see a failure, with the count that did run.

@@ -9,6 +9,7 @@ import { createInterface } from 'node:readline'
 import WebSocket from 'ws'
 
 import { createRegistry } from '../../runtime/registry'
+import { TOOL_DESCRIPTIONS } from '../../runtime/tools/descriptions'
 import type { Tools } from '../../runtime/types'
 import { PLUGIN_NAME, PROTOCOL_VERSION } from '../../shared/protocol'
 import { bigValue } from '../../client/__tests__/big-value'
@@ -24,7 +25,7 @@ const JPEG = '/9j/4AAQSkZJRg=='
 
 let restores = 0
 
-async function fakeApp(metro: string, deviceId: string, extra: Tools = {}) {
+async function fakeApp(metro: string, deviceId: string, extra: Tools = {}, omit: string[] = []) {
   const tools: Tools = {
     'demo.echo': (...args: unknown[]) => args,
     'demo.big': (bytes: number) => bigValue(bytes),
@@ -47,6 +48,7 @@ async function fakeApp(metro: string, deviceId: string, extra: Tools = {}) {
     },
     ...extra,
   }
+  for (const name of omit) delete tools[name]
   const registry = createRegistry(() => tools, undefined, `load-${deviceId}`)
   const ws = new WebSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
   await new Promise((res, rej) => {
@@ -328,7 +330,9 @@ describe('late app', () => {
     await s.request('initialize', { protocolVersion: '2025-06-18' })
     s.notify('notifications/initialized')
     const first = (await s.request('tools/list')).result.tools as Array<{ name: string }>
-    expect(first.map((t) => t.name)).toEqual(['agent_bridge_status'])
+    expect(first.map((t) => t.name)).toContain('screen_snapshot')
+    expect(first.map((t) => t.name)).toContain('agent_bridge_status')
+    expect(first.map((t) => t.name)).not.toContain('demo_echo')
     const down = JSON.parse((await s.call('agent_bridge_status')).result.content[0].text)
     expect(down.connected).toBe(false)
     expect(down.lastError).toMatch(/session/i)
@@ -345,6 +349,69 @@ describe('late app', () => {
     const up = JSON.parse((await s.call('agent_bridge_status')).result.content[0].text)
     expect(up).toMatchObject({ connected: true, app: { deviceId: 'dev-1' } })
     expect(s.messages.filter((m) => m.method === 'notifications/tools/list_changed').length).toBe(1)
+  }, 20_000)
+})
+
+describe('no app connected', () => {
+  const list = async (s: ReturnType<typeof serve>) => {
+    await s.request('initialize', { protocolVersion: '2025-06-18' })
+    s.notify('notifications/initialized')
+    return (await s.request('tools/list')).result.tools as Array<{ name: string; title: string; description: string; inputSchema: any }>
+  }
+
+  test('lists the built-in tools with their real descriptions, and the status tool', async () => {
+    const s = serve({ pollMs: 0, connect: () => Promise.reject(new Error('no session')) })
+    const tools = await list(s)
+    const names = tools.map((t) => t.name)
+    expect(names).toContain('agent_bridge_status')
+    for (const n of ['screen_snapshot', 'screen_press', 'app_reload', 'bridge_restore', 'bridge_logs', 'scenario_apply', 'screen_capture'])
+      expect(names).toContain(n)
+    for (const n of ['bridge_adopt', 'bridge_ping', 'demo_echo']) expect(names).not.toContain(n)
+    const snap = tools.find((t) => t.name === 'screen_snapshot')!
+    expect(snap.title).toBe('screen.snapshot')
+    expect(snap.description).toBe(TOOL_DESCRIPTIONS['screen.snapshot'])
+    expect(snap.inputSchema.properties.args.type).toBe('array')
+    expect(snap.inputSchema.properties.full.type).toBe('boolean')
+  })
+
+  test('calling a built-in says the app is not connected and why', async () => {
+    const s = serve({ pollMs: 0, connect: () => Promise.reject(new Error('no session named x')) })
+    await list(s)
+    const res = (await s.call('screen_snapshot')).result
+    expect(res.isError).toBe(true)
+    expect(res.content[0].text).toMatch(/Not connected to the app: no session named x/)
+  }, 10_000)
+
+  test('after an app connects the list is the app\'s, and list_changed is sent once', async () => {
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const s = serve({ pollMs: 40, connect: () => connectSession({ name: 'static' }) })
+    const before = await list(s)
+    expect(before.map((t) => t.name)).toContain('screen_press')
+    const app = await fakeApp(metro.metro, 'dev-1')
+    cleanups.push(() => app.close())
+    const daemon = await runSessionDaemon({ name: 'static', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    await s.wait(() => s.messages.find((m) => m.method === 'notifications/tools/list_changed'))
+    const after = (await s.request('tools/list')).result.tools as Array<{ name: string }>
+    expect(after.map((t) => t.name)).toContain('demo_echo')
+    // fakeApp registers screen.capture and screen.snapshot only, so the other built-ins drop out.
+    expect(after.map((t) => t.name)).not.toContain('screen_press')
+    await new Promise((r) => setTimeout(r, 200))
+    expect(s.messages.filter((m) => m.method === 'notifications/tools/list_changed').length).toBe(1)
+  }, 20_000)
+
+  test('a tool the app lacks is not listed once it connects', async () => {
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    const app = await fakeApp(metro.metro, 'dev-1', {}, ['screen.capture'])
+    cleanups.push(() => app.close())
+    const daemon = await runSessionDaemon({ name: 'nocap', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const s = serve({ pollMs: 0, connect: () => connectSession({ name: 'nocap' }) })
+    const names = (await list(s)).map((t) => t.name)
+    expect(names).toContain('screen_snapshot')
+    expect(names).not.toContain('screen_capture')
   }, 20_000)
 })
 

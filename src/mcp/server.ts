@@ -10,6 +10,7 @@ import { OUTPUT_LIMIT_BYTES, shapedResult } from '../client/output'
 import { isSnapshotText, withCompactSnapshot } from '../client/snapshot-format'
 import { SessionLinkError } from '../client/session/client'
 import { encodeLine } from '../client/session/protocol'
+import { TOOL_DESCRIPTIONS, UNLISTED_WITHOUT_APP } from '../runtime/tools/descriptions'
 
 const SUPPORTED = ['2025-06-18', '2024-11-05']
 const STATUS_TOOL = 'agent_bridge_status'
@@ -43,6 +44,11 @@ type Content =
 type ToolEntry = { name: string; mcp: string; description?: string }
 
 const MAX_NAME = 64
+
+/** The built-in tools every app gets, listed before one connects. */
+const BUILTIN_LIST: Array<{ name: string; description: string }> = Object.entries(TOOL_DESCRIPTIONS)
+  .filter(([name]) => !UNLISTED_WITHOUT_APP.includes(name))
+  .map(([name, description]) => ({ name, description }))
 
 /** MCP names allow letters, digits, `_` and `-`; `screen.snapshot` becomes `screen_snapshot`. Clashes get a number. */
 export function mcpNames(
@@ -149,8 +155,14 @@ export function startMcpServer(options: McpOptions): McpServer {
   let tools: ToolEntry[] = []
   let names = new Map<string, string>()
   let signature = ''
-  // The signature of the list last sent to the client, and the last one announced.
+  // What the list says, whichever app it came from.
+  let content = ''
+  // True until an app has connected: the list is the built-ins.
+  let builtinOnly = true
+  // The signature (and content) of the list last sent to the client, and the last one announced.
   let listed: string | null = null
+  let listedContent = ''
+  let listedBuiltinOnly = false
   let announced = ''
   let initialized = false
   let closed = false
@@ -176,9 +188,24 @@ export function startMcpServer(options: McpOptions): McpServer {
   const announce = () => {
     if (!initialized || listed === null || signature === listed || signature === announced)
       return
+    // An app whose tools are the ones already listed changes nothing for the client.
+    if (listedBuiltinOnly && content === listedContent) return
     announced = signature
     send({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' })
   }
+
+  const setTools = (list: Array<{ name: string; description?: string }>, sig: string) => {
+    signature = sig
+    content = JSON.stringify(list)
+    names = mcpNames(list, [STATUS_TOOL])
+    tools = [...names].map(([mcp, name]) => ({
+      name,
+      mcp,
+      description: list.find((t) => t.name === name)?.description,
+    }))
+    announce()
+  }
+  setTools(BUILTIN_LIST, 'builtin')
 
   const adopt = (next: AgentBridge) => {
     const list = next.tools()
@@ -186,14 +213,8 @@ export function startMcpServer(options: McpOptions): McpServer {
     bridge = next
     lastError = undefined
     if (sig !== signature) {
-      signature = sig
-      names = mcpNames(list, [STATUS_TOOL])
-      tools = [...names].map(([mcp, name]) => ({
-        name,
-        mcp,
-        description: list.find((t) => t.name === name)?.description,
-      }))
-      announce()
+      builtinOnly = false
+      setTools(list, sig)
     }
   }
 
@@ -257,6 +278,8 @@ export function startMcpServer(options: McpOptions): McpServer {
 
   const listTools = () => {
     listed = signature
+    listedContent = content
+    listedBuiltinOnly = builtinOnly
     return {
       tools: [
         ...tools.map((t) => ({
@@ -357,7 +380,7 @@ export function startMcpServer(options: McpOptions): McpServer {
             protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
             capabilities: { tools: { listChanged: true } },
             serverInfo: { name: 'agent-bridge', version: options.version ?? '0.0.0' },
-            instructions: `Tools of the connected React Native app. Each takes \`args\`, an array of the tool's arguments. Results over 32 KB come back as a summary unless \`full\` is true. If the list is empty or calls fail, call ${STATUS_TOOL}.`,
+            instructions: `Tools of the connected React Native app. Each takes \`args\`, an array of the tool's arguments. Results over 32 KB come back as a summary unless \`full\` is true. Until an app connects the list shows only the built-in tools every app has (screen, app, bridge, scenario); calls fail until then, and the app's own tools (query, store, net, ...) appear once it connects. If calls fail, call ${STATUS_TOOL}.`,
           },
         }
       }
