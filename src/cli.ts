@@ -29,8 +29,12 @@ import {
   sessionCommand,
   sessionFor,
 } from './client/session/cli'
-import { projectRoot } from './client/session/state'
-import { createActivityHook, withActivityHook } from './client/activity-hook'
+import {
+  createActivityHook,
+  sessionHookWarning,
+  withActivityHook,
+} from './client/activity-hook'
+import { hookMarker, projectRoot } from './client/session/state'
 import { connectSession } from './client/session/client'
 import { nodeIo, runInit } from './init/index'
 import { mcpMain } from './mcp/run'
@@ -175,6 +179,10 @@ async function main() {
       console.error(
         `Using session "${session.name}" (${session.device.name} on ${session.metro})`,
       )
+    const warning =
+      session && sessionHookWarning(session, values['on-activity'])
+    if (warning) console.error(`warning: ${warning}`)
+    const project = projectRoot()
     const opened = session
       ? await connectSession({
           name: session.name,
@@ -187,7 +195,9 @@ async function main() {
         command: values['on-activity'],
         // A session runs the variable's command itself.
         useEnv: !session,
-        cwd: projectRoot(),
+        cwd: project,
+        // A one-off call exits before its command ends; the marker carries a failure to the next call.
+        marker: session ? undefined : hookMarker(project),
         report: (text) => console.error(`warning: ${text}`),
       }),
     )

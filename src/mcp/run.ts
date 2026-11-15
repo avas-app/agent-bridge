@@ -1,5 +1,9 @@
 import type { ConnectOptions } from '../client/index'
-import { createActivityHook, withActivityHook } from '../client/activity-hook'
+import {
+  createActivityHook,
+  sessionHookWarning,
+  withActivityHook,
+} from '../client/activity-hook'
 import { connect } from '../client/index'
 import { sessionFor, type SessionFlags } from '../client/session/cli'
 import { connectSession } from '../client/session/client'
@@ -51,6 +55,8 @@ export function createConnector(flags: SessionFlags, options: ConnectOptions) {
     const existing = sessionFor(flags, (s) => s.name.startsWith('mcp-') && s.name !== ownName)
     if (existing) {
       pinned = existing.name
+      const warning = sessionHookWarning(existing, flags['on-activity'])
+      if (warning) console.error(`agent-bridge mcp: warning: ${warning}`)
       return connectSession({ name: pinned, timeoutMs })
     }
     const started = await runSessionDaemon({

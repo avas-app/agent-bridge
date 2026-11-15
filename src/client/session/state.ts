@@ -30,6 +30,8 @@ export type SessionState = {
   lastCallAt: number
   /** 0 means no idle timeout. */
   idleMs: number
+  /** Whether the daemon runs an activity hook (a session started without one ignores a client's variable). */
+  hook?: boolean
 }
 
 /** The directory of the nearest package.json at or above `from`, else `from`. */
@@ -101,6 +103,10 @@ function socketPath(name: string, dir: string): string {
   const short = privateDir(`/tmp/agent-bridge-${uid()}`)
   return join(short, `${shortHash(path)}.sock`)
 }
+
+/** Where a one-off call leaves the failure of its activity hook for the next call in `project`. */
+export const hookMarker = (project: string, dir = stateDir()) =>
+  join(dir, `hook-${shortHash(project)}.failed`)
 
 export const sessionFiles = (name: string, dir = stateDir()) => ({
   state: join(dir, `${name}.json`),

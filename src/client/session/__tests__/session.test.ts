@@ -317,6 +317,17 @@ describe('session daemon', () => {
     expect(log.match(/exited with code 2/g)).toHaveLength(1)
   })
 
+  test('the session state says whether the daemon has an activity hook', async () => {
+    const { metro } = await setup()
+    const hooked = await runSessionDaemon({ name: 'with', metro, idleMs: 0, healthMs: 0, project: dir, onActivity: 'true' })
+    expect(hooked.state.hook).toBe(true)
+    expect(JSON.parse(readFileSync(sessionFiles('with', dir).state, 'utf8')).hook).toBe(true)
+    await hooked.stop(true)
+    const plain = await runSessionDaemon({ name: 'without', metro, idleMs: 0, healthMs: 0, project: dir })
+    cleanups.push(() => plain.stop(true))
+    expect(plain.state.hook).toBe(false)
+  })
+
   test('one session on a non-default Metro port needs no --metro', async () => {
     const { metro } = await setup()
     expect(metro).not.toBe('localhost:8081')

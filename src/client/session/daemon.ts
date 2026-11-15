@@ -209,6 +209,7 @@ export async function runSessionDaemon(
     startedAt: Date.now(),
     lastCallAt: Date.now(),
     idleMs: options.idleMs,
+    hook: activity !== undefined,
   }
   // Never after teardown began: the state file must not outlive the session.
   const save = () => {

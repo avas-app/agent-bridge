@@ -626,6 +626,28 @@ describe('connector', () => {
     next.close()
   }, 20_000)
 
+  test('attaching to a session without a hook warns once when the variable is set', async () => {
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    await apps(metro.metro, 'dev-1')
+    const mine = await runSessionDaemon({ name: 'default', metro: metro.metro, device: 'dev-1', idleMs: 0, healthMs: 0 })
+    cleanups.push(() => mine.stop(true))
+    const lines: string[] = []
+    const realError = console.error
+    console.error = (...a: unknown[]) => void lines.push(a.join(' '))
+    process.env.AGENT_BRIDGE_ON_ACTIVITY = 'true'
+    try {
+      const c = createConnector(noFlags, opts(metro.metro))
+      cleanups.push(() => c.stop())
+      ;(await c.connect()).close()
+      ;(await c.connect()).close()
+    } finally {
+      console.error = realError
+      delete process.env.AGENT_BRIDGE_ON_ACTIVITY
+    }
+    expect(lines.filter((l) => l.includes('without an activity hook'))).toHaveLength(1)
+  }, 20_000)
+
   test('it attaches to the project\'s session, keeps that one when another appears, and never takes another server\'s mcp session', async () => {
     const metro = await startFakeMetro({ expo: true })
     cleanups.push(metro.close)
