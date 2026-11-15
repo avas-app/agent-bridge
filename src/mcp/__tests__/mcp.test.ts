@@ -25,7 +25,20 @@ const JPEG = '/9j/4AAQSkZJRg=='
 
 let restores = 0
 
-async function fakeApp(metro: string, deviceId: string, extra: Tools = {}, omit: string[] = []) {
+// What the fake app registers, plus the status tool; the sorted MCP names a client should see.
+const EXPECTED_APP_TOOLS = [
+  'agent_bridge_status',
+  'bridge_restore',
+  'demo_big',
+  'demo_echo',
+  'demo_fail',
+  'demo_file',
+  'demo_slow',
+  'screen_capture',
+  'screen_snapshot',
+]
+
+async function fakeApp(metro: string, deviceId: string, extra: Tools = {}) {
   const tools: Tools = {
     'demo.echo': (...args: unknown[]) => args,
     'demo.big': (bytes: number) => bigValue(bytes),
@@ -48,7 +61,6 @@ async function fakeApp(metro: string, deviceId: string, extra: Tools = {}, omit:
     },
     ...extra,
   }
-  for (const name of omit) delete tools[name]
   const registry = createRegistry(() => tools, undefined, `load-${deviceId}`)
   const ws = new WebSocket(`ws://${metro}/expo-dev-plugins/broadcast`)
   await new Promise((res, rej) => {
@@ -374,12 +386,18 @@ describe('no app connected', () => {
     expect(snap.inputSchema.properties.full.type).toBe('boolean')
   })
 
-  test('calling a built-in says the app is not connected and why', async () => {
-    const s = serve({ pollMs: 0, connect: () => Promise.reject(new Error('no session named x')) })
+  test('calling a built-in says the app is not connected and why, within the connect wait', async () => {
+    const s = serve({
+      pollMs: 0,
+      connect: () =>
+        new Promise((_, rej) => setTimeout(() => rej(new Error('connect timed out')), 300)),
+    })
     await list(s)
+    const start = Date.now()
     const res = (await s.call('screen_snapshot')).result
+    expect(Date.now() - start).toBeLessThan(2000)
     expect(res.isError).toBe(true)
-    expect(res.content[0].text).toMatch(/Not connected to the app: no session named x/)
+    expect(res.content[0].text).toMatch(/Not connected to the app: connect timed out/)
   }, 10_000)
 
   test('after an app connects the list is the app\'s, and list_changed is sent once', async () => {
@@ -394,25 +412,73 @@ describe('no app connected', () => {
     cleanups.push(() => daemon.stop(true))
     await s.wait(() => s.messages.find((m) => m.method === 'notifications/tools/list_changed'))
     const after = (await s.request('tools/list')).result.tools as Array<{ name: string }>
-    expect(after.map((t) => t.name)).toContain('demo_echo')
-    // fakeApp registers screen.capture and screen.snapshot only, so the other built-ins drop out.
-    expect(after.map((t) => t.name)).not.toContain('screen_press')
+    expect(after.map((t) => t.name).sort()).toEqual(EXPECTED_APP_TOOLS)
     await new Promise((r) => setTimeout(r, 200))
     expect(s.messages.filter((m) => m.method === 'notifications/tools/list_changed').length).toBe(1)
   }, 20_000)
 
-  test('a tool the app lacks is not listed once it connects', async () => {
+  test('built-ins the app lacks (scenario_*) drop out once it connects; screen_capture stays', async () => {
     const metro = await startFakeMetro({ expo: true })
     cleanups.push(metro.close)
-    const app = await fakeApp(metro.metro, 'dev-1', {}, ['screen.capture'])
+    const app = await fakeApp(metro.metro, 'dev-1')
     cleanups.push(() => app.close())
     const daemon = await runSessionDaemon({ name: 'nocap', metro: metro.metro, idleMs: 0, healthMs: 0 })
     cleanups.push(() => daemon.stop(true))
     const s = serve({ pollMs: 0, connect: () => connectSession({ name: 'nocap' }) })
     const names = (await list(s)).map((t) => t.name)
+    expect(names).toContain('screen_capture')
     expect(names).toContain('screen_snapshot')
-    expect(names).not.toContain('screen_capture')
+    expect(names.filter((n) => n.startsWith('scenario_'))).toEqual([])
   }, 20_000)
+
+  test('calling a listed built-in the app lacks is an isError result, not a protocol error', async () => {
+    const metro = await startFakeMetro({ expo: true })
+    cleanups.push(metro.close)
+    let up = false
+    const s = serve({
+      pollMs: 0,
+      connect: () => (up ? connectSession({ name: 'lacks' }) : Promise.reject(new Error('not yet'))),
+    })
+    expect((await list(s)).map((t) => t.name)).toContain('scenario_list')
+    const app = await fakeApp(metro.metro, 'dev-1')
+    cleanups.push(() => app.close())
+    const daemon = await runSessionDaemon({ name: 'lacks', metro: metro.metro, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    up = true
+    const res = await s.call('scenario_list')
+    expect(res.error).toBeUndefined()
+    expect(res.result.isError).toBe(true)
+    expect(res.result.content[0].text).toMatch(/connected app has no scenario\.list/)
+    expect(res.result.content[0].text).toMatch(/tools\/list/)
+    const unknown = await s.call('nope_tool')
+    expect(unknown.error.code).toBe(-32602)
+  }, 20_000)
+
+  test('list_changed is sent again when apps alternate A -> B (not re-listed) -> A -> B', async () => {
+    const make = (names: string[]) =>
+      ({
+        device: { deviceId: 'd', name: 'x' },
+        tools: () => names.map((name) => ({ name })),
+        close() {},
+      }) as any
+    const A = ['demo.echo']
+    const B = ['demo.echo', 'demo.other']
+    let current = make(A)
+    const s = serve({ pollMs: 20, connect: () => Promise.resolve(current) })
+    await list(s)
+    const count = () => s.messages.filter((m) => m.method === 'notifications/tools/list_changed').length
+    const swap = async (names: string[]) => {
+      current = make(names)
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    expect(count()).toBe(0)
+    await swap(B)
+    expect(count()).toBe(1)
+    await swap(A)
+    expect(count()).toBe(1)
+    await swap(B)
+    expect(count()).toBe(2)
+  }, 10_000)
 })
 
 describe('errors', () => {
