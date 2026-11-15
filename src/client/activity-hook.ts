@@ -14,6 +14,8 @@ export type ActivityHook = {
 export type ActivityHookOptions = {
   /** Shell command. Default: $AGENT_BRIDGE_ON_ACTIVITY; none means no hook. */
   command?: string
+  /** Fall back to $AGENT_BRIDGE_ON_ACTIVITY when there is no command. Default true. */
+  useEnv?: boolean
   /** The project directory the command runs in. */
   cwd: string
   /** Where the first failure is reported, once. */
@@ -25,7 +27,10 @@ export type ActivityHookOptions = {
 export function createActivityHook(
   options: ActivityHookOptions,
 ): ActivityHook | undefined {
-  const command = (options.command ?? process.env[ACTIVITY_ENV])?.trim()
+  const command = (
+    options.command ??
+    (options.useEnv === false ? undefined : process.env[ACTIVITY_ENV])
+  )?.trim()
   if (!command) return undefined
   const now = options.now ?? Date.now
   let last = -Infinity

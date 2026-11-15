@@ -185,6 +185,8 @@ async function main() {
       opened,
       createActivityHook({
         command: values['on-activity'],
+        // A session runs the variable's command itself.
+        useEnv: !session,
         cwd: projectRoot(),
         report: (text) => console.error(`warning: ${text}`),
       }),

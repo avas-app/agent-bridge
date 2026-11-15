@@ -20,6 +20,18 @@ describe('activity hook', () => {
     expect(createActivityHook({ cwd: dir, report: () => {} })).toBeUndefined()
   })
 
+  test('reads the environment unless useEnv is false', () => {
+    process.env.AGENT_BRIDGE_ON_ACTIVITY = 'true'
+    try {
+      expect(createActivityHook({ cwd: dir, report: () => {} })).toBeDefined()
+      expect(
+        createActivityHook({ cwd: dir, report: () => {}, useEnv: false }),
+      ).toBeUndefined()
+    } finally {
+      delete process.env.AGENT_BRIDGE_ON_ACTIVITY
+    }
+  })
+
   test('runs in the project dir, once per minute, never for bridge.ping', async () => {
     let t = 1_000_000
     const hook = createActivityHook({

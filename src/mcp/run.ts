@@ -19,17 +19,25 @@ export function createConnector(flags: SessionFlags, options: ConnectOptions) {
   let notice: string | undefined
   const ownName = `mcp-${process.pid}`
   // One hook for the process, so the once-a-minute limit survives reconnects.
-  const activity = createActivityHook({
-    command: flags['on-activity'],
-    cwd: projectRoot(),
-    report: (text) => console.error(`agent-bridge mcp: warning: ${text}`),
-  })
+  const hookFor = (useEnv: boolean) =>
+    createActivityHook({
+      command: flags['on-activity'],
+      useEnv,
+      cwd: projectRoot(),
+      report: (text) => console.error(`agent-bridge mcp: warning: ${text}`),
+    })
+  const direct = hookFor(true)
+  // A session runs the variable's command itself, so only the flag applies here.
+  const viaSession = hookFor(false)
 
   const stopped = (name: string) => {
     notice = `The session "${name}" this server was using stopped (session stop, or its idle time ran out). Stopping runs bridge.restore, so state changed through it was most likely undone. This call did not run; call again and the server uses a new session.`
   }
 
-  const connectBridge = async () => withActivityHook(await openBridge(), activity)
+  const connectBridge = async () => {
+    const bridge = await openBridge()
+    return withActivityHook(bridge, 'session' in bridge ? viaSession : direct)
+  }
 
   const openBridge = async () => {
     if (flags['no-session']) return connect(options)
