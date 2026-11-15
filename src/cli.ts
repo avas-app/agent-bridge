@@ -29,6 +29,8 @@ import {
   sessionCommand,
   sessionFor,
 } from './client/session/cli'
+import { projectRoot } from './client/session/state'
+import { createActivityHook, withActivityHook } from './client/activity-hook'
 import { connectSession } from './client/session/client'
 import { nodeIo, runInit } from './init/index'
 import { mcpMain } from './mcp/run'
@@ -73,6 +75,7 @@ Options
   --device <text>        Pick an app when several are connected
   --transport <name>     auto (default), expo or cdp
   --timeout <ms>         Per-call timeout (default 10000)
+  --on-activity <cmd>    Shell command run after a call, at most once a minute (env AGENT_BRIDGE_ON_ACTIVITY)
   --out <file>           call: write the result to a file and print its size and shape
                          (--batch: a directory, one <n>-<tool>.json per call)
                          run: the report file (with --reporter json|junit)
@@ -128,6 +131,7 @@ async function main() {
       device: { type: 'string' },
       transport: { type: 'string' },
       timeout: { type: 'string' },
+      'on-activity': { type: 'string' },
       strict: { type: 'boolean' },
       out: { type: 'string' },
       full: { type: 'boolean' },
@@ -171,12 +175,20 @@ async function main() {
       console.error(
         `Using session "${session.name}" (${session.device.name} on ${session.metro})`,
       )
-    const bridge = session
+    const opened = session
       ? await connectSession({
           name: session.name,
           timeoutMs: options.timeoutMs,
         })
       : await connect(options)
+    const bridge = withActivityHook(
+      opened,
+      createActivityHook({
+        command: values['on-activity'],
+        cwd: projectRoot(),
+        report: (text) => console.error(`warning: ${text}`),
+      }),
+    )
     try {
       await fn(bridge)
     } finally {

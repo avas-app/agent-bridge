@@ -30,6 +30,7 @@ export type SessionFlags = {
   name?: string
   idle?: string
   keep?: boolean
+  'on-activity'?: string
   'dry-run'?: boolean
   session?: string
   'no-session'?: boolean
@@ -103,6 +104,7 @@ async function start(flags: SessionFlags) {
   if (flags.device) args.push('--device', flags.device)
   if (flags.transport) args.push('--transport', flags.transport)
   if (flags.timeout) args.push('--timeout', flags.timeout)
+  if (flags['on-activity']) args.push('--on-activity', flags['on-activity'])
   const child = spawn(
     process.execPath,
     [...process.execArgv, process.argv[1] as string, ...args],
@@ -256,6 +258,7 @@ export async function daemonMain(flags: SessionFlags) {
       transport: flags.transport as 'auto' | TransportName | undefined,
       idleMs: parseDuration(flags.idle ?? '15m'),
       timeoutMs: flags.timeout ? Number(flags.timeout) : undefined,
+      onActivity: flags['on-activity'],
     })
   } catch (error) {
     writePrivate(

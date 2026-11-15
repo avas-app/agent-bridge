@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline'
 
 import type { ResultMessage } from '../../shared/protocol'
 import type { AppPin, Connection, TransportName } from '../connection'
+import { createActivityHook } from '../activity-hook'
 import { callTimeout } from '../call-timeout'
 import { metroHost } from '../discover'
 import { explainConnectError } from '../metro-hint'
@@ -48,6 +49,8 @@ export type DaemonOptions = {
   adoptRetryMs?: number
   /** Longest one bridge.adopt call may take. Default: `timeoutMs`, at least 3.5 s (a persisted store may wait 2 s to hydrate). */
   adoptTimeoutMs?: number
+  /** Shell command run after calls, at most once a minute. Default: $AGENT_BRIDGE_ON_ACTIVITY. */
+  onActivity?: string
 }
 
 export type SessionDaemon = {
@@ -143,6 +146,12 @@ export async function runSessionDaemon(
     appendFileSync(files.log, `${new Date().toISOString()} ${text}\n`, {
       mode: 0o600,
     })
+
+  const activity = createActivityHook({
+    command: options.onActivity,
+    cwd: options.project ?? projectRoot(),
+    report: (text) => log(`warning: ${text}`),
+  })
 
   const running = readSession(name, dir)
   if (running)
@@ -620,6 +629,7 @@ export async function runSessionDaemon(
           await adoptRun
           return { id: req.id, error: message(error), ...takeNotice() }
         } finally {
+          activity?.ran(req.tool)
           inflight--
           touch()
         }

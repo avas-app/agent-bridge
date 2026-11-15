@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -280,6 +281,40 @@ describe('session daemon', () => {
     const next = await bridge.timed('store.get')
     expect(next.logs.map((l) => l.message)).toEqual(['late'])
     expect(next.logs[0]?.after).toBe('demo.boom')
+  })
+
+  test('on-activity runs after a real call, not after the health ping, and a failure is logged once', async () => {
+    const { metro } = await setup()
+    const marks = join(dir, 'marks')
+    const daemon = await runSessionDaemon({
+      name: 'hooked',
+      metro,
+      idleMs: 0,
+      healthMs: 20,
+      project: dir,
+      onActivity: `echo "$PWD" >> '${marks}'; exit 2`,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const exists = () => {
+      try {
+        return readFileSync(marks, 'utf8')
+      } catch {
+        return ''
+      }
+    }
+    await new Promise((r) => setTimeout(r, 200))
+    expect(exists()).toBe('')
+
+    const bridge = await connectSession({ metro })
+    cleanups.push(bridge.close)
+    expect(await bridge.call('store.get', 'a')).toEqual(['a'])
+    await bridge.call('store.get', 'b')
+    for (let i = 0; i < 100 && !exists(); i++)
+      await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 100))
+    expect(exists()).toBe(`${realpathSync(dir)}\n`)
+    const log = readFileSync(sessionFiles('hooked', dir).log, 'utf8')
+    expect(log.match(/exited with code 2/g)).toHaveLength(1)
   })
 
   test('one session on a non-default Metro port needs no --metro', async () => {

@@ -1,9 +1,10 @@
 import type { ConnectOptions } from '../client/index'
+import { createActivityHook, withActivityHook } from '../client/activity-hook'
 import { connect } from '../client/index'
 import { sessionFor, type SessionFlags } from '../client/session/cli'
 import { connectSession } from '../client/session/client'
 import { runSessionDaemon, type SessionDaemon } from '../client/session/daemon'
-import { readSession } from '../client/session/state'
+import { projectRoot, readSession } from '../client/session/state'
 import { startMcpServer } from './server'
 
 /**
@@ -17,12 +18,20 @@ export function createConnector(flags: SessionFlags, options: ConnectOptions) {
   let ending = false
   let notice: string | undefined
   const ownName = `mcp-${process.pid}`
+  // One hook for the process, so the once-a-minute limit survives reconnects.
+  const activity = createActivityHook({
+    command: flags['on-activity'],
+    cwd: projectRoot(),
+    report: (text) => console.error(`agent-bridge mcp: warning: ${text}`),
+  })
 
   const stopped = (name: string) => {
     notice = `The session "${name}" this server was using stopped (session stop, or its idle time ran out). Stopping runs bridge.restore, so state changed through it was most likely undone. This call did not run; call again and the server uses a new session.`
   }
 
-  const connectBridge = async () => {
+  const connectBridge = async () => withActivityHook(await openBridge(), activity)
+
+  const openBridge = async () => {
     if (flags['no-session']) return connect(options)
     const timeoutMs = options.timeoutMs
     if (daemon) return connectSession({ name: daemon.state.name, timeoutMs })
