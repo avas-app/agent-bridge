@@ -1,4 +1,5 @@
 import type { Tools } from '../types'
+import { TOOL_DESCRIPTIONS } from './descriptions'
 
 /** The slice of react-native-view-shot this tool uses. */
 export type ViewShot = {
@@ -33,8 +34,7 @@ export function loadViewShot(): ViewShot | undefined {
 export function captureTools(load: () => ViewShot | undefined): Tools {
   return {
     'screen.capture': {
-      description:
-        'Screenshot the app as a PNG. Returns {path} of a file on the device. `{base64:true}` returns {base64} instead when small enough (else {path}). Only works if the app already has react-native-view-shot; otherwise errors and you use agent-device, simctl or adb.',
+      description: TOOL_DESCRIPTIONS['screen.capture'],
       maxArgs: 1,
       run: async (options?: { base64?: boolean }) => {
         const viewShot = load()

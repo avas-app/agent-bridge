@@ -1,4 +1,7 @@
 import type { Tools } from '../types'
+import { INTERNAL_TOOLS, TOOL_DESCRIPTIONS } from './descriptions'
+
+export { INTERNAL_TOOLS }
 
 const SUFFIX = '.restore'
 const SELF = 'bridge.restore'
@@ -59,9 +62,6 @@ function restorers(tools: Tools) {
     .filter((e): e is [string, Exclude<typeof e[1], (...a: never[]) => unknown>] => typeof e[1] !== 'function')
 }
 
-/** Names a session reads and writes itself; hidden from the tool list because they carry raw values. */
-export const INTERNAL_TOOLS = ['bridge.adopt']
-
 /**
  * `bridge.restore` runs every tool whose name ends in `.restore`, so each
  * adapter (and the app) can undo what the agent changed in its own area.
@@ -71,13 +71,12 @@ export function restoreTools(getTools: () => Tools): Tools {
   return {
     'bridge.pending': {
       maxArgs: 0,
-      description:
-        'What bridge.restore would undo right now, per area (store, query, net, app, ...): the value is true, or detail such as a store\'s snapshot against its current value. Empty when nothing is pending. Changes nothing.',
+      description: TOOL_DESCRIPTIONS['bridge.pending'],
       run: () => pendingByArea(getTools(), true),
     },
     'bridge.adopt': {
       maxArgs: 1,
-      description: 'Internal: a session hands back its journal after a reload.',
+      description: TOOL_DESCRIPTIONS['bridge.adopt'],
       run: async (data: Record<string, unknown>) => {
         const tools = getTools()
         const out: Record<string, unknown> = {}
@@ -96,8 +95,7 @@ export function restoreTools(getTools: () => Tools): Tools {
       },
     },
     [SELF]: {
-      description:
-        'Undo what the agent changed: runs every *.restore tool in name order, scenario.restore last, and returns each result or error.',
+      description: TOOL_DESCRIPTIONS['bridge.restore'],
       run: async () => {
         const tools = getTools()
         const results: Record<string, unknown> = {}

@@ -1,5 +1,6 @@
 import { checkOptions } from '../options-schema'
 import type { ScenarioContext, Scenarios, ToolFn, Tools } from '../types'
+import { TOOL_DESCRIPTIONS } from './descriptions'
 
 type Active = { options: unknown; undos: Array<() => unknown> }
 
@@ -58,8 +59,7 @@ export function scenarioTools(
 
   return {
     'scenario.list': {
-      description:
-        'Setups the app defines, e.g. a signed-in user: name, description, options (a JSON Schema), active.',
+      description: TOOL_DESCRIPTIONS['scenario.list'],
       run: () =>
         Object.entries(getScenarios())
           .map(([name, s]) => ({
@@ -71,8 +71,7 @@ export function scenarioTools(
           .sort((a, b) => a.name.localeCompare(b.name)),
     },
     'scenario.apply': {
-      description:
-        'Apply a scenario: [name, options?]. Options must fit its schema (scenario.list). Returns what it returns. Applying an active one undoes it first. bridge.restore undoes it.',
+      description: TOOL_DESCRIPTIONS['scenario.apply'],
       run: async (name: string, options?: unknown) => {
         const scenario = find(name)
         // Before anything changes: a bad call leaves an active scenario as it was.
@@ -109,8 +108,7 @@ export function scenarioTools(
     },
     'scenario.restore': {
       pending: () => active.size > 0,
-      description:
-        'Undo every active scenario, newest first. bridge.restore runs this after every other restorer.',
+      description: TOOL_DESCRIPTIONS['scenario.restore'],
       run: async () => {
         const names = [...active.keys()].reverse()
         const errors: string[] = []
