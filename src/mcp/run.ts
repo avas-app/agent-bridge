@@ -1,9 +1,14 @@
 import type { ConnectOptions } from '../client/index'
+import {
+  createActivityHook,
+  sessionHookWarning,
+  withActivityHook,
+} from '../client/activity-hook'
 import { connect } from '../client/index'
 import { sessionFor, type SessionFlags } from '../client/session/cli'
 import { connectSession } from '../client/session/client'
 import { runSessionDaemon, type SessionDaemon } from '../client/session/daemon'
-import { readSession } from '../client/session/state'
+import { projectRoot, readSession } from '../client/session/state'
 import { startMcpServer } from './server'
 
 /**
@@ -17,12 +22,28 @@ export function createConnector(flags: SessionFlags, options: ConnectOptions) {
   let ending = false
   let notice: string | undefined
   const ownName = `mcp-${process.pid}`
+  // One hook for the process, so the once-a-minute limit survives reconnects.
+  const hookFor = (useEnv: boolean) =>
+    createActivityHook({
+      command: flags['on-activity'],
+      useEnv,
+      cwd: projectRoot(),
+      report: (text) => console.error(`agent-bridge mcp: warning: ${text}`),
+    })
+  const direct = hookFor(true)
+  // A session runs the variable's command itself, so only the flag applies here.
+  const viaSession = hookFor(false)
 
   const stopped = (name: string) => {
     notice = `The session "${name}" this server was using stopped (session stop, or its idle time ran out). Stopping runs bridge.restore, so state changed through it was most likely undone. This call did not run; call again and the server uses a new session.`
   }
 
   const connectBridge = async () => {
+    const bridge = await openBridge()
+    return withActivityHook(bridge, 'session' in bridge ? viaSession : direct)
+  }
+
+  const openBridge = async () => {
     if (flags['no-session']) return connect(options)
     const timeoutMs = options.timeoutMs
     if (daemon) return connectSession({ name: daemon.state.name, timeoutMs })
@@ -34,6 +55,8 @@ export function createConnector(flags: SessionFlags, options: ConnectOptions) {
     const existing = sessionFor(flags, (s) => s.name.startsWith('mcp-') && s.name !== ownName)
     if (existing) {
       pinned = existing.name
+      const warning = sessionHookWarning(existing, flags['on-activity'])
+      if (warning) console.error(`agent-bridge mcp: warning: ${warning}`)
       return connectSession({ name: pinned, timeoutMs })
     }
     const started = await runSessionDaemon({

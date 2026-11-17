@@ -50,6 +50,8 @@ If Metro runs on another port, pass the same `--metro` (or set
 `Nothing is listening on …` error names the Metro it found instead and its apps;
 check it's yours before switching to it.
 
+Set `AGENT_BRIDGE_ON_ACTIVITY="<command>"` (or `--on-activity`) to run a command at most once a minute while you call tools, for example one that keeps a leased simulator alive. With a session, set it before `session start`: a session started without it ignores it (the client warns), so stop the session and start it again. Don't put secrets in the command (docs/cli.md, "Activity hook").
+
 Calls take `--timeout <ms>` (default 10000) for a slow call. To drive two apps
 at once, start named sessions (`session start --name ios`, `--name android`) and
 pass `--session <name>` on each call. A session is found from the nearest

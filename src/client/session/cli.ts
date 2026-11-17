@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs'
 
 import type { ResultMessage } from '../../shared/protocol'
 import type { TransportName } from '../connection'
+import { ACTIVITY_ENV } from '../activity-hook'
 import { explicitMetro, metroHost } from '../discover'
 import { sessionRequest } from './client'
 import { runSessionDaemon } from './daemon'
@@ -30,6 +31,7 @@ export type SessionFlags = {
   name?: string
   idle?: string
   keep?: boolean
+  'on-activity'?: string
   'dry-run'?: boolean
   session?: string
   'no-session'?: boolean
@@ -106,7 +108,15 @@ async function start(flags: SessionFlags) {
   const child = spawn(
     process.execPath,
     [...process.execArgv, process.argv[1] as string, ...args],
-    { detached: true, stdio: 'ignore', windowsHide: true },
+    {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      // By environment, so the command isn't in the daemon's argv (`ps`).
+      env: flags['on-activity']
+        ? { ...process.env, [ACTIVITY_ENV]: flags['on-activity'] }
+        : process.env,
+    },
   )
 
   // Ready when the daemon has written its state; failed when it wrote an error.

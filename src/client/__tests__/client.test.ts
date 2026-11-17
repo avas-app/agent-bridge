@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import WebSocket from 'ws'
 
@@ -12,6 +15,7 @@ import {
   PLUGIN_NAME,
   PROTOCOL_VERSION,
 } from '../../shared/protocol'
+import { createActivityHook, withActivityHook } from '../activity-hook'
 import { AgentBridgeCallError, connect } from '../index'
 import { openConnection } from '../open'
 import { startFakeMetro } from './fake-metro'
@@ -101,6 +105,28 @@ describe('CDP transport', () => {
     await expect(bridge.call('demo.fail')).rejects.toBeInstanceOf(
       AgentBridgeCallError,
     )
+  })
+
+  test('a one-off call runs the on-activity command, also when the call fails', async () => {
+    const metro = await startFakeMetro({
+      hostUri: (port) => `fakehost:${port}`,
+      acceptOrigin: (port) => `http://fakehost:${port}`,
+    })
+    cleanups.push(
+      metro.close,
+      cdpTransport().start(appContext('Fake Phone', 'dev-cdp')),
+    )
+    const dir = mkdtempSync(join(tmpdir(), 'ab-hook-'))
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+    const bridge = withActivityHook(
+      await connect({ metro: metro.metro, transport: 'cdp' }),
+      createActivityHook({ command: 'touch ran', cwd: dir, report: () => {} }),
+    )
+    cleanups.push(bridge.close)
+    await expect(bridge.call('demo.fail')).rejects.toThrow('it broke')
+    for (let i = 0; i < 100 && !existsSync(join(dir, 'ran')); i++)
+      await new Promise((r) => setTimeout(r, 20))
+    expect(existsSync(join(dir, 'ran'))).toBe(true)
   })
 
   test('timed returns the errors the reply carried, escaped for Hermes', async () => {
