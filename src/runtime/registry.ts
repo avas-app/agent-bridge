@@ -57,7 +57,7 @@ export function createRegistry(
     const end = quiet ? undefined : logs?.begin(call.tool)
     const result = INTERNAL_TOOLS.includes(call.tool) && !trusted
       ? await refused(call, from)
-      : await run(call, from).finally(end)
+      : await run(call, from).finally(() => end?.())
     const errors = quiet ? undefined : logs?.takeErrors()
     const stamped = loadId ? { ...result, loadId, ...pending(), ...journal(call, trusted) } : result
     return errors?.length ? { ...stamped, logs: errors } : stamped

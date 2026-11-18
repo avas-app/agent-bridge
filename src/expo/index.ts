@@ -5,7 +5,7 @@ import {
 } from 'expo/devtools'
 
 import type { Transport } from '../runtime/types'
-import { type CallMessage, PLUGIN_NAME } from '../shared/protocol'
+import { type CallMessage, failedResult, PLUGIN_NAME } from '../shared/protocol'
 
 /**
  * Plain JSON over Expo's dev-tools plugin socket: no string evaluation, emoji
@@ -31,7 +31,14 @@ export function expoTransport(): Transport {
           c.addMessageListener('call', async (call: CallMessage) => {
             // The socket broadcasts; only answer calls meant for this device.
             if (call.to && call.to !== context.info().deviceId) return
-            c.sendMessage('result', await context.dispatch(call))
+            try {
+              c.sendMessage('result', await context.dispatch(call))
+            } catch (error) {
+              c.sendMessage(
+                'result',
+                failedResult(call.id, context.info().deviceId, error),
+              )
+            }
           }),
         )
         announce()
