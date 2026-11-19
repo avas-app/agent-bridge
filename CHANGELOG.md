@@ -1,5 +1,11 @@
 # @avasapp/agent-bridge
 
+## 0.7.1
+
+### Patch Changes
+
+- 33d2c4e: Fix "undefined is not a function" on Hermes when dispatching bridge.ping or bridge.pending: guard the finally callback and turn a rejected dispatch into an error result in both transports.
+
 ## 0.7.0
 
 ### Minor Changes
