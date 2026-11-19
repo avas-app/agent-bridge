@@ -2,6 +2,8 @@ import {
   CDP_GLOBAL,
   CDP_REPLY_BINDING,
   type CallMessage,
+  failedResult,
+  type ResultMessage,
   toAsciiJson,
 } from '../shared/protocol'
 import type { Transport } from './types'
@@ -20,10 +22,13 @@ export function cdpTransport(): Transport {
         info: () => toAsciiJson(context.info()),
         dispatch: (payload: string) => {
           const call = JSON.parse(payload) as CallMessage
-          void context.dispatch(call).then((result) => {
-            const reply = g[CDP_REPLY_BINDING]
-            if (typeof reply === 'function') reply(toAsciiJson(result))
-          })
+          const reply = (result: ResultMessage) => {
+            const send = g[CDP_REPLY_BINDING]
+            if (typeof send === 'function') send(toAsciiJson(result))
+          }
+          void context.dispatch(call).then(reply, (error: unknown) =>
+            reply(failedResult(call.id, context.info().deviceId, error)),
+          )
           return call.id
         },
       }

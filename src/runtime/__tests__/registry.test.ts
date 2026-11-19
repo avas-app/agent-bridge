@@ -43,6 +43,44 @@ describe('registry', () => {
   })
 })
 
+describe('Hermes promises', () => {
+  test('dispatch survives a finally that calls an undefined callback', async () => {
+    const original = Promise.prototype.finally
+    // RN's then/promise (and Hermes' built-in one) call the callback without a typeof check,
+    // unlike Node/Bun, which treat a missing callback as a no-op.
+    Promise.prototype.finally = function (
+      this: Promise<unknown>,
+      callback?: (() => void) | null,
+    ) {
+      const call = callback as () => void
+      return this.then(
+        (value) => {
+          call()
+          return value
+        },
+        (error) => {
+          call()
+          throw error
+        },
+      )
+    } as typeof Promise.prototype.finally
+    try {
+      const r = createRegistry(() => ({
+        'bridge.ping': () => ({ pong: true }),
+        'bridge.pending': () => ({}),
+      }))
+      expect(
+        await r.dispatch({ id: '1', tool: 'bridge.ping' }, 'dev'),
+      ).toMatchObject({ id: '1', ok: true, value: { pong: true } })
+      expect(
+        await r.dispatch({ id: '2', tool: 'bridge.pending' }, 'dev'),
+      ).toMatchObject({ id: '2', ok: true })
+    } finally {
+      Promise.prototype.finally = original
+    }
+  })
+})
+
 describe('toJson', () => {
   test('breaks cycles and drops functions', () => {
     const a: Record<string, unknown> = { n: 1, fn: () => 1, big: 10n, set: new Set([1]) }

@@ -54,6 +54,17 @@ export type ResultMessage = (
   journalData?: Record<string, unknown>
 }
 
+/** A reply for a call the transport could not even dispatch (a rejected dispatch). */
+export function failedResult(id: string, from: string, error: unknown): ResultMessage {
+  return {
+    id,
+    from,
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+    ms: 0,
+  }
+}
+
 export type ToolInfo = { name: string; description?: string }
 
 export type DeviceInfo = {
