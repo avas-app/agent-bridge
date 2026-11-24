@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,7 +26,7 @@ afterEach(async () => {
 const PNG = Buffer.from('fake-png').toString('base64')
 
 /** A session whose app answers the v2 dial tools; `calls` logs every tool call in order. */
-async function fakeSession(options: { capture?: boolean } = {}) {
+async function fakeSession(options: { capture?: boolean; oversize?: boolean; captureDelayMs?: number } = {}) {
   const calls: Array<[string, unknown[]]> = []
   let tile = 'roomy'
   const socket = join(dir, 'app.sock')
@@ -60,12 +60,13 @@ async function fakeSession(options: { capture?: boolean } = {}) {
           res = ok({})
           break
         case 'screen.capture':
-          res = options.capture ? ok({ base64: PNG }) : fail('needs react-native-view-shot')
+          res = options.oversize ? ok({ path: '/data/shot.jpg' }) : options.capture ? ok({ base64: PNG }) : fail('needs react-native-view-shot')
           break
         default:
           res = { id: req.id, error: 'nope' }
       }
-      conn.write(encodeLine(res))
+      if (req.tool === 'screen.capture' && options.captureDelayMs) setTimeout(() => conn.write(encodeLine(res)), options.captureDelayMs)
+      else conn.write(encodeLine(res))
     })
   })
   await new Promise<void>((r) => server.listen(socket, r))
@@ -261,6 +262,114 @@ describe('panel key', () => {
       expect(panelKey(dir)).toBe(b)
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('review fixes', () => {
+  test('capture flag is false with a device but no screenshot source', async () => {
+    const app = await fakeSession()
+    const { get } = await start(app.state)
+    const snap = (await (await get('/api/dials')).json()) as { capture: boolean }
+    expect(snap.capture).toBe(false)
+  })
+
+  test('capture flag probes screen.capture once per session', async () => {
+    const app = await fakeSession({ capture: true })
+    const { get } = await start(app.state)
+    await get('/api/dials')
+    await get('/api/dials')
+    expect(app.tool('screen.capture').length).toBe(1)
+  })
+
+  test('an oversize capture says it is too large', async () => {
+    const app = await fakeSession({ oversize: true })
+    const { post } = await start(app.state)
+    const body = (await (await post('/api/capture', { id: 'card.accent' })).json()) as {
+      results: Array<{ error?: string }>
+    }
+    expect(body.results[0]?.error).toContain('too large')
+  })
+
+  test('screenshot command gets the path safely when TMPDIR has a quote', async () => {
+    const app = await fakeSession()
+    const odd = join(dir, "it's here")
+    mkdirSync(odd)
+    const old = process.env.TMPDIR
+    process.env.TMPDIR = odd
+    try {
+      const { post } = await start(app.state, { screenshotCmd: 'printf cmd-png > {out}' })
+      const body = (await (await post('/api/capture', { id: 'card.accent' })).json()) as {
+        results: Array<{ png?: string; error?: string }>
+      }
+      expect(body.results[0]?.error).toBeUndefined()
+      expect(Buffer.from(body.results[0]!.png!, 'base64').toString()).toBe('cmd-png')
+    } finally {
+      if (old === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = old
+    }
+  })
+
+  test('capture does not bring back an outline cleared while it ran', async () => {
+    const app = await fakeSession({ capture: true, captureDelayMs: 150 })
+    const { post } = await start(app.state)
+    await post('/api/highlight', { id: 'card.accent' })
+    app.calls.length = 0
+    const shot = post('/api/capture', { id: 'card.accent' })
+    await new Promise((r) => setTimeout(r, 50))
+    await post('/api/highlight', { id: null })
+    await shot
+    const highlights = app.tool('dial.highlight').map(([, a]) => a[0])
+    expect(highlights[highlights.length - 1]).toBeNull()
+  })
+
+  test('a body over the limit destroys the request', async () => {
+    const app = await fakeSession()
+    const { port } = await start(app.state)
+    const res = await fetch(`http://127.0.0.1:${port}/api/dials/set?key=k`, {
+      method: 'POST',
+      body: 'x'.repeat(1_100_000),
+    }).catch((e: Error) => e)
+    expect(res).toBeInstanceOf(Error)
+  })
+})
+
+describe('panel key file', () => {
+  test('an existing world-readable key file is tightened, and a new key replaces it safely', () => {
+    const d = mkdtempSync(join(tmpdir(), 'dials-key-'))
+    try {
+      mkdirSync(join(d, '.agent-bridge'))
+      const file = join(d, '.agent-bridge', 'dials-key')
+      writeFileSync(file, `${'a'.repeat(32)}\n`, { mode: 0o644 })
+      chmodSync(file, 0o644)
+      expect(panelKey(d)).toBe('a'.repeat(32))
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      chmodSync(file, 0o644)
+      panelKey(d, true)
+      expect(statSync(file).mode & 0o777).toBe(0o600)
+      expect(readdirSync(join(d, '.agent-bridge'))).toEqual(['dials-key'])
+    } finally {
+      rmSync(d, { recursive: true, force: true })
+    }
+  })
+
+  test('serve warns when .agent-bridge/ is not git-ignored', async () => {
+    const d = mkdtempSync(join(tmpdir(), 'dials-ign-'))
+    const errs: string[] = []
+    const err = console.error
+    const log = console.log
+    console.error = (...a: unknown[]) => void errs.push(a.join(' '))
+    console.log = () => {}
+    try {
+      const run = dialsCommand('serve', [], { port: '0' }, async () => {}, d)
+      await new Promise((r) => setTimeout(r, 200))
+      process.emit('SIGTERM')
+      await run
+      expect(errs.join('\n')).toContain('.gitignore')
+    } finally {
+      console.error = err
+      console.log = log
+      rmSync(d, { recursive: true, force: true })
     }
   })
 })

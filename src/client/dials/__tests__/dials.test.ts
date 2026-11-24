@@ -195,6 +195,12 @@ describe('dials check', () => {
     ])
   })
 
+  test('finds calls whose id is on the next line (Prettier-wrapped)', () => {
+    mkdirSync(join(dir, 'src'), { recursive: true })
+    writeFileSync(join(dir, 'src', 'Wrap.tsx'), "const a = 1\nconst c = dial.color(\n  'wrap.id',\n  '#111',\n)\n")
+    expect(scanDialCalls(dir).map((c) => `${c.file}:${c.line}:${c.id}`)).toContain('src/Wrap.tsx:2:wrap.id')
+  })
+
   test('exits 1 while calls remain and 0 once they are gone', async () => {
     write()
     const found = await run()
