@@ -225,6 +225,72 @@ describe('variant', () => {
   })
 })
 
+describe('review fixes', () => {
+  test('a held value is dropped once its dial takes it', async () => {
+    await call('dial.apply', { later: 5 })
+    const restore = def('dial.restore')
+    expect(restore.pending!({ detail: true })).toEqual(['later'])
+    mount(() => dial.number('later', 1))
+    expect(restore.pending!({ detail: true })).toEqual(['later'])
+    await call('dial.set', 'later', 1)
+    expect(restore.pending!()).toBeFalsy()
+  })
+
+  test('highlight with an unknown id keeps the old outline and its timer', async () => {
+    const f = { tag: 0, child: { tag: 5, stateNode: { getBoundingClientRect: () => ({ x: 1, y: 2, width: 3, height: 4 }), checkVisibility: () => true }, child: null, sibling: null, return: null, memoizedProps: {} }, sibling: null, return: null, stateNode: null, memoizedProps: {} }
+    const shared = (realReact as unknown as Record<string, { A: unknown }>)['__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE']!
+    const prev = shared.A
+    shared.A = { getOwner: () => f }
+    mount(() => dial.number('n', 1))
+    shared.A = prev
+    await call('dial.highlight', 'n')
+    const { highlighted } = await import('../highlight')
+    expect(() => call('dial.highlight', 'missing')).toThrow('No dial')
+    expect(highlighted()).toHaveLength(1)
+    await call('dial.set', 'n', 2)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(highlighted()).toHaveLength(1)
+  })
+
+  test('plain function variants are values, not components', async () => {
+    const short = (n: number) => `${n}`
+    const long = (n: number) => `${n}.00`
+    let f: unknown
+    mount(() => (f = dial.variant('fmt', { short, long }, 'short')))
+    expect(f).toBe(short)
+    await call('dial.set', 'fmt', 'long')
+    expect(f).toBe(long)
+  })
+
+  test('an unknown default behaves the same in dev and release', () => {
+    let plain: unknown = 'unset'
+    mount(() => (plain = dial.variant('a', { x: 1 }, 'nope')))
+    expect(plain).toBeUndefined()
+    expect(noop.dial.variant('a', { x: 1 }, 'nope')).toBeUndefined()
+    const A = () => null
+    let Dev: unknown
+    mount(() => (Dev = dial.variant('c', { A }, 'nope')))
+    const Rel = noop.dial.variant('c', { A }, 'nope') as (p: object) => unknown
+    expect(typeof Dev).toBe('function')
+    expect((Dev as (p: object) => unknown)({})).toBeNull()
+    expect(Rel({})).toBeNull()
+  })
+
+  test('a variant added by a later registration is accepted', async () => {
+    mount(() => dial.variant('v', { a: 'A' }, 'a'))
+    mount(() => dial.variant('v', { a: 'A', b: 'B' }, 'a'))
+    await call('dial.set', 'v', 'b')
+    const [d] = (await call('dial.list')) as { options: string[] }[]
+    expect(d!.options).toEqual(['a', 'b'])
+  })
+
+  test('later registrations refresh number constraints', async () => {
+    mount(() => dial.number('n', 1, { max: 3 }))
+    mount(() => dial.number('n', 1, { max: 10 }))
+    await call('dial.set', 'n', 8)
+  })
+})
+
 describe('subscribe', () => {
   test('the same subscribe function is passed on every render', async () => {
     const c = mount(() => dial.number('n', 1))

@@ -2,6 +2,7 @@ import * as React from 'react'
 import { useEffect, useSyncExternalStore } from 'react'
 
 import type { Tools } from '../runtime/types'
+import { DIALS_MARKER } from '../shared/protocol'
 import {
   type Dial,
   type DialMeta,
@@ -26,6 +27,8 @@ import {
 import { highlight, rects } from './highlight'
 
 export { DialsOverlay } from './overlay'
+// Exported so the string stays in the bundle: `assert-absent` looks for it.
+export { DIALS_MARKER }
 export type { Dial, DialMeta, DialTheme, NumberMeta }
 export type { DialRects } from './highlight'
 
@@ -45,8 +48,14 @@ function read<T extends DialValue>(id: string, spec: Spec): T {
 }
 
 type Comp = React.ComponentType<Record<string, unknown>>
-const isComponent = (v: unknown) =>
-  typeof v === 'function' || (!!v && typeof v === 'object' && '$$typeof' in (v as object))
+// A formatter and a component are both functions; component names start uppercase.
+const isComponent = (v: unknown) => {
+  if (typeof v === 'function') {
+    const f = v as { name?: string; displayName?: string; prototype?: { isReactComponent?: unknown } }
+    return !!f.prototype?.isReactComponent || /^[A-Z]/.test(f.displayName ?? f.name ?? '')
+  }
+  return !!v && typeof v === 'object' && '$$typeof' in (v as object)
+}
 
 const hosts = new Map<string, Comp>()
 const latest = new Map<string, { spec: Spec; variants: Record<string, Comp> }>()
@@ -80,7 +89,8 @@ export const dial = {
   /** Pick one of `variants` by key: `dial.variant('card', { roomy: RoomyCard, tiles: TileCard }, 'roomy')`. */
   variant: <T>(id: string, variants: Record<string, T>, def: string, meta?: DialMeta): T => {
     const spec: Spec = { type: 'variant', def, options: Object.keys(variants), meta }
-    if (Object.values(variants).every(isComponent)) return variantHost(id, spec, variants as Record<string, Comp>) as T
+    const all = Object.values(variants)
+    if (all.length > 0 && all.every(isComponent)) return variantHost(id, spec, variants as Record<string, Comp>) as T
     const key = read<string>(id, spec)
     return (variants[key] ?? variants[def]) as T
   },

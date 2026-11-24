@@ -3,6 +3,9 @@ export const PROTOCOL_VERSION = 1
 /** `agent-bridge assert-absent` fails when a bundle contains this string. */
 export const RUNTIME_MARKER = '@avasapp/agent-bridge/runtime'
 
+/** Same check for the dials code, which app files import directly. */
+export const DIALS_MARKER = '@avasapp/agent-bridge/dials'
+
 /** Plugin name on Expo's dev-tools broadcast socket. */
 export const PLUGIN_NAME = 'agent-bridge'
 
