@@ -46,7 +46,7 @@ When `dials wait` returns a request:
 agent-bridge dials commit-status writing
 # write each ticked value into source, remove the dial calls
 agent-bridge dials clear <ids>
-agent-bridge dials check                # must list nothing
+agent-bridge dials check                # must not list the ids you committed
 agent-bridge dials commit-status done --message '<what changed>'   # or: failed --message '<why>'
 ```
 
