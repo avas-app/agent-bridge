@@ -83,7 +83,7 @@ Dials: tune values live from a web panel (see docs/dials.md)
   agent-bridge dials serve [--port N] [--host H] [--tailscale] [--screenshot-cmd '<cmd {out}>'] [--new-key]
                                           Panel server; prints one URL with a key (kept in .agent-bridge/dials-key; --new-key replaces it)
   agent-bridge dials wait [--timeout <s>] [--json]   Block until the panel asks for a commit (exit 2 on timeout)
-  agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>]
+  agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>] [--no-reload]
   agent-bridge dials cancel                            Cancel a commit that is stuck
 
 Options
@@ -175,6 +175,7 @@ async function main() {
       host: { type: 'string' },
       tailscale: { type: 'boolean' },
       'new-key': { type: 'boolean' },
+      'no-reload': { type: 'boolean' },
       message: { type: 'string' },
       'screenshot-cmd': { type: 'string' },
       yes: { type: 'boolean', short: 'y' },

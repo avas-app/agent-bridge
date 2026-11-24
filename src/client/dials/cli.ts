@@ -3,8 +3,11 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 
+import WebSocket from 'ws'
+
 import type { AgentBridge } from '../index'
-import { projectRoot } from '../session/state'
+import { metroHost } from '../discover'
+import { inProject, listSessions, projectRoot } from '../session/state'
 import {
   type DialInfo,
   clearDials,
@@ -29,6 +32,8 @@ export type DialsFlags = {
   message?: string
   'screenshot-cmd'?: string
   'new-key'?: boolean
+  'no-reload'?: boolean
+  metro?: string
 }
 
 type WithBridge = (fn: (bridge: AgentBridge) => Promise<void>) => Promise<void>
@@ -196,7 +201,7 @@ export async function dialsCommand(
     case 'commit-status': {
       const status = rest[0]
       if (!status || !STATUSES.includes(status as (typeof STATUSES)[number]))
-        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [<commit id>] [--message <text>]`)
+        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [<commit id>] [--message <text>] [--no-reload]`)
       const wanted = rest[1]
       const next = updateCommit(project, (commit) => {
         if (!commit) throw new Error('No commit request to update.')
@@ -210,6 +215,13 @@ export async function dialsCommand(
         return { ...kept, status: status as (typeof STATUSES)[number], ...(flags.message ? { message: flags.message } : {}) }
       })
       console.log(`commit ${next?.id.slice(0, 8)}: ${status}`)
+      if (status === 'done' && !flags['no-reload']) {
+        // Removing dial.* calls changes a component's hook count, which Fast Refresh can't follow.
+        const metro = flags.metro ?? listSessions().find((s) => inProject(s.project, project))?.metro
+        const host = metroHost(metro)
+        if (await reloadApps(host)) console.log(`Reloaded the app through Metro (${host}).`)
+        else console.error(`Couldn't reach Metro at ${host} to reload the app; reload it yourself (r in Metro).`)
+      }
       return
     }
     case 'cancel': {
@@ -218,7 +230,7 @@ export async function dialsCommand(
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] | cancel')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
   }
 }
 
@@ -251,4 +263,21 @@ export function panelKey(project: string, rotate = false): string {
   writeFileSync(temp, `${key}\n`, { flag: 'wx', mode: 0o600 })
   renameSync(temp, file)
   return key
+}
+
+/** Asks Metro to reload every connected app, like pressing r in its terminal. */
+export function reloadApps(metro: string, timeoutMs = 3000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ws = new WebSocket(`ws://${metro}/message`)
+    const done = (ok: boolean) => {
+      clearTimeout(timer)
+      ws.removeAllListeners()
+      ws.on('error', () => {})
+      ws.terminate()
+      resolve(ok)
+    }
+    const timer = setTimeout(() => done(false), timeoutMs)
+    ws.on('open', () => ws.send(JSON.stringify({ version: 2, method: 'reload' }), (error) => done(!error)))
+    ws.on('error', () => done(false))
+  })
 }
