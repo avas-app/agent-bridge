@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -39,7 +39,7 @@ import { connectSession } from './client/session/client'
 import { dialsCommand } from './client/dials/cli'
 import { nodeIo, runInit } from './init/index'
 import { mcpMain } from './mcp/run'
-import { RUNTIME_MARKER } from './shared/protocol'
+import { bundlesWithBridge } from './shared/assert-absent'
 
 const HELP = `agent-bridge: drive a running React Native app from an agent
 
@@ -424,10 +424,7 @@ async function main() {
     case 'assert-absent': {
       if (!rest.length)
         throw new Error('Usage: agent-bridge assert-absent <bundle files...>')
-      const found: string[] = []
-      for (const file of rest) {
-        if ((await readFile(file)).includes(RUNTIME_MARKER)) found.push(file)
-      }
+      const found = await bundlesWithBridge(rest)
       if (found.length) {
         console.error(
           `agent-bridge is in a release bundle: ${found.join(', ')}`,

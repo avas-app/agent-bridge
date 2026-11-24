@@ -113,11 +113,32 @@ export type Spec = {
   tokenPath?: string
 }
 
+const sameList = (a?: string[], b?: string[]) =>
+  a === b || (!!a && !!b && a.length === b.length && a.every((x, i) => x === b[i]))
+
+/** Later registrations (Fast Refresh) update constraints and options, never the value or original. */
+function refresh(e: Entry, spec: Spec) {
+  const m = spec.meta ?? {}
+  const next = { label: m.label, group: m.group, min: m.min, max: m.max, step: m.step } as Record<string, unknown>
+  for (const [k, v] of Object.entries(next)) {
+    if (v === undefined) delete (e as Record<string, unknown>)[k]
+    else (e as Record<string, unknown>)[k] = v
+  }
+  if (spec.options && !sameList(e.options, spec.options)) {
+    e.options = [...spec.options]
+    if (!e.options.includes(e.value as string)) e.value = e.options.includes(e.original as string) ? e.original : e.value
+  }
+  if (spec.tokenPath !== undefined) e.tokenPath = spec.tokenPath
+}
+
 /** First registration fixes type, original and constraints; later ones return the same entry. */
 export function register(id: string, spec: Spec): Entry {
   const existing = entries.get(id)
-  if (existing) return existing
   const m = spec.meta ?? {}
+  if (existing) {
+    refresh(existing, spec)
+    return existing
+  }
   const entry: Entry = {
     id,
     type: spec.type,
@@ -137,8 +158,9 @@ export function register(id: string, spec: Spec): Entry {
     try {
       entry.value = validate(entry, held.get(id))
     } catch {
-      held.delete(id)
+      // keep the default
     }
+    held.delete(id)
   }
   return entry
 }

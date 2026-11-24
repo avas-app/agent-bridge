@@ -96,6 +96,7 @@ const refresh = () => {
 
 /** Outline the components reading `id`; null clears. Follows layout until 30 s pass with no call. */
 export function highlight(id: string | null): { rects: Rect[] } {
+  if (id !== null) get(id)
   stop()
   lastCall = Date.now()
   if (id === null) {
@@ -103,7 +104,6 @@ export function highlight(id: string | null): { rects: Rect[] } {
     publish([])
     return { rects: [] }
   }
-  get(id)
   active = id
   // A value change re-renders the readers; measure after they commit.
   unsub = subscribe(id)(() => setTimeout(refresh, 0))
