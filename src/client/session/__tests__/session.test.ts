@@ -1886,7 +1886,7 @@ describe('dials persistence', () => {
     expect(saved(project)['card.accent']).toMatchObject({
       value: '#00ff00',
       original: '#111111',
-      history: ['#ff0000'],
+      history: ['#111111', '#ff0000'],
     })
 
     // A reload puts the app back to its defaults; the daemon applies the file.
