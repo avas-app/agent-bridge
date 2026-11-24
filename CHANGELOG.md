@@ -1,5 +1,13 @@
 # @avasapp/agent-bridge
 
+## 0.8.0-beta.1
+
+### Patch Changes
+
+- 928f7ff: Dials: `dials commit-status done` reloads the app through Metro, since removing dial calls changes a component's hook count and Fast Refresh then fails with "Rendered fewer hooks". `--no-reload` skips it.
+- d0e96cf: Dials panel: the device chip shows the simulator's model instead of a machine-made simulator name such as `simlock-<uuid>`.
+- 45c890d: Dials panel: the outline on the device no longer blinks while a slider is dragged; the capture waits for release.
+
 ## 0.8.0-beta.0
 
 ### Minor Changes
