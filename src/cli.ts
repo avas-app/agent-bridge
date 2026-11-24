@@ -36,6 +36,7 @@ import {
 } from './client/activity-hook'
 import { hookMarker, projectRoot } from './client/session/state'
 import { connectSession } from './client/session/client'
+import { dialsCommand } from './client/dials/cli'
 import { nodeIo, runInit } from './init/index'
 import { mcpMain } from './mcp/run'
 import { RUNTIME_MARKER } from './shared/protocol'
@@ -73,6 +74,14 @@ Sessions: one connection for all of an agent's calls
   agent-bridge session list | status [--name n]
   call, tools, repl and run use this project's running session (the only one, or the one
   matching --metro/--device), and print its name. With several, pass --session <name>.
+
+Dials: tune values live from a web panel (see docs/dials.md)
+  agent-bridge dials list [--json]        App dials merged with the saved picks
+  agent-bridge dials resume               Apply the saved picks to the app
+  agent-bridge dials clear [id...]        Drop saved picks (after the values are committed)
+  agent-bridge dials check [--live]       Exit 1 if dial.* calls are left in source (--live: app dials with no source call)
+  agent-bridge dials serve [--port N] [--host H] [--tailscale]
+                                          Panel server; prints one URL with a key
 
 Options
   --metro <host:port>    Metro dev server (env AGENT_BRIDGE_METRO, default localhost:8081)
@@ -158,6 +167,10 @@ async function main() {
       network: { type: 'boolean' },
       'no-network': { type: 'boolean' },
       json: { type: 'boolean' },
+      live: { type: 'boolean' },
+      port: { type: 'string' },
+      host: { type: 'string' },
+      tailscale: { type: 'boolean' },
       yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -397,6 +410,8 @@ async function main() {
         (createRequire(import.meta.url)('../package.json') as { version: string })
           .version,
       )
+    case 'dials':
+      return dialsCommand(rest[0], rest.slice(1), values, withBridge)
     case 'session':
       return sessionCommand(rest[0], values)
     case DAEMON_COMMAND:

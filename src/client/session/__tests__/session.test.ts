@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1823,3 +1824,104 @@ describe('restores across a reload', () => {
   }, 30_000)
 
 })
+
+describe('dials persistence', () => {
+  /** In-memory dials, rebuilt (back at their defaults) on every reload, like an app's registry. */
+  const fakeDials = (calls: string[]) => () => {
+    const dials = new Map<string, { id: string; type: string; value: unknown; original: unknown }>([
+      ['card.accent', { id: 'card.accent', type: 'color', value: '#111111', original: '#111111' }],
+    ])
+    const list = () => [...dials.values()]
+    return {
+      'dial.list': () => list(),
+      'dial.set': (id: string, value: unknown) => {
+        const dial = dials.get(id)
+        if (!dial) throw new Error(`No dial "${id}"`)
+        dial.value = value
+        return dial
+      },
+      'dial.apply': (values: Record<string, unknown>) => {
+        calls.push(JSON.stringify(values))
+        const applied: string[] = []
+        const unknown: string[] = []
+        for (const [id, value] of Object.entries(values)) {
+          const dial = dials.get(id)
+          if (dial) {
+            dial.value = value
+            applied.push(id)
+          } else unknown.push(id)
+        }
+        return { applied, unknown }
+      },
+    } as Tools
+  }
+  const saved = (project: string) =>
+    JSON.parse(readFileSync(join(project, '.agent-bridge', 'dials.json'), 'utf8')) as Record<
+      string,
+      { value: unknown; original: unknown; history: unknown[] }
+    >
+  const until = async (check: () => boolean) => {
+    for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 50))
+  }
+
+  test('saves picks, keeps them over stop, and re-applies after a reload and on the next session', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'ab-project-'))
+    cleanups.push(() => rmSync(project, { recursive: true, force: true }))
+    const applies: string[] = []
+    const { metro, app } = await setup({ extra: fakeDials(applies) })
+    const daemon = await runSessionDaemon({
+      name: 'dials',
+      metro,
+      project,
+      idleMs: 0,
+      healthMs: 0,
+    })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ metro })
+    cleanups.push(bridge.close)
+
+    await bridge.call('dial.set', 'card.accent', '#ff0000')
+    await bridge.call('dial.set', 'card.accent', '#00ff00')
+    await until(() => existsSync(join(project, '.agent-bridge', 'dials.json')) && saved(project)['card.accent']?.value === '#00ff00')
+    expect(saved(project)['card.accent']).toMatchObject({
+      value: '#00ff00',
+      original: '#111111',
+      history: ['#ff0000'],
+    })
+
+    // A reload puts the app back to its defaults; the daemon applies the file.
+    app.reload('dev-2', 'load-2')
+    await bridge.call('store.get', 1).catch(() => {})
+    await until(() => applies.length > 0)
+    expect(JSON.parse(applies.at(-1) ?? '{}')).toEqual({ 'card.accent': '#00ff00' })
+    expect(await bridge.call('dial.list')).toMatchObject([{ id: 'card.accent', value: '#00ff00' }])
+
+    await daemon.stop()
+    expect(saved(project)['card.accent']?.value).toBe('#00ff00')
+
+    // A new session for the same project applies the file on connect.
+    applies.length = 0
+    const next = await runSessionDaemon({ name: 'dials2', metro, project, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => next.stop(true))
+    await until(() => applies.length > 0)
+    expect(applies).toHaveLength(1)
+  }, 30_000)
+
+  test('an app with no dials is left alone', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'ab-project-'))
+    cleanups.push(() => rmSync(project, { recursive: true, force: true }))
+    mkdirSync(join(project, '.agent-bridge'))
+    writeFileSync(
+      join(project, '.agent-bridge', 'dials.json'),
+      JSON.stringify({ x: { value: 1, original: 0, type: 'number', history: [], updatedAt: 1 } }),
+    )
+    const { metro } = await setup()
+    const daemon = await runSessionDaemon({ name: 'nodials', metro, project, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    await new Promise((r) => setTimeout(r, 200))
+    const bridge = await connectSession({ metro })
+    cleanups.push(bridge.close)
+    expect(await bridge.call('store.get', 1)).toEqual([1])
+  }, 15_000)
+})
+

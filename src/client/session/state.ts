@@ -49,7 +49,7 @@ const isPackage = (dir: string) => existsSync(join(dir, 'package.json'))
  * it (a monorepo root) with no package, checkout (.git) or other project
  * between them.
  */
-function inProject(session: string | undefined, project: string): boolean {
+export function inProject(session: string | undefined, project: string): boolean {
   if (!session) return false
   if (session === project) return true
   if (!session.startsWith(project + sep) || !isPackage(project)) return false
