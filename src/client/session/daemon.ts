@@ -96,6 +96,10 @@ const REPEATABLE = new Set([
   'webview.snapshot',
   'webview.waitFor',
   'realtime.channels',
+  'dial.list',
+  'dial.tokens',
+  'dial.rects',
+  'dial.highlight',
 ])
 
 /** Tools that read a log; `clear: true` empties it, so a second read would come back empty. */
