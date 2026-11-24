@@ -553,7 +553,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
         return crop(r).then(function (url) { out[k] = url }, function () {})
       }))
     }).catch(function (e) { showError(e.message) }).then(function () {
-      S.busyVar[id] = false; S.mainSig = ""; renderMain()
+      S.busyVar[id] = false; S.mainSig = ""; renderMain(); renderHeader()
     })
   }
 
@@ -1044,6 +1044,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     $("resetAll").disabled = !n
     $("copy").disabled = !n
     $("copy").textContent = S.copied ? "Copied" : "Copy values"
+    var rb = document.querySelector('[data-fk="resetel"]'), cur = currentElement(tree())
+    if (rb && cur) { rb.style.visibility = nChanged(cur.dials) ? "" : "hidden"; rb.disabled = !nChanged(cur.dials) }
   }
 
   function refreshValues() {
@@ -1054,8 +1056,6 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var el = currentElement(secs)
     var shown = lay === "dial" ? dials().filter(function (d) { return d.id === S.dialId }) : el ? el.dials : []
     shown.forEach(function (d) { var c = S.ctl[d.id]; if (c) c.refresh(d) })
-    var rb = document.querySelector('[data-fk="resetel"]')
-    if (rb && el) { rb.style.visibility = nChanged(el.dials) ? "" : "hidden"; rb.disabled = !nChanged(el.dials) }
     updateBig()
     renderCommit()
   }
