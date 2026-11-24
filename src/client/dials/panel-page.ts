@@ -438,8 +438,13 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       if (id === hlId) return
       hlId = id
       api("POST", "/api/highlight", { id: id, devices: devs() }).catch(function () {})
+      var d = id && find(id)
+      // Take "before" while the dial is still at its original value, so the first change has something to compare.
+      if (d && eq(d.value, d.original) && !Object.keys(capOf(id).before).length && !capOf(id).busy) scheduleCapture(id)
     }, 60)
   }
+  // "sprout (host.exp.Exponent (iPhone 18 Pro) [iPhone 18 Pro])" → "iPhone 18 Pro"
+  function devLabel(name) { var m = /\[([^\]]+)\]\)?\s*$/.exec(String(name)); return m ? m[1] : name }
   document.addEventListener("visibilitychange", function () { if (document.hidden) highlight(null) })
 
   /* ---------- capture ---------- */
@@ -785,7 +790,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     if (!names.length) names = [null]
     names.forEach(function (n) {
       box.appendChild(h("div", { class: "cdev" }, [
-        n ? h("span", { class: "cap", text: n }) : null,
+        n ? h("span", { class: "cap", text: devLabel(n) }) : null,
         h("div", { class: "pair" }, [shotBox("before", n ? c.before[n] : null, id), shotBox("after", n ? c.after[n] : null, id)])
       ]))
     })
@@ -978,7 +983,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
             if (S.off[dv.name]) delete S.off[dv.name]
             else if (on.length > 1) S.off[dv.name] = true
             renderHeader()
-          } }, [h("i"), dv.name]))
+          } }, [h("i"), devLabel(dv.name)]))
         })
       })
     }
