@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -36,9 +36,10 @@ import {
 } from './client/activity-hook'
 import { hookMarker, projectRoot } from './client/session/state'
 import { connectSession } from './client/session/client'
+import { dialsCommand } from './client/dials/cli'
 import { nodeIo, runInit } from './init/index'
 import { mcpMain } from './mcp/run'
-import { RUNTIME_MARKER } from './shared/protocol'
+import { bundlesWithBridge } from './shared/assert-absent'
 
 const HELP = `agent-bridge: drive a running React Native app from an agent
 
@@ -73,6 +74,17 @@ Sessions: one connection for all of an agent's calls
   agent-bridge session list | status [--name n]
   call, tools, repl and run use this project's running session (the only one, or the one
   matching --metro/--device), and print its name. With several, pass --session <name>.
+
+Dials: tune values live from a web panel (see docs/dials.md)
+  agent-bridge dials list [--json]        App dials merged with the saved picks
+  agent-bridge dials resume               Apply the saved picks to the app
+  agent-bridge dials clear [id...]        Drop saved picks (after the values are committed)
+  agent-bridge dials check [--live]       Exit 1 if dial.* calls are left in source (--live: app dials with no source call)
+  agent-bridge dials serve [--port N] [--host H] [--tailscale] [--screenshot-cmd '<cmd {out}>'] [--new-key]
+                                          Panel server; prints one URL with a key (kept in .agent-bridge/dials-key; --new-key replaces it)
+  agent-bridge dials wait [--timeout <s>] [--json]   Block until the panel asks for a commit (exit 2 on timeout)
+  agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>]
+  agent-bridge dials cancel                            Cancel a commit that is stuck
 
 Options
   --metro <host:port>    Metro dev server (env AGENT_BRIDGE_METRO, default localhost:8081)
@@ -158,6 +170,13 @@ async function main() {
       network: { type: 'boolean' },
       'no-network': { type: 'boolean' },
       json: { type: 'boolean' },
+      live: { type: 'boolean' },
+      port: { type: 'string' },
+      host: { type: 'string' },
+      tailscale: { type: 'boolean' },
+      'new-key': { type: 'boolean' },
+      message: { type: 'string' },
+      'screenshot-cmd': { type: 'string' },
       yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -397,6 +416,8 @@ async function main() {
         (createRequire(import.meta.url)('../package.json') as { version: string })
           .version,
       )
+    case 'dials':
+      return dialsCommand(rest[0], rest.slice(1), values, withBridge)
     case 'session':
       return sessionCommand(rest[0], values)
     case DAEMON_COMMAND:
@@ -404,10 +425,7 @@ async function main() {
     case 'assert-absent': {
       if (!rest.length)
         throw new Error('Usage: agent-bridge assert-absent <bundle files...>')
-      const found: string[] = []
-      for (const file of rest) {
-        if ((await readFile(file)).includes(RUNTIME_MARKER)) found.push(file)
-      }
+      const found = await bundlesWithBridge(rest)
       if (found.length) {
         console.error(
           `agent-bridge is in a release bundle: ${found.join(', ')}`,

@@ -66,6 +66,10 @@
       "types": "./dist/network/index.d.cts",
       "default": "./entries/network.cjs"
     },
+    "./dials": {
+      "types": "./dist/dials/index.d.cts",
+      "default": "./entries/dials.cjs"
+    },
     "./realtime": {
       "types": "./dist/realtime/index.d.cts",
       "default": "./entries/realtime.cjs"

@@ -147,7 +147,17 @@ describe('side files', () => {
       'unchanged tsconfig.json',
       'patched eslint.config.js',
       'appended AGENTS.md',
+      'written .gitignore',
     ])
+    expect(files['.gitignore']).toBe('.agent-bridge/\n')
+  })
+
+  test('adds .agent-bridge/ to an existing .gitignore once', async () => {
+    const first = await initIn({ ...EXPO_ROUTER_FULL, '.gitignore': 'node_modules\n' }, { skill: false })
+    expect(first.files['.gitignore']).toBe('node_modules\n.agent-bridge/\n')
+    const again = await initIn({ ...EXPO_ROUTER_FULL, '.gitignore': '.agent-bridge/\n' }, { skill: false })
+    expect(again.files['.gitignore']).toBe('.agent-bridge/\n')
+    expect(again.report!.files.map((f) => f.path)).not.toContain('.gitignore')
   })
 
   test('oxlint is patched; a complex eslint config is printed, not edited', async () => {

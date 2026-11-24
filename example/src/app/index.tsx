@@ -1,5 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { router } from 'expo-router'
+import { dial } from '@avasapp/agent-bridge/dials'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 
 import { type Plant, usePlants } from '@/api'
@@ -14,16 +15,38 @@ function waterPill(c: Colors, days: number) {
   return { label: `In ${days} days`, fg: c.muted, bg: c.subtle }
 }
 
-function PlantCard({ plant }: { plant: Plant }) {
+function PlantAvatar({ plant }: { plant: Plant }) {
+  const c = useColors()
+  const g = { group: 'Plant card / Avatar' }
+  const bg = dial.token('avatar.bg', 'colors.accentSoft', c.accentSoft, { label: 'Background', ...g })
+  const radius = dial.number('avatar.radius', 16, { min: 0, max: 26, label: 'Radius', ...g })
+  return (
+    <View style={[styles.avatar, { backgroundColor: bg, borderRadius: radius }]}>
+      <Text style={styles.emoji}>{plant.emoji}</Text>
+    </View>
+  )
+}
+
+function PlantName({ plant }: { plant: Plant }) {
+  const c = useColors()
+  const g = { group: 'Plant card / Name' }
+  const size = dial.number('name.size', 17, { min: 12, max: 24, label: 'Size', ...g })
+  const weight = dial.enum('name.weight', '700', ['400', '500', '600', '700', '800'], { label: 'Weight', ...g })
+  const color = dial.token('name.color', 'colors.text', c.text, { label: 'Colour', ...g })
+  return (
+    <Text style={[styles.name, { color, fontSize: size, fontWeight: weight }]}>{plant.name}</Text>
+  )
+}
+
+function RoomyCard({ plant }: { plant: Plant }) {
   const c = useColors()
   const pill = waterPill(c, plant.waterInDays)
+  const gap = dial.number('card.gap', 14, { min: 0, max: 32, label: 'Gap', group: 'Plant card / Card' })
   return (
-    <Card style={styles.row}>
-      <View style={[styles.avatar, { backgroundColor: c.accentSoft }]}>
-        <Text style={styles.emoji}>{plant.emoji}</Text>
-      </View>
+    <Card style={{ ...styles.row, gap }}>
+      <PlantAvatar plant={plant} />
       <View style={styles.text}>
-        <Text style={[styles.name, { color: c.text }]}>{plant.name}</Text>
+        <PlantName plant={plant} />
         {plant.species ? (
           <Text style={[styles.species, { color: c.muted }]}>
             {plant.species}
@@ -35,6 +58,20 @@ function PlantCard({ plant }: { plant: Plant }) {
         <Text style={[styles.pillText, { color: pill.fg }]}>{pill.label}</Text>
       </View>
     </Card>
+  )
+}
+
+function CompactCard({ plant }: { plant: Plant }) {
+  const c = useColors()
+  const pill = waterPill(c, plant.waterInDays)
+  return (
+    <View style={[styles.compact, { borderColor: c.subtle }]}>
+      <Text style={styles.compactEmoji}>{plant.emoji}</Text>
+      <View style={styles.text}>
+        <PlantName plant={plant} />
+      </View>
+      <Text style={[styles.pillText, { color: pill.fg }]}>{pill.label}</Text>
+    </View>
   )
 }
 
@@ -60,6 +97,7 @@ function AddButton() {
 export default function PlantsScreen() {
   const { data: plants } = usePlants()
   const due = plants?.filter((p) => p.waterInDays <= 0).length ?? 0
+  const PlantCard = dial.variant('plant.card', { roomy: RoomyCard, compact: CompactCard }, 'roomy', { label: 'Layout', group: 'Plant card / Card' })
   return (
     <Screen
       eyebrow="Good morning"
@@ -86,6 +124,14 @@ const styles = StyleSheet.create({
   emoji: { fontSize: 28 },
   text: { flex: 1, gap: 2 },
   name: { fontSize: 17, fontWeight: '700' },
+  compact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  compactEmoji: { fontSize: 20 },
   species: { fontSize: 14, fontStyle: 'italic' },
   pill: {
     flexDirection: 'row',

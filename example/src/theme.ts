@@ -40,6 +40,8 @@ const dark: typeof light = {
   violetSoft: '#271F3D',
 }
 
+export const themes = { light, dark }
+
 export type Colors = typeof light
 export type Tint = 'accent' | 'danger' | 'info' | 'amber' | 'violet'
 

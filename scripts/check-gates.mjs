@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 
 const MARKER = '@avasapp/agent-bridge/runtime'
+const DIALS_MARKER = '@avasapp/agent-bridge/dials'
 const require = createRequire(import.meta.url)
 const problems = []
 
@@ -33,12 +34,13 @@ for (const gate of readdirSync('entries')) {
   const noopText = readFileSync(noop, 'utf8')
   if (noopText.includes('require('))
     problems.push(`${gate}: ${noop} requires another module`)
-  if (noopText.includes(MARKER))
-    problems.push(`${gate}: ${noop} contains the runtime marker`)
+  for (const marker of [MARKER, DIALS_MARKER])
+    if (noopText.includes(marker))
+      problems.push(`${gate}: ${noop} contains the marker ${marker}`)
 
   const stub = require(`../${noop}`)
   for (const name of exportNames(readFileSync(real, 'utf8'))) {
-    if (name !== 'RUNTIME_MARKER' && !(name in stub))
+    if (name !== 'RUNTIME_MARKER' && name !== 'DIALS_MARKER' && !(name in stub))
       problems.push(`${gate}: stub is missing export "${name}"`)
   }
 }
@@ -46,6 +48,12 @@ for (const gate of readdirSync('entries')) {
 if (!readFileSync('dist/runtime/index.cjs', 'utf8').includes(MARKER)) {
   problems.push(
     'dist/runtime/index.cjs lost the runtime marker; assert-absent would pass on anything',
+  )
+}
+
+if (!readFileSync('dist/dials/index.cjs', 'utf8').includes(DIALS_MARKER)) {
+  problems.push(
+    'dist/dials/index.cjs lost the dials marker; assert-absent would pass on a bundle with dials',
   )
 }
 
