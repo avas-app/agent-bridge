@@ -420,3 +420,24 @@ describe('panel key file', () => {
     }
   })
 })
+
+describe('reloadApps', () => {
+  test('sends Metro the reload message', async () => {
+    const { WebSocketServer } = await import('ws')
+    const { reloadApps } = await import('../cli')
+    const server = new WebSocketServer({ port: 0, path: '/message' })
+    await new Promise((resolve) => server.once('listening', resolve))
+    const got = new Promise<string>((resolve) =>
+      server.on('connection', (socket) => socket.on('message', (data) => resolve(String(data)))),
+    )
+    const { port } = server.address() as { port: number }
+    expect(await reloadApps(`127.0.0.1:${port}`)).toBe(true)
+    expect(JSON.parse(await got)).toEqual({ version: 2, method: 'reload' })
+    server.close()
+  })
+
+  test('reports false when Metro is not there', async () => {
+    const { reloadApps } = await import('../cli')
+    expect(await reloadApps('127.0.0.1:1', 1000)).toBe(false)
+  })
+})

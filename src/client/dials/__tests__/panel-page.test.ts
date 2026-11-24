@@ -48,3 +48,30 @@ describe('dials panel page', () => {
     expect(PANEL_HTML).toContain('max-width:699px')
   })
 })
+
+describe('device label', () => {
+  const src = /function devLabel\(name\) \{[\s\S]*?\n  \}/.exec(PANEL_HTML)?.[0]
+  const devLabel = new Function(`${src}; return devLabel`)() as (name: string) => string
+
+  test('uses the simulator name', () => {
+    expect(devLabel('sprout (host.exp.Exponent (iPhone 18 Pro) [Rider])')).toBe('Rider')
+  })
+
+  test('falls back to the model when the simulator name is machine-made', () => {
+    expect(
+      devLabel('sprout (host.exp.Exponent (iPhone 18 Pro) [simlock-2363a936-c853-471e-bd93-cffbd6800e46])'),
+    ).toBe('iPhone 18 Pro')
+  })
+
+  test('keeps a plain name', () => {
+    expect(devLabel('sprout')).toBe('sprout')
+  })
+
+  test('holds the capture while a dial is mid-drag, so the outline does not blink', () => {
+    const script = /<script>([\s\S]*)<\/script>/.exec(PANEL_HTML)![1]!
+    const timer = /capTimers\[id\] = setTimeout\(function \(\) \{([\s\S]*?)\}, 400\)/.exec(script)![1]!
+    expect(timer).toMatch(/if \(dragAt\[id\][^\n]*\) return\n\s*doCapture\(id\)/)
+    expect(script).toMatch(/function throttled\(id, v\) \{\s*dragAt\[id\] = Date\.now\(\)/)
+    expect(script).toMatch(/function release\(id, v\) \{\s*delete dragAt\[id\]/)
+  })
+})

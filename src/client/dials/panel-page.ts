@@ -420,7 +420,9 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     S.touched[id] = Date.now()
     refreshValues()
   }
+  var dragAt = {}
   function throttled(id, v) {
+    dragAt[id] = Date.now()
     setLocal(id, v)
     var st = S.pend[id] || (S.pend[id] = { t: null, last: 0, has: false, v: null })
     st.v = v; st.has = true
@@ -432,6 +434,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     }, wait)
   }
   function release(id, v) {
+    delete dragAt[id]
     var st = S.pend[id]
     if (st) { if (st.t) clearTimeout(st.t); st.t = null; st.has = false; st.last = Date.now() }
     setLocal(id, v)
@@ -456,7 +459,13 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     }, 60)
   }
   // "sprout (host.exp.Exponent (iPhone 18 Pro) [iPhone 18 Pro])" → "iPhone 18 Pro"
-  function devLabel(name) { var m = /\[([^\]]+)\]\)?\s*$/.exec(String(name)); return m ? m[1] : name }
+  // "app (title (model) [simulator])": the simulator name, unless it's machine-made (Simlock's simlock-<uuid>), then the model.
+  function devLabel(name) {
+    var s = String(name), b = /\[([^\]]+)\]\)?\s*$/.exec(s)
+    if (b && !/[0-9a-f]{8}-[0-9a-f]{4}-/i.test(b[1])) return b[1]
+    var m = /\(([^()[\]]+)\)\s*(\[[^\]]*\])?\)?\s*$/.exec(s)
+    return m ? m[1] : b ? b[1] : s
+  }
   document.addEventListener("visibilitychange", function () { if (document.hidden) highlight(null) })
 
   /* ---------- capture ---------- */
@@ -501,7 +510,12 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
   function scheduleCapture(id) {
     if (!S.data.capture && S.data.capture !== undefined && S.data.capture !== null) return
     if (capTimers[id]) clearTimeout(capTimers[id])
-    capTimers[id] = setTimeout(function () { delete capTimers[id]; doCapture(id) }, 400)
+    capTimers[id] = setTimeout(function () {
+      delete capTimers[id]
+      // A capture hides the outline on the device; mid-drag it would blink. Release captures.
+      if (dragAt[id] && Date.now() - dragAt[id] < 2000) return
+      doCapture(id)
+    }, 400)
   }
   function doCapture(id) {
     var d = find(id)
