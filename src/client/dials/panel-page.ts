@@ -405,8 +405,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
   function nChanged(list) { return list.filter(changed).length }
 
   /* ---------- sending ---------- */
-  function post(id, value) {
-    return api("POST", "/api/dials/set", { id: id, value: value, devices: devs() }).then(function (res) {
+  function post(id, value, noSave) {
+    return api("POST", "/api/dials/set", { id: id, value: value, devices: devs(), save: noSave ? false : undefined }).then(function (res) {
       var bad = ((res && res.results) || []).filter(function (r) { return r.ok === false })
       if (bad.length) showError(bad[0].device + ": " + bad[0].error)
       else clearError()
@@ -535,11 +535,13 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var c = capOf(id)
     c.busy = true; drawCrops()
     setLocal(id, d.original)
-    post(id, d.original).then(function () { return wait(250) }).then(function () { return doCapture(id) }).then(function () {
+    post(id, d.original, true).then(function () { return wait(250) }).then(function () { return doCapture(id) }).catch(function (e) {
+      showError(e && e.message ? e.message : String(e))
+    }).then(function () {
       setLocal(id, cur)
-      post(id, cur)
-      scheduleCapture(id)
-    })
+      c.busy = false
+      return post(id, cur, true)
+    }).then(function () { scheduleCapture(id) })
   }
   function captureVariants(id) {
     S.busyVar[id] = true; S.mainSig = ""; renderMain()
@@ -1102,6 +1104,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     dr.appendChild(h("label", { class: "ck" }, [revert, "Revert the unticked ones"]))
     dr.appendChild(h("button", { type: "button", class: "btn primary", id: "doCommit", style: "padding:12px;font-size:14px", onclick: sendCommit }))
     dr.appendChild(h("div", { class: "cstat", id: "cstat" }))
+    dr.appendChild(h("button", { type: "button", class: "btn sm", id: "cancelCommit", hidden: true, text: "Cancel commit", onclick: cancelCommitReq }))
     renderCommit()
     $("dtitle").focus()
   }
@@ -1137,6 +1140,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     btn.textContent = "Commit " + n + " change" + (n === 1 ? "" : "s")
     btn.disabled = !n || S.posting || inFlight()
     var st = $("cstat"), c = S.data.commit
+    $("cancelCommit").hidden = !inFlight()
     clear(st)
     if (c) {
       var idx = STEPS.indexOf(c.status), failed = c.status === "failed"
@@ -1144,9 +1148,15 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       st.appendChild(h("div", { class: "steps", role: "status" }, STEPS.map(function (s, i) {
         var cls = "step" + (failed ? (s === "writing" ? " bad" : i < 2 ? " done" : "") : i < idx ? " done" : i === idx ? (s === "done" ? " done" : " now") : "")
         return h("span", { class: cls, text: s })
-      }).concat(failed ? [h("span", { class: "step bad", text: "failed" })] : [])))
+      }).concat(failed ? [h("span", { class: "step bad", text: "failed" })] : c.status === "cancelled" ? [h("span", { class: "step bad", text: "cancelled" })] : [])))
       if (c.message) st.appendChild(h("span", { class: failed ? "cerr" : "sub", text: c.message }))
     }
+  }
+  function cancelCommitReq() {
+    api("POST", "/api/commit-cancel", {}).then(function (res) {
+      clearError()
+      S.data.commit = res && res.commit ? res.commit : S.data.commit
+    }).catch(function (e) { showError(e.message) }).then(function () { renderHeader(); renderCommit() })
   }
   function sendCommit() {
     var ids = dials().filter(function (d) { return changed(d) && S.sel[d.id] !== false }).map(function (d) { return d.id })

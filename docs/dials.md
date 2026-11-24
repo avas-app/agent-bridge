@@ -90,7 +90,8 @@ The agent writes the ticked values into source (a token dial becomes the token r
 agent-bridge dials list [--json]     # dials in the app and saved picks
 agent-bridge dials resume            # put saved picks back after a reload
 agent-bridge dials wait [--timeout <s>] [--json]   # block until Commit; exit 2 on timeout
-agent-bridge dials commit-status <writing|done|failed> [--message <text>]
+agent-bridge dials commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>]
+agent-bridge dials cancel                       # free a stuck commit; the panel has a Cancel button too
 agent-bridge dials clear [ids...]    # drop saved picks (all with no ids)
 agent-bridge dials check [--live]    # dial calls left in source
 ```

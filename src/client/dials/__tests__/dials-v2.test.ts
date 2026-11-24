@@ -28,6 +28,8 @@ const PNG = Buffer.from('fake-png').toString('base64')
 /** A session whose app answers the v2 dial tools; `calls` logs every tool call in order. */
 async function fakeSession(options: { capture?: boolean } = {}) {
   const calls: Array<[string, unknown[]]> = []
+  const saveFlags: Array<boolean | undefined> = []
+  let failSet = false
   let tile = 'roomy'
   const socket = join(dir, 'app.sock')
   const server: Server = createServer((conn) => {
@@ -36,6 +38,7 @@ async function fakeSession(options: { capture?: boolean } = {}) {
       const req = JSON.parse(line) as SessionRequest
       const args = req.args ?? []
       calls.push([req.tool ?? '', args])
+      if (req.tool === 'dial.set') saveFlags.push(req.save)
       const ok = (v: unknown) => ({ id: req.id, result: { id: '', from: '', ok: true, value: v, ms: 0 } })
       const fail = (e: string) => ({ id: req.id, result: { id: '', from: '', ok: false, error: e, ms: 0 } })
       let res: unknown
@@ -56,6 +59,10 @@ async function fakeSession(options: { capture?: boolean } = {}) {
           res = ok({ rects: [{ x: 10, y: 20, width: 100, height: 50 }], scale: 3, window: { width: 400, height: 800 } })
           break
         case 'dial.set':
+          if (failSet && args[1] === '#111') {
+            res = fail('boom')
+            break
+          }
           if (args[0] === 'card.layout') tile = String(args[1])
           res = ok({})
           break
@@ -82,7 +89,7 @@ async function fakeSession(options: { capture?: boolean } = {}) {
     lastCallAt: 1,
     idleMs: 0,
   }
-  return { state, calls, tool: (name: string) => calls.filter(([t]) => t === name) }
+  return { state, calls, saveFlags, failOnOriginal: () => void (failSet = true), tool: (name: string) => calls.filter(([t]) => t === name) }
 }
 
 async function start(session: SessionState, extra: Parameters<typeof createDialsServer>[0] = {}) {
@@ -185,6 +192,17 @@ describe('highlight and capture', () => {
     ])
   })
 
+  test('capture-variants and set with save:false never ask the daemon to save (13)', async () => {
+    const app = await fakeSession({ capture: true })
+    const { post } = await start(app.state, { renderWaitMs: 0 })
+    await post('/api/capture-variants', { id: 'card.layout' })
+    expect(app.saveFlags).toEqual([false, false, false])
+    app.saveFlags.length = 0
+    await post('/api/dials/set', { id: 'card.accent', value: '#111', save: false })
+    await post('/api/dials/set', { id: 'card.accent', value: '#333' })
+    expect(app.saveFlags).toEqual([false, undefined])
+  })
+
   test('routes need the key', async () => {
     const app = await fakeSession()
     const { port } = await start(app.state)
@@ -229,6 +247,35 @@ describe('commit round trip', () => {
     } finally {
       console.log = log
     }
+  })
+
+  test('a second commit is refused (409) while one is in flight, and allowed after a cancel (4)', async () => {
+    const app = await fakeSession()
+    const { post } = await start(app.state)
+    const first = (await (await post('/api/commit', { ids: ['card.accent'] })).json()) as { commit: { id: string } }
+    const second = await post('/api/commit', { ids: ['card.accent'] })
+    expect(second.status).toBe(409)
+    expect(readCommit(dir)?.id).toBe(first.commit.id)
+    expect((await post('/api/commit-cancel', {})).status).toBe(200)
+    expect(readCommit(dir)?.status).toBe('cancelled')
+    expect((await post('/api/commit', { ids: ['card.accent'] })).status).toBe(200)
+  })
+
+  test('commit-status checks the id and the status; dials cancel stops a stuck request', async () => {
+    const app = await fakeSession()
+    const { post } = await start(app.state)
+    const { commit } = (await (await post('/api/commit', { ids: ['card.accent'] })).json()) as { commit: { id: string } }
+    const run = (status: string, flags = {}, rest: string[] = []) =>
+      dialsCommand('commit-status', [status, ...rest], flags, async () => {}, dir)
+    // Not taken yet: only a cancel is allowed.
+    await expect(run('done')).rejects.toThrow('not been taken')
+    await dialsCommand('wait', [], { json: true, timeout: '2' }, async () => {}, dir).catch(() => {})
+    await expect(run('writing', {}, ['not-the-id'])).rejects.toThrow('different commit')
+    await run('writing', {}, [commit.id.slice(0, 8)])
+    expect(readCommit(dir)?.status).toBe('writing')
+    await dialsCommand('cancel', [], {}, async () => {}, dir)
+    expect(readCommit(dir)?.status).toBe('cancelled')
+    await expect(run('done')).rejects.toThrow('cancelled')
   })
 
   test('dials wait exits 2 on timeout and ignores a commit that is already taken', async () => {

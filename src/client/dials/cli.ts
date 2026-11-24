@@ -10,9 +10,11 @@ import {
   clearDials,
   dialsPath,
   readCommit,
+  cancelCommit,
   readDials,
   savedValues,
-  writeCommit,
+  takeCommit,
+  updateCommit,
 } from '../session/dials-store'
 import type { CommitRequest } from '../session/dials-store'
 import { createDialsServer, tailscaleAddress } from './server'
@@ -64,7 +66,7 @@ export function scanDialCalls(root: string): DialCall[] {
   return found
 }
 
-const STATUSES = ['writing', 'done', 'failed'] as const
+const STATUSES = ['writing', 'done', 'failed', 'cancelled'] as const
 
 function describeCommit(commit: CommitRequest): string {
   const lines = [`Commit requested (${commit.id}): ${commit.ids.length} dial(s)`]
@@ -176,10 +178,8 @@ export async function dialsCommand(
       if (seconds !== undefined && !(seconds >= 0)) throw new Error(`--timeout is in seconds, got "${flags.timeout}"`)
       const deadline = seconds === undefined ? Infinity : Date.now() + seconds * 1000
       for (;;) {
-        const commit = readCommit(project)
-        if (commit?.status === 'requested') {
-          const taken = { ...commit, status: 'taken' as const }
-          writeCommit(project, taken)
+        const taken = takeCommit(project)
+        if (taken) {
           console.log(flags.json ? JSON.stringify(taken, null, 2) : describeCommit(taken))
           return
         }
@@ -194,20 +194,29 @@ export async function dialsCommand(
     case 'commit-status': {
       const status = rest[0]
       if (!status || !STATUSES.includes(status as (typeof STATUSES)[number]))
-        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [--message <text>]`)
-      const commit = readCommit(project)
-      if (!commit) throw new Error('No commit request to update.')
-      const { message: _old, ...rest2 } = commit
-      writeCommit(project, {
-        ...rest2,
-        status: status as (typeof STATUSES)[number],
-        ...(flags.message ? { message: flags.message } : {}),
+        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [<commit id>] [--message <text>]`)
+      const wanted = rest[1]
+      const next = updateCommit(project, (commit) => {
+        if (!commit) throw new Error('No commit request to update.')
+        if (wanted && !commit.id.startsWith(wanted))
+          throw new Error(`The current request is a different commit (${commit.id.slice(0, 8)}), not ${wanted}.`)
+        if (commit.status === 'cancelled' && status !== 'cancelled')
+          throw new Error(`Commit ${commit.id.slice(0, 8)} was cancelled; leave the files as they are.`)
+        if (commit.status === 'requested' && status !== 'cancelled')
+          throw new Error(`Commit ${commit.id.slice(0, 8)} has not been taken yet; run \`dials wait\` first.`)
+        const { message: _old, ...kept } = commit
+        return { ...kept, status: status as (typeof STATUSES)[number], ...(flags.message ? { message: flags.message } : {}) }
       })
-      console.log(`commit ${commit.id.slice(0, 8)}: ${status}`)
+      console.log(`commit ${next?.id.slice(0, 8)}: ${status}`)
+      return
+    }
+    case 'cancel': {
+      const commit = cancelCommit(project)
+      console.log(commit ? `commit ${commit.id.slice(0, 8)}: cancelled` : 'No commit in flight.')
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed> [--message <text>]')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] | cancel')
   }
 }
 

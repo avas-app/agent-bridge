@@ -11,6 +11,8 @@ import {
   mergeDials,
   readCommit,
   readDials,
+  takeCommit,
+  updateCommit,
   writeCommit,
   writeDials,
 } from '../dials-store'
@@ -73,25 +75,25 @@ describe('file', () => {
 describe('createDialsStore', () => {
   test('throttles, then writes the last value; flush writes at once', async () => {
     const store = createDialsStore(project, 60)
-    store.record([dial('a', 1)])
+    store.record([dial('a', 1)], ['a'])
     await new Promise((r) => setTimeout(r, 20))
     expect(readDials(project).a?.value).toBe(1)
-    store.record([dial('a', 2)])
-    store.record([dial('a', 3)])
+    store.record([dial('a', 2)], ['a'])
+    store.record([dial('a', 3)], ['a'])
     expect(readDials(project).a?.value).toBe(1)
     await new Promise((r) => setTimeout(r, 120))
     expect(readDials(project).a?.value).toBe(3)
-    store.record([dial('a', 4)])
+    store.record([dial('a', 4)], ['a'])
     store.flush()
     expect(readDials(project).a?.value).toBe(4)
   })
 
   test('a clear between writes is not undone', () => {
     const store = createDialsStore(project, 0)
-    store.record([dial('a', 1)])
+    store.record([dial('a', 1)], ['a'])
     store.flush()
     clearDials(project)
-    store.record([dial('b', 2)])
+    store.record([dial('b', 2)], ['b'])
     store.flush()
     expect(Object.keys(readDials(project))).toEqual(['b'])
   })
@@ -118,5 +120,86 @@ describe('commit request', () => {
     expect(readCommit(project)?.status).toBe('requested')
     writeCommit(project, null)
     expect(existsSync(dialsPath(project))).toBe(false)
+  })
+})
+
+const request = (status: 'requested' | 'taken', id = 'c1') => ({
+  id,
+  ids: ['a'],
+  revertOthers: false,
+  values: {},
+  status,
+  at: 1,
+})
+
+describe('only the ids a call changed are saved (finding 1)', () => {
+  test('a restored list does not overwrite other saved picks', () => {
+    const saved = mergeDials({}, [dial('a', 5), dial('b', 7)], 1).next
+    // dial.restore put both back to their originals; the user then moved only c.
+    const list = [dial('a', 0), dial('b', 0), dial('c', 3)]
+    const dir = project
+    writeDials(dir, saved)
+    const store = createDialsStore(dir, 0)
+    store.record(list, ['c'])
+    store.flush()
+    const file = readDials(dir)
+    expect(file.a?.value).toBe(5)
+    expect(file.b?.value).toBe(7)
+    expect(file.c?.value).toBe(3)
+  })
+
+  test('with no ids nothing is saved', () => {
+    const store = createDialsStore(project, 0)
+    store.record([dial('a', 9)], [])
+    store.flush()
+    expect(existsSync(dialsPath(project))).toBe(false)
+  })
+})
+
+describe('lock (finding 5)', () => {
+  test('a pending save keeps a commit written after it', () => {
+    const store = createDialsStore(project, 10_000)
+    store.record([dial('a', 4)], ['a'])
+    store.flush()
+    writeCommit(project, request('requested'))
+    store.record([dial('a', 6)], ['a'])
+    store.flush()
+    expect(readCommit(project)?.id).toBe('c1')
+    expect(readDials(project).a?.value).toBe(6)
+  })
+
+  test('a dials clear between two saves is not undone by a stale copy', () => {
+    const store = createDialsStore(project, 10_000)
+    store.record([dial('a', 4), dial('b', 5)], ['a', 'b'])
+    store.flush()
+    store.record([dial('a', 6)], ['a'])
+    clearDials(project, ['b'])
+    store.flush()
+    expect(Object.keys(readDials(project))).toEqual(['a'])
+  })
+
+  test('takeCommit takes a requested commit once', () => {
+    writeCommit(project, request('requested'))
+    expect(takeCommit(project)?.status).toBe('taken')
+    expect(takeCommit(project)).toBeNull()
+    expect(readCommit(project)?.status).toBe('taken')
+  })
+
+  test('updateCommit sees the latest file and leaves no lock behind', () => {
+    writeCommit(project, request('requested'))
+    updateCommit(project, (c) => (c ? { ...c, status: 'taken' } : undefined))
+    expect(readCommit(project)?.status).toBe('taken')
+    expect(readdirSync(join(project, '.agent-bridge'))).toEqual(['dials.json'])
+  })
+
+  test('a stale lock file from a dead process is taken over', () => {
+    writeDials(project, {})
+    const lock = `${dialsPath(project)}.lock`
+    Bun.write(lock, '')
+    const old = new Date(Date.now() - 60_000)
+    require('node:fs').utimesSync(lock, old, old)
+    writeCommit(project, request('requested'))
+    expect(readCommit(project)?.id).toBe('c1')
+    expect(existsSync(lock)).toBe(false)
   })
 })
