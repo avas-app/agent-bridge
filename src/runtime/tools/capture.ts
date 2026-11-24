@@ -6,13 +6,14 @@ export type ViewShot = {
   captureScreen: (options: {
     format: 'png' | 'jpg'
     quality?: number
-    width?: number
     result: 'tmpfile' | 'base64'
   }) => Promise<string>
 }
 
 // Base64 replies bigger than this fall back to a file path.
 const MAX_BASE64_CHARS = 200_000
+// Callers that are not an agent (the dials panel) may take more, up to this.
+const MAX_BASE64_CEILING = 4_000_000
 
 const UNAVAILABLE =
   'screen.capture needs react-native-view-shot, which this app does not have. Take the screenshot with agent-device, `xcrun simctl io booted screenshot <file>` (iOS simulator) or `adb exec-out screencap -p > <file>` (Android) instead.'
@@ -38,17 +39,17 @@ export function captureTools(load: () => ViewShot | undefined): Tools {
     'screen.capture': {
       description: TOOL_DESCRIPTIONS['screen.capture'],
       maxArgs: 1,
-      run: async (options?: { base64?: boolean; format?: 'png' | 'jpg'; quality?: number; width?: number }) => {
+      run: async (options?: { base64?: boolean; format?: 'png' | 'jpg'; quality?: number; maxBase64?: number }) => {
         const viewShot = load()
         if (!viewShot) throw new Error(UNAVAILABLE)
         const shape = {
           format: options?.format === 'jpg' ? ('jpg' as const) : ('png' as const),
           ...(typeof options?.quality === 'number' && { quality: options.quality }),
-          ...(typeof options?.width === 'number' && options.width > 0 && { width: Math.round(options.width) }),
         }
         if (options?.base64) {
           const base64 = await viewShot.captureScreen({ ...shape, result: 'base64' })
-          if (base64.length <= MAX_BASE64_CHARS) return { base64 }
+          const max = Math.min(options.maxBase64 ?? MAX_BASE64_CHARS, MAX_BASE64_CEILING)
+          if (base64.length <= max) return { base64 }
         }
         const path = await viewShot.captureScreen({ ...shape, result: 'tmpfile' })
         return { path }
