@@ -64,7 +64,14 @@ export type SessionDaemon = {
 }
 
 /** Tools after which the daemon saves the dials to <project>/.agent-bridge/dials.json. */
-const DIAL_WRITES = new Set(['dial.set', 'dial.apply', 'dial.reset', 'dial.restore'])
+const DIAL_WRITES = new Set(['dial.set', 'dial.apply'])
+
+/** The dial ids a saving call changed. reset and restore are not saved: the file keeps the picks. */
+const changedIds = (tool: string, args: unknown[]): string[] => {
+  if (tool === 'dial.set') return typeof args[0] === 'string' ? [args[0]] : []
+  const values = args[0]
+  return values && typeof values === 'object' && !Array.isArray(values) ? Object.keys(values) : []
+}
 
 /** Not run again after a lost reply: it would reload twice. */
 const RELOAD = 'app.reload'
@@ -251,11 +258,12 @@ export async function runSessionDaemon(
       await attempt('dial.apply', [values], timeoutMs)
     } catch {}
   }
-  const saveDials = async () => {
+  const saveDials = async (ids: string[]) => {
+    if (!ids.length) return
     try {
       const { result } = await callApp('dial.list', [], timeoutMs)
       if (result.ok && Array.isArray(result.value))
-        dialsStore.record(result.value as DialInfo[])
+        dialsStore.record(result.value as DialInfo[], ids)
     } catch {}
   }
   const addNote = (note: string) => {
@@ -649,7 +657,8 @@ export async function runSessionDaemon(
             args,
             callTimeout(req.timeoutMs ?? timeoutMs, req.tool, args),
           )
-          if (DIAL_WRITES.has(req.tool) && answer.result.ok) await saveDials()
+          if (DIAL_WRITES.has(req.tool) && answer.result.ok && req.save !== false)
+            await saveDials(changedIds(req.tool, args))
           await adoptRun
           return { id: req.id, ...answer, ...takeNotice() }
         } catch (error) {

@@ -83,7 +83,8 @@ Dials: tune values live from a web panel (see docs/dials.md)
   agent-bridge dials serve [--port N] [--host H] [--tailscale] [--screenshot-cmd '<cmd {out}>'] [--new-key]
                                           Panel server; prints one URL with a key (kept in .agent-bridge/dials-key; --new-key replaces it)
   agent-bridge dials wait [--timeout <s>] [--json]   Block until the panel asks for a commit (exit 2 on timeout)
-  agent-bridge dials commit-status <writing|done|failed> [--message <text>]
+  agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>]
+  agent-bridge dials cancel                            Cancel a commit that is stuck
 
 Options
   --metro <host:port>    Metro dev server (env AGENT_BRIDGE_METRO, default localhost:8081)

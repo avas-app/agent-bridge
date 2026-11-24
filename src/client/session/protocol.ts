@@ -11,6 +11,8 @@ export type SessionRequest = {
   tool?: string
   args?: unknown[]
   timeoutMs?: number
+  /** call: false keeps a dial write out of dials.json (the panel's capture helpers). */
+  save?: boolean
   /** stop: skip bridge.restore and leave the app as it is. */
   keep?: boolean
   /** stop: report what bridge.restore would undo (bridge.pending) and keep the session running. */

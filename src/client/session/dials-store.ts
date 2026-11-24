@@ -1,10 +1,13 @@
 // <project>/.agent-bridge/dials.json: the picks that outlive a session.
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -37,7 +40,10 @@ export type SavedDial = {
 
 export type DialsFile = Record<string, SavedDial>
 
-export type CommitStatus = 'requested' | 'taken' | 'writing' | 'done' | 'failed'
+export type CommitStatus = 'requested' | 'taken' | 'writing' | 'done' | 'failed' | 'cancelled'
+
+export const inFlight = (commit: CommitRequest | null) =>
+  !!commit && ['requested', 'taken', 'writing'].includes(commit.status)
 
 export type CommitRequest = {
   id: string
@@ -101,18 +107,86 @@ function writeRaw(project: string, data: Record<string, unknown>) {
   }
 }
 
+const LOCK_STALE_MS = 10_000
+const LOCK_GIVE_UP_MS = 5_000
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
+/** Runs `fn` while holding <dials.json>.lock, so read-modify-write cycles from several processes don't interleave. */
+export function withDialsLock<T>(project: string, fn: () => T): T {
+  const lock = `${dialsPath(project)}.lock`
+  mkdirSync(dirname(lock), { recursive: true })
+  const started = Date.now()
+  for (;;) {
+    try {
+      closeSync(openSync(lock, 'wx'))
+      break
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+      try {
+        // A holder that died leaves the file behind; critical sections take milliseconds.
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { force: true })
+      } catch {}
+      if (Date.now() - started > LOCK_GIVE_UP_MS) rmSync(lock, { force: true })
+      pause(5)
+    }
+  }
+  try {
+    return fn()
+  } finally {
+    rmSync(lock, { force: true })
+  }
+}
+
+/** Re-reads the dial entries inside the lock, lets `fn` change them, and writes them with the commit request kept. */
+export function updateDials(project: string, fn: (saved: DialsFile) => DialsFile): DialsFile {
+  return withDialsLock(project, () => {
+    const next = fn(readDials(project))
+    const commit = readCommit(project)
+    if (commit || Object.keys(next).length) writeRaw(project, commit ? { ...next, [COMMIT_KEY]: commit } : next)
+    else rmSync(dialsPath(project), { force: true })
+    return next
+  })
+}
+
 /** Writes the dial entries and keeps the commit request that sits in the same file. */
 export function writeDials(project: string, dials: DialsFile) {
-  const commit = readCommit(project)
-  writeRaw(project, commit ? { ...dials, [COMMIT_KEY]: commit } : dials)
+  updateDials(project, () => dials)
+}
+
+/**
+ * Reads the commit request inside the lock; `fn` returns the new one (null removes it,
+ * undefined leaves the file alone). Returns what `fn` returned.
+ */
+export function updateCommit(
+  project: string,
+  fn: (commit: CommitRequest | null) => CommitRequest | null | undefined,
+): CommitRequest | null | undefined {
+  return withDialsLock(project, () => {
+    const next = fn(readCommit(project))
+    if (next === undefined) return undefined
+    const dials = readDials(project)
+    if (next) writeRaw(project, { ...dials, [COMMIT_KEY]: next })
+    else if (Object.keys(dials).length) writeRaw(project, dials)
+    else rmSync(dialsPath(project), { force: true })
+    return next
+  })
 }
 
 /** Sets or (with null) removes the commit request; the dial entries stay. */
 export function writeCommit(project: string, commit: CommitRequest | null) {
-  const dials = readDials(project)
-  if (commit) writeRaw(project, { ...dials, [COMMIT_KEY]: commit })
-  else if (Object.keys(dials).length) writeRaw(project, dials)
-  else rmSync(dialsPath(project), { force: true })
+  updateCommit(project, () => commit)
+}
+
+/** Moves a requested commit to taken. Null when none is waiting, so two waiters never both get it. */
+export function takeCommit(project: string): CommitRequest | null {
+  const taken = updateCommit(project, (c) => (c?.status === 'requested' ? { ...c, status: 'taken' } : undefined))
+  return taken ?? null
+}
+
+/** Cancels a commit that has not finished (the agent died, or the user changed their mind). Null when none is in flight. */
+export function cancelCommit(project: string): CommitRequest | null {
+  const next = updateCommit(project, (c) => (c && inFlight(c) ? { ...c, status: 'cancelled' } : undefined))
+  return next ?? null
 }
 
 /**
@@ -146,13 +220,13 @@ export function mergeDials(
 
 /** Removes entries (all with no ids). Returns the ids removed. */
 export function clearDials(project: string, ids: string[] = []): string[] {
-  const saved = readDials(project)
-  const gone = ids.length ? ids.filter((id) => id in saved) : Object.keys(saved)
-  if (!gone.length) return []
-  const next = { ...saved }
-  for (const id of gone) delete next[id]
-  if (Object.keys(next).length || readCommit(project)) writeDials(project, next)
-  else rmSync(dialsPath(project), { force: true })
+  let gone: string[] = []
+  updateDials(project, (saved) => {
+    gone = ids.length ? ids.filter((id) => id in saved) : Object.keys(saved)
+    const next = { ...saved }
+    for (const id of gone) delete next[id]
+    return next
+  })
   return gone
 }
 
@@ -163,33 +237,32 @@ export const savedValues = (saved: DialsFile): Record<string, DialValue> =>
 export const hasSavedDials = (project: string) =>
   existsSync(dialsPath(project)) && Object.keys(readDials(project)).length > 0
 
-/** Collects dial changes and writes them at most every `throttleMs`, with a trailing write. */
+/**
+ * Collects dial changes and writes them at most every `throttleMs`, with a trailing write.
+ * Only the ids a call names are kept; the file is re-read inside the lock at write time.
+ */
 export function createDialsStore(project: string, throttleMs = 250) {
-  let current: DialsFile | null = null
-  let dirty = false
+  const pending: DialInfo[] = []
   let timer: ReturnType<typeof setTimeout> | undefined
   let lastWrite = 0
   const write = () => {
     clearTimeout(timer)
     timer = undefined
-    if (!dirty || !current) return
-    dirty = false
+    if (!pending.length) return
+    const batch = pending.splice(0)
     lastWrite = Date.now()
     try {
-      writeDials(project, current)
+      // One merge per recorded value, so a throttled burst still lands in the history.
+      updateDials(project, (saved) => batch.reduce((acc, dial) => mergeDials(acc, [dial]).next, saved))
     } catch {
-      dirty = true
+      pending.unshift(...batch)
     }
   }
   return {
-    record(dials: DialInfo[]) {
-      // A CLI `dials clear` between writes must not be undone by a stale copy.
-      if (!dirty || !current) current = readDials(project)
-      const { next, changed } = mergeDials(current, dials)
-      if (!changed) return
-      current = next
-      dirty = true
-      if (timer) return
+    record(dials: DialInfo[], ids: string[]) {
+      const mine = dials.filter((dial) => ids.includes(dial.id))
+      pending.push(...mine)
+      if (!mine.length || timer) return
       const wait = Math.max(0, lastWrite + throttleMs - Date.now())
       timer = setTimeout(write, wait)
       ;(timer as { unref?: () => void }).unref?.()

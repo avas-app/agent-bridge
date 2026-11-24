@@ -13,7 +13,7 @@ import {
 import type { AddressInfo } from 'node:net'
 
 import { sessionRequest } from '../session/client'
-import { readCommit, readDials, writeCommit } from '../session/dials-store'
+import { cancelCommit, inFlight, readCommit, readDials, updateCommit } from '../session/dials-store'
 import type { CommitRequest, DialInfo } from '../session/dials-store'
 import {
   type SessionState,
@@ -65,15 +65,22 @@ async function callTool(
   session: SessionState,
   tool: string,
   args: unknown[],
+  save?: false,
 ): Promise<ToolResult> {
   try {
-    const res = await sessionRequest(session, { op: 'call', tool, args })
+    const res = await sessionRequest(session, { op: 'call', tool, args, ...(save === false && { save }) })
     if (res.error || !res.result) return { ok: false, error: res.error ?? 'No result' }
     return res.result.ok
       ? { ok: true, value: res.result.value }
       : { ok: false, error: res.result.error }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+class CommitBusyError extends Error {
+  constructor() {
+    super('A commit is already in flight; wait for it or cancel it')
   }
 }
 
@@ -105,7 +112,7 @@ function runScreenshotCmd(cmd: string): Promise<string> {
 const isTokens = (v: unknown): v is { tokens: unknown; labels?: Record<string, string> } =>
   !!v && typeof v === 'object' && 'tokens' in v
 
-const ROUTES = new Set(['/api/highlight', '/api/capture', '/api/capture-variants', '/api/commit'])
+const ROUTES = new Set(['/api/highlight', '/api/capture', '/api/capture-variants', '/api/commit', '/api/commit-cancel'])
 
 export function createDialsServer(options: DialsServerOptions = {}) {
   const project = options.project ?? projectRoot()
@@ -261,14 +268,14 @@ export function createDialsServer(options: DialsServerOptions = {}) {
     const out: Record<string, Capture> = {}
     try {
       for (const option of dial.options) {
-        const set = await callTool(session, 'dial.set', [id, option])
+        const set = await callTool(session, 'dial.set', [id, option], false)
         if (set.ok) await sleep(renderWaitMs)
         out[String(option)] = set.ok
           ? await captureOne(session, id)
           : { device: session.device.name, error: set.error }
       }
     } finally {
-      await callTool(session, 'dial.set', [id, dial.value])
+      await callTool(session, 'dial.set', [id, dial.value], false)
     }
     return out
   }
@@ -292,17 +299,20 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       status: 'requested',
       at: Date.now(),
     }
-    writeCommit(project, commit)
+    updateCommit(project, (current) => {
+      if (inFlight(current)) throw new CommitBusyError()
+      return commit
+    })
     return commit
   }
 
-  async function setDial(id: string, value: unknown, only?: string[]) {
+  async function setDial(id: string, value: unknown, only?: string[], save?: false) {
     const targets = pick(only)
     return Promise.all(
       targets.map(async (session) => ({
         device: session.device.name,
         session: session.name,
-        ...(await callTool(session, 'dial.set', [id, value])),
+        ...(await callTool(session, 'dial.set', [id, value], save)),
       })),
     )
   }
@@ -354,7 +364,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       }
       if (req.method === 'GET' && url.pathname === '/api/dials') return json(res, 200, await snapshot())
       if (req.method === 'POST' && url.pathname === '/api/dials/set') {
-        let body: { id?: unknown; value?: unknown; devices?: unknown }
+        let body: { id?: unknown; value?: unknown; devices?: unknown; save?: unknown }
         try {
           body = JSON.parse(await readBody(req)) as typeof body
         } catch {
@@ -362,7 +372,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
         }
         if (typeof body.id !== 'string') return json(res, 400, { error: 'id must be a string' })
         const only = Array.isArray(body.devices) ? body.devices.map(String) : undefined
-        const results = await setDial(body.id, body.value, only)
+        const results = await setDial(body.id, body.value, only, body.save === false ? false : undefined)
         void poll()
         return json(res, 200, { results })
       }
@@ -386,6 +396,11 @@ export function createDialsServer(options: DialsServerOptions = {}) {
             case '/api/capture-variants':
               if (!id) return json(res, 400, { error: 'id must be a string' })
               return json(res, 200, await captureVariants(id, only))
+            case '/api/commit-cancel': {
+              const commit = cancelCommit(project)
+              void poll()
+              return json(res, 200, { commit })
+            }
             default: {
               const commit = await requestCommit(body)
               void poll()
@@ -393,6 +408,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
             }
           }
         } catch (error) {
+          if (error instanceof CommitBusyError) return json(res, 409, { error: error.message })
           return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
         }
       }

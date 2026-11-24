@@ -1827,9 +1827,12 @@ describe('restores across a reload', () => {
 
 describe('dials persistence', () => {
   /** In-memory dials, rebuilt (back at their defaults) on every reload, like an app's registry. */
-  const fakeDials = (calls: string[]) => () => {
+  const fakeDials = (calls: string[], second = false) => () => {
     const dials = new Map<string, { id: string; type: string; value: unknown; original: unknown }>([
       ['card.accent', { id: 'card.accent', type: 'color', value: '#111111', original: '#111111' }],
+      ...(second
+        ? ([['card.size', { id: 'card.size', type: 'number', value: 1, original: 1 }]] as const)
+        : []),
     ])
     const list = () => [...dials.values()]
     return {
@@ -1839,6 +1842,14 @@ describe('dials persistence', () => {
         if (!dial) throw new Error(`No dial "${id}"`)
         dial.value = value
         return dial
+      },
+      'dial.reset': () => {
+        for (const dial of dials.values()) dial.value = dial.original
+        return {}
+      },
+      'dial.restore': () => {
+        for (const dial of dials.values()) dial.value = dial.original
+        return {}
       },
       'dial.apply': (values: Record<string, unknown>) => {
         calls.push(JSON.stringify(values))
@@ -1905,6 +1916,32 @@ describe('dials persistence', () => {
     cleanups.push(() => next.stop(true))
     await until(() => applies.length > 0)
     expect(applies).toHaveLength(1)
+  }, 30_000)
+
+  test('a restore or a set on another dial keeps the other saved picks; save:false saves nothing', async () => {
+    const project = mkdtempSync(join(tmpdir(), 'ab-project-'))
+    cleanups.push(() => rmSync(project, { recursive: true, force: true }))
+    const { metro } = await setup({ extra: fakeDials([], true) })
+    const daemon = await runSessionDaemon({ name: 'dials3', metro, project, idleMs: 0, healthMs: 0 })
+    cleanups.push(() => daemon.stop(true))
+    const bridge = await connectSession({ metro })
+    cleanups.push(bridge.close)
+
+    await bridge.call('dial.set', 'card.accent', '#ff0000')
+    await until(() => existsSync(join(project, '.agent-bridge', 'dials.json')) && saved(project)['card.accent']?.value === '#ff0000')
+    await bridge.call('dial.restore')
+    await bridge.call('dial.set', 'card.size', 3)
+    await until(() => saved(project)['card.size']?.value === 3)
+    expect(saved(project)['card.accent']).toMatchObject({ value: '#ff0000', history: ['#111111'] })
+    await bridge.call('dial.reset')
+    await new Promise((r) => setTimeout(r, 400))
+    expect(saved(project)['card.accent']?.value).toBe('#ff0000')
+    expect(saved(project)['card.size']?.value).toBe(3)
+
+    const res = await sessionRequest(bridge.session, { op: 'call', tool: 'dial.set', args: ['card.size', 9], save: false })
+    expect(res.result?.ok).toBe(true)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(saved(project)['card.size']?.value).toBe(3)
   }, 30_000)
 
   test('an app with no dials is left alone', async () => {
