@@ -4,7 +4,9 @@ import { TOOL_DESCRIPTIONS } from './descriptions'
 /** The slice of react-native-view-shot this tool uses. */
 export type ViewShot = {
   captureScreen: (options: {
-    format: 'png'
+    format: 'png' | 'jpg'
+    quality?: number
+    width?: number
     result: 'tmpfile' | 'base64'
   }) => Promise<string>
 }
@@ -36,20 +38,19 @@ export function captureTools(load: () => ViewShot | undefined): Tools {
     'screen.capture': {
       description: TOOL_DESCRIPTIONS['screen.capture'],
       maxArgs: 1,
-      run: async (options?: { base64?: boolean }) => {
+      run: async (options?: { base64?: boolean; format?: 'png' | 'jpg'; quality?: number; width?: number }) => {
         const viewShot = load()
         if (!viewShot) throw new Error(UNAVAILABLE)
+        const shape = {
+          format: options?.format === 'jpg' ? ('jpg' as const) : ('png' as const),
+          ...(typeof options?.quality === 'number' && { quality: options.quality }),
+          ...(typeof options?.width === 'number' && options.width > 0 && { width: Math.round(options.width) }),
+        }
         if (options?.base64) {
-          const base64 = await viewShot.captureScreen({
-            format: 'png',
-            result: 'base64',
-          })
+          const base64 = await viewShot.captureScreen({ ...shape, result: 'base64' })
           if (base64.length <= MAX_BASE64_CHARS) return { base64 }
         }
-        const path = await viewShot.captureScreen({
-          format: 'png',
-          result: 'tmpfile',
-        })
+        const path = await viewShot.captureScreen({ ...shape, result: 'tmpfile' })
         return { path }
       },
     },

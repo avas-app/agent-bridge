@@ -205,10 +205,12 @@ export function createDialsServer(options: DialsServerOptions = {}) {
     )
   }
 
-  async function screenshot(session: SessionState): Promise<string> {
-    const shot = await callTool(session, 'screen.capture', [{ base64: true }])
+  async function screenshot(session: SessionState, windowWidth?: number): Promise<string> {
+    // JPEG at 2x points keeps the crop sharp and the reply under screen.capture's base64 limit.
+    const opts = { base64: true, format: 'jpg', quality: 0.8, ...(windowWidth && { width: windowWidth * 2 }) }
+    const shot = await callTool(session, 'screen.capture', [opts])
     const base64 = shot.ok ? (shot.value as { base64?: unknown } | null)?.base64 : undefined
-    if (typeof base64 === 'string' && base64) return base64
+    if (typeof base64 === 'string' && base64) return `data:image/jpeg;base64,${base64}`
     if (screenshotCmd) return runScreenshotCmd(screenshotCmd)
     throw new Error('no screenshot source')
   }
@@ -219,10 +221,10 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       const wasOn = highlighted.get(session.name) ?? null
       try {
         await callTool(session, 'dial.highlight', [null])
-        const png = await screenshot(session)
         const rects = await callTool(session, 'dial.rects', [id])
         if (!rects.ok) throw new Error(rects.error)
         const value = rects.value as { rects?: Rect[]; scale?: number; window?: { width: number; height: number } }
+        const png = await screenshot(session, value.window?.width)
         const list = Array.isArray(value.rects) ? value.rects : []
         return { device, png, rect: list[0] ?? null, rects: list, scale: value.scale ?? 1, ...(value.window && { window: value.window }) }
       } catch (error) {

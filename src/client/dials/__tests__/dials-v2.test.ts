@@ -134,14 +134,14 @@ describe('highlight and capture', () => {
     }
     expect(body.results[0]).toMatchObject({
       device: 'Phone',
-      png: PNG,
+      png: `data:image/jpeg;base64,${PNG}`,
       rect: { x: 10, y: 20, width: 100, height: 50 },
       scale: 3,
     })
     expect(app.calls.map(([t, a]) => (t === 'dial.highlight' ? `${t}:${a[0]}` : t))).toEqual([
       'dial.highlight:null',
-      'screen.capture',
       'dial.rects',
+      'screen.capture',
       'dial.highlight:card.accent',
     ])
   })
@@ -177,7 +177,7 @@ describe('highlight and capture', () => {
       { png: string }
     >
     expect(Object.keys(body)).toEqual(['roomy', 'tiles'])
-    expect(body.tiles?.png).toBe(PNG)
+    expect(body.tiles?.png).toBe(`data:image/jpeg;base64,${PNG}`)
     expect(app.tool('dial.set').map(([, a]) => a)).toEqual([
       ['card.layout', 'roomy'],
       ['card.layout', 'tiles'],
