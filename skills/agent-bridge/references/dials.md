@@ -23,7 +23,7 @@ const Card = dial.variant('plant.card', { roomy: RoomyCard, compact: CompactCard
 - They are hooks: top of the component, never in loops or conditions.
 - Values in `StyleSheet.create` move inline while tuned (`style={[styles.name, { fontSize: size }]}`).
 - Groups are `'Section / Element'`.
-- `dial.variant` is for whole components. Put the alternatives in a separate file.
+- `dial.variant` is for whole components (named with a capital letter; anything else is treated as a plain value). Put the alternatives in a separate file.
 
 ## 3. Present
 
@@ -43,11 +43,11 @@ Do not edit the files being tuned, unless they ask. Adding or removing a dial or
 When `dials wait` returns a request:
 
 ```sh
-agent-bridge dials commit-status writing
+agent-bridge dials commit-status writing <id>   # id from the request
 # write each ticked value into source, remove the dial calls
 agent-bridge dials clear <ids>
 agent-bridge dials check                # must not list the ids you committed
-agent-bridge dials commit-status done --message '<what changed>'   # or: failed --message '<why>'
+agent-bridge dials commit-status done <id> --message '<what changed>'   # or: failed <id> --message '<why>'
 ```
 
 - Read `note` in the request. If `revertOthers` is true, put the unticked dials back to their original value in source.
@@ -55,6 +55,7 @@ agent-bridge dials commit-status done --message '<what changed>'   # or: failed 
 - Variant dial: keep the chosen component, delete the others and the variants file.
 - Remove the `dial.*` calls and move inline values back into `StyleSheet.create`.
 - Restart `dials wait` if the user may commit again.
+- A request stays in flight until done, failed or cancelled; the panel refuses a new one meanwhile. `agent-bridge dials cancel` clears a stuck one.
 
 Never commit `.agent-bridge/`: it holds the saved picks and the panel key.
 
