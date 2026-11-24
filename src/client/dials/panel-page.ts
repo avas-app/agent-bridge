@@ -456,7 +456,13 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     }, 60)
   }
   // "sprout (host.exp.Exponent (iPhone 18 Pro) [iPhone 18 Pro])" → "iPhone 18 Pro"
-  function devLabel(name) { var m = /\[([^\]]+)\]\)?\s*$/.exec(String(name)); return m ? m[1] : name }
+  // "app (title (model) [simulator])": the simulator name, unless it's machine-made (Simlock's simlock-<uuid>), then the model.
+  function devLabel(name) {
+    var s = String(name), b = /\[([^\]]+)\]\)?\s*$/.exec(s)
+    if (b && !/[0-9a-f]{8}-[0-9a-f]{4}-/i.test(b[1])) return b[1]
+    var m = /\(([^()[\]]+)\)\s*(\[[^\]]*\])?\)?\s*$/.exec(s)
+    return m ? m[1] : b ? b[1] : s
+  }
   document.addEventListener("visibilitychange", function () { if (document.hidden) highlight(null) })
 
   /* ---------- capture ---------- */
