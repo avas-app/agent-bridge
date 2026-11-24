@@ -201,6 +201,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
   .shell.el,.shell.one{display:flex;flex-direction:column}
   nav{border-right:0;border-bottom:1px solid var(--line);padding:12px 16px;flex-direction:row;gap:6px;overflow-x:auto}
   nav .filter,nav .sec{display:none}
+  #navlist{display:flex;gap:6px}
   .navi{width:auto;flex:none;padding:8px 12px;border:1px solid var(--line2);border-radius:4px;gap:8px}
   main,.shell.one main{padding:18px 16px;overflow:visible;gap:28px}
   .dial{margin:-12px;padding:12px}
