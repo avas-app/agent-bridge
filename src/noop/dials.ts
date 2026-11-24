@@ -6,7 +6,9 @@ export const dial = {
   enum: <T extends string>(_id: string, def: T, _options?: readonly T[]) => def,
   boolean: meta<boolean>,
   text: meta<string>,
+  variant: <T>(_id: string, variants: Record<string, T>, def: string, _meta?: unknown) => variants[def] as T,
   token: <T>(_id: string, _path: string, fallback: T) => fallback,
 }
 export const dialTools = () => ({})
 export const useDials = () => ({})
+export const DialsOverlay = () => null

@@ -1,4 +1,4 @@
-export type DialType = 'color' | 'number' | 'enum' | 'boolean' | 'text' | 'token'
+export type DialType = 'color' | 'number' | 'enum' | 'boolean' | 'text' | 'token' | 'variant'
 export type DialValue = string | number | boolean
 
 export type DialMeta = { label?: string; group?: string }
@@ -22,6 +22,8 @@ export type Dial = {
 
 export type DialTheme = {
   tokens(): object
+  /** Names for the panel: a token path or a group prefix ('colors') to a label. */
+  labels?: Record<string, string>
   set?(path: string, value: unknown): void
   file?: string
 }
@@ -86,6 +88,7 @@ export function validate(d: Dial, value: unknown): DialValue {
       return n
     }
     case 'enum':
+    case 'variant':
       if (!d.options?.includes(value as string)) bad(d.options!.map((o) => JSON.stringify(o)).join(', '))
       return value as string
     case 'boolean':
@@ -145,11 +148,20 @@ const emit = (id: string) => {
   for (const l of [...anyListeners]) l()
 }
 
-export const subscribe = (id: string) => (cb: () => void) => {
-  let set = listeners.get(id)
-  if (!set) listeners.set(id, (set = new Set()))
-  set.add(cb)
-  return () => void set!.delete(cb)
+const subscribers = new Map<string, (cb: () => void) => () => void>()
+/** One function per id: a new one each render would make useSyncExternalStore resubscribe every render. */
+export const subscribe = (id: string) => {
+  let fn = subscribers.get(id)
+  if (!fn) {
+    fn = (cb) => {
+      let set = listeners.get(id)
+      if (!set) listeners.set(id, (set = new Set()))
+      set.add(cb)
+      return () => void set!.delete(cb)
+    }
+    subscribers.set(id, fn)
+  }
+  return fn
 }
 export const subscribeAll = (cb: () => void) => {
   anyListeners.add(cb)
@@ -224,10 +236,34 @@ export const changed = (): string[] => [
   ...held.keys(),
 ]
 
-export function tokens(): unknown {
+export function tokens(): { tokens: unknown; labels: Record<string, string> } | null {
   if (!theme) return null
   try {
-    return theme.tokens()
+    return { tokens: theme.tokens(), labels: { ...theme.labels } }
+  } catch {
+    return null
+  }
+}
+
+// Fibers of the mounted components that read each dial; the panel outlines their first host view.
+const owners = new Map<string, Set<object>>()
+
+export function addOwner(id: string, fiber: object): () => void {
+  let set = owners.get(id)
+  if (!set) owners.set(id, (set = new Set()))
+  set.add(fiber)
+  return () => void owners.get(id)?.delete(fiber)
+}
+export const ownersOf = (id: string): object[] => [...(owners.get(id) ?? [])]
+
+/** The fiber React is rendering now. Dev builds only; null when React hides it. */
+export function currentOwner(react: unknown): object | null {
+  try {
+    const internals = (react as Record<string, unknown>).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE as
+      | { A?: { getOwner?: () => unknown } | null }
+      | undefined
+    const owner = internals?.A?.getOwner?.()
+    return owner && typeof owner === 'object' ? owner : null
   } catch {
     return null
   }
@@ -237,6 +273,8 @@ export function tokens(): unknown {
 export function resetRegistry() {
   entries.clear()
   listeners.clear()
+  subscribers.clear()
+  owners.clear()
   anyListeners.clear()
   held.clear()
   theme = undefined

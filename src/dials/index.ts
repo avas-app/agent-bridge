@@ -1,4 +1,5 @@
-import { useSyncExternalStore } from 'react'
+import * as React from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 
 import type { Tools } from '../runtime/types'
 import {
@@ -8,7 +9,9 @@ import {
   type DialValue,
   type NumberMeta,
   type Spec,
+  addOwner,
   apply,
+  currentOwner,
   changed,
   list,
   register,
@@ -20,12 +23,18 @@ import {
   tokens,
 } from './registry'
 
+import { highlight, rects } from './highlight'
+
+export { DialsOverlay } from './overlay'
 export type { Dial, DialMeta, DialTheme, NumberMeta }
+export type { DialRects } from './highlight'
 
 export type DialsOptions = { theme?: DialTheme }
 
 function read<T extends DialValue>(id: string, spec: Spec): T {
   const entry = register(id, spec)
+  const owner = currentOwner(React)
+  useEffect(() => (owner ? addOwner(id, owner) : undefined), [id])
   const value = useSyncExternalStore(
     subscribe(id),
     () => entry.value,
@@ -43,6 +52,11 @@ export const dial = {
     read(id, { type: 'enum', def, options: [...options], meta }),
   boolean: (id: string, def: boolean, meta?: DialMeta): boolean => read(id, { type: 'boolean', def, meta }),
   text: (id: string, def: string, meta?: DialMeta): string => read(id, { type: 'text', def, meta }),
+  /** Pick one of `variants` by key: `dial.variant('card', { roomy: RoomyCard, tiles: TileCard }, 'roomy')`. */
+  variant: <T>(id: string, variants: Record<string, T>, def: string, meta?: DialMeta): T => {
+    const key = read<string>(id, { type: 'variant', def, options: Object.keys(variants), meta })
+    return (variants[key] ?? variants[def]) as T
+  },
   /** The value of the picked theme token (starts at `tokenPath`), or `fallback` when it can't be resolved. */
   token: <T extends string | number>(id: string, tokenPath: string, fallback: T, meta?: DialMeta): T => {
     // The dial holds a token path; the user picks another path from the same group.
@@ -82,9 +96,19 @@ export function dialTools(options: DialsOptions = {}): Tools {
       run: unwrapRun((id?: string) => reset(id)),
     },
     'dial.tokens': {
-      description: 'The theme token tree given to useDials, or null.',
+      description: 'The theme given to useDials as {tokens, labels}, or null.',
       maxArgs: 0,
       run: () => tokens(),
+    },
+    'dial.rects': {
+      description: 'dial.rects(id): window-point rects of the first view of each mounted component reading the dial, plus the pixel ratio and window size.',
+      maxArgs: 1,
+      run: unwrapRun((id: string) => rects(id)),
+    },
+    'dial.highlight': {
+      description: 'dial.highlight(id | null): outline the components reading the dial (needs <DialsOverlay/>); null clears.',
+      maxArgs: 1,
+      run: unwrapRun((id: string | null) => highlight(id ?? null)),
     },
     'dial.restore': {
       description: 'Put every dial back to its original value.',
