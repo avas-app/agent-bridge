@@ -13,7 +13,7 @@ import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { jotaiTools } from '@avasapp/agent-bridge/jotai'
 import { bridgeReducer, reduxTools } from '@avasapp/agent-bridge/redux'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
-import { dial, useDials } from '@avasapp/agent-bridge/dials'
+import { dial, DialsOverlay, useDials } from '@avasapp/agent-bridge/dials'
 
 queryTools(new QueryClient())
 ablyTools(new Ably.Realtime({ key: 'app.key:secret', autoConnect: false }))
@@ -22,7 +22,9 @@ storeTools({ settings: createStore(() => ({ theme: 'dark' })) })
 jotaiTools(createJotaiStore(), { count: atom(0), double: atom((get) => 1) })
 reduxTools(configureStore({ reducer: bridgeReducer((s: { n: number } = { n: 0 }) => s) }))
 
-useDials({ theme: { tokens: () => ({ a: 1 }) } })
+useDials({ theme: { tokens: () => ({ a: 1 }), labels: { a: 'A' } } })
+export const overlay = DialsOverlay()
+export const Card: () => string = dial.variant('card', { a: () => 'a', b: () => 'b' }, 'a')
 export const accent: string = dial.token('accent', 'color.accent', '#fff')
 export const size: number = dial.number('size', 4, { min: 0 })
 

@@ -4,6 +4,7 @@ declare module 'react-native' {
   export const Dimensions: {
     get(dimension: 'window' | 'screen'): { width: number; height: number }
   }
+  export const PixelRatio: { get(): number }
   export const DevSettings: { reload(reason?: string): void }
   export const Platform: { OS: string }
 }
