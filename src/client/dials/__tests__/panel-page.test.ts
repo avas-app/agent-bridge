@@ -66,4 +66,12 @@ describe('device label', () => {
   test('keeps a plain name', () => {
     expect(devLabel('sprout')).toBe('sprout')
   })
+
+  test('holds the capture while a dial is mid-drag, so the outline does not blink', () => {
+    const script = /<script>([\s\S]*)<\/script>/.exec(PANEL_HTML)![1]!
+    const timer = /capTimers\[id\] = setTimeout\(function \(\) \{([\s\S]*?)\}, 400\)/.exec(script)![1]!
+    expect(timer).toMatch(/if \(dragAt\[id\][^\n]*\) return\n\s*doCapture\(id\)/)
+    expect(script).toMatch(/function throttled\(id, v\) \{\s*dragAt\[id\] = Date\.now\(\)/)
+    expect(script).toMatch(/function release\(id, v\) \{\s*delete dragAt\[id\]/)
+  })
 })

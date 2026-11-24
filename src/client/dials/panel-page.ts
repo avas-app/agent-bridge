@@ -420,7 +420,9 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     S.touched[id] = Date.now()
     refreshValues()
   }
+  var dragAt = {}
   function throttled(id, v) {
+    dragAt[id] = Date.now()
     setLocal(id, v)
     var st = S.pend[id] || (S.pend[id] = { t: null, last: 0, has: false, v: null })
     st.v = v; st.has = true
@@ -432,6 +434,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     }, wait)
   }
   function release(id, v) {
+    delete dragAt[id]
     var st = S.pend[id]
     if (st) { if (st.t) clearTimeout(st.t); st.t = null; st.has = false; st.last = Date.now() }
     setLocal(id, v)
@@ -507,7 +510,12 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
   function scheduleCapture(id) {
     if (!S.data.capture && S.data.capture !== undefined && S.data.capture !== null) return
     if (capTimers[id]) clearTimeout(capTimers[id])
-    capTimers[id] = setTimeout(function () { delete capTimers[id]; doCapture(id) }, 400)
+    capTimers[id] = setTimeout(function () {
+      delete capTimers[id]
+      // A capture hides the outline on the device; mid-drag it would blink. Release captures.
+      if (dragAt[id] && Date.now() - dragAt[id] < 2000) return
+      doCapture(id)
+    }, 400)
   }
   function doCapture(id) {
     var d = find(id)
