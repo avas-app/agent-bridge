@@ -1,5 +1,6 @@
 // `agent-bridge dials list|resume|clear|check|serve`
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 import type { AgentBridge } from '../index'
@@ -25,6 +26,7 @@ export type DialsFlags = {
   timeout?: string
   message?: string
   'screenshot-cmd'?: string
+  'new-key'?: boolean
 }
 
 type WithBridge = (fn: (bridge: AgentBridge) => Promise<void>) => Promise<void>
@@ -155,6 +157,7 @@ export async function dialsCommand(
         throw new Error(`--port must be 0-65535, got "${flags.port}"`)
       const panel = createDialsServer({
         project,
+        key: panelKey(project, !!flags['new-key']),
         host: tail?.ip ?? flags.host,
         port,
         screenshotCmd: flags['screenshot-cmd'],
@@ -204,6 +207,21 @@ export async function dialsCommand(
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed> [--message <text>]')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed> [--message <text>]')
   }
+}
+
+/** The panel key kept in <project>/.agent-bridge/dials-key, so a restart keeps the link; `rotate` makes a new one. */
+export function panelKey(project: string, rotate = false): string {
+  const file = join(project, '.agent-bridge', 'dials-key')
+  if (!rotate) {
+    try {
+      const saved = readFileSync(file, 'utf8').trim()
+      if (/^[0-9a-f]{32}$/.test(saved)) return saved
+    } catch {}
+  }
+  const key = randomBytes(16).toString('hex')
+  mkdirSync(join(project, '.agent-bridge'), { recursive: true })
+  writeFileSync(file, `${key}\n`, { mode: 0o600 })
+  return key
 }

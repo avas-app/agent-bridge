@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +9,7 @@ import { readCommit, readDials } from '../../session/dials-store'
 import { encodeLine } from '../../session/protocol'
 import type { SessionRequest } from '../../session/protocol'
 import type { SessionState } from '../../session/state'
-import { dialsCommand } from '../cli'
+import { dialsCommand, panelKey } from '../cli'
 import { createDialsServer } from '../server'
 
 let dir = ''
@@ -245,5 +245,22 @@ describe('commit round trip', () => {
   test('commit-status rejects a bad status and a missing commit', async () => {
     await expect(dialsCommand('commit-status', ['nope'], {}, async () => {}, dir)).rejects.toThrow('Usage')
     await expect(dialsCommand('commit-status', ['done'], {}, async () => {}, dir)).rejects.toThrow('No commit')
+  })
+})
+
+describe('panel key', () => {
+  test('is kept across restarts, private, and replaced on request', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dials-key-'))
+    try {
+      const a = panelKey(dir)
+      expect(a).toMatch(/^[0-9a-f]{32}$/)
+      expect(panelKey(dir)).toBe(a)
+      expect(statSync(join(dir, '.agent-bridge', 'dials-key')).mode & 0o777).toBe(0o600)
+      const b = panelKey(dir, true)
+      expect(b).not.toBe(a)
+      expect(panelKey(dir)).toBe(b)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
