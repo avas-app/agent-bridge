@@ -10,6 +10,8 @@ import { callTimeout } from '../call-timeout'
 import { metroHost } from '../discover'
 import { explainConnectError } from '../metro-hint'
 import { openConnection } from '../open'
+import { createDialsStore, readDials, savedValues } from './dials-store'
+import type { DialInfo } from './dials-store'
 import { createJournal, lostConnection } from './journal'
 import {
   type SessionRequest,
@@ -60,6 +62,9 @@ export type SessionDaemon = {
   /** Resolves with the reason ("stop", "idle", a signal) once torn down. */
   done: Promise<string>
 }
+
+/** Tools after which the daemon saves the dials to <project>/.agent-bridge/dials.json. */
+const DIAL_WRITES = new Set(['dial.set', 'dial.apply', 'dial.reset', 'dial.restore'])
 
 /** Not run again after a lost reply: it would reload twice. */
 const RELOAD = 'app.reload'
@@ -233,6 +238,22 @@ export async function runSessionDaemon(
     conn.device.loadId,
     () => ping(),
   )
+  const dialsStore = createDialsStore(state.project ?? projectRoot())
+  // Puts saved picks back; an app with no dials answers "Unknown tool", which is fine.
+  const reapplyDials = async () => {
+    const values = savedValues(readDials(state.project ?? projectRoot()))
+    if (!Object.keys(values).length) return
+    try {
+      await attempt('dial.apply', [values], timeoutMs)
+    } catch {}
+  }
+  const saveDials = async () => {
+    try {
+      const { result } = await callApp('dial.list', [], timeoutMs)
+      if (result.ok && Array.isArray(result.value))
+        dialsStore.record(result.value as DialInfo[])
+    } catch {}
+  }
   const addNote = (note: string) => {
     reloads.push(note)
     unseen.push(note)
@@ -277,7 +298,7 @@ export async function runSessionDaemon(
         `app reloaded; ${lost.length} pending restore${lost.length === 1 ? '' : 's'} lost${lost.length ? `: ${lost.join(', ')}` : ''}`,
       )
     nextAdopt = 0
-    void adoptJournal(true)
+    void adoptJournal(true).then(reapplyDials)
   }
   const observe = (r: ResultMessage) => {
     if (!r.loadId) return
@@ -566,6 +587,7 @@ export async function runSessionDaemon(
       // period; the restore below still gets that one attempt if the app
       // is back.
       stopping.abort()
+      dialsStore.flush()
       const cut = setTimeout(() => cutOff.abort(), Math.min(attemptMs, 5000))
       let restore: ResultMessage | null = null
       if (!keep) {
@@ -623,6 +645,7 @@ export async function runSessionDaemon(
             args,
             callTimeout(req.timeoutMs ?? timeoutMs, req.tool, args),
           )
+          if (DIAL_WRITES.has(req.tool) && answer.result.ok) await saveDials()
           await adoptRun
           return { id: req.id, ...answer, ...takeNotice() }
         } catch (error) {
@@ -708,6 +731,7 @@ export async function runSessionDaemon(
   if (process.platform !== 'win32') chmodSync(files.socket, 0o600)
   touch()
   await ping()
+  void reapplyDials()
   log(
     `started: ${conn.device.name} via ${conn.transport} on ${metro}, pid ${process.pid}, idle ${options.idleMs} ms`,
   )
