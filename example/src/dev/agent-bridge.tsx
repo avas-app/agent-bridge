@@ -1,4 +1,5 @@
 import { cdpTransport, useAgentBridge } from '@avasapp/agent-bridge'
+import { DialsOverlay, useDials } from '@avasapp/agent-bridge/dials'
 import { expoTransport } from '@avasapp/agent-bridge/expo'
 import { routerTools } from '@avasapp/agent-bridge/expo-router'
 import { networkTools } from '@avasapp/agent-bridge/network'
@@ -11,6 +12,7 @@ import { API_URL } from '@/api'
 import { useAuth } from '@/auth'
 import { realtimeDevTools } from '@/realtime'
 import { useSettings } from '@/settings'
+import { themes } from '@/theme'
 
 import { hudTools } from './hud'
 import { scenarios } from './scenarios'
@@ -28,6 +30,19 @@ export function AgentBridge() {
       ...networkTools(),
       ...realtimeDevTools,
       ...hudTools,
+      ...useDials({
+        theme: {
+          tokens: () => ({ colors: themes.light }),
+          labels: {
+            colors: 'Colours',
+            'colors.text': 'Ink',
+            'colors.accent': 'Leaf',
+            'colors.accentSoft': 'Leaf tint',
+            'colors.violetSoft': 'Lilac tint',
+          },
+          file: 'src/theme.ts',
+        },
+      }),
       // For flows/checks/logs.flow.mjs: errors come back with the next reply.
       'app.logError': (message: string) => console.error(message),
       'app.throwLater': () => {
@@ -43,5 +58,5 @@ export function AgentBridge() {
     },
     scenarios,
   })
-  return null
+  return <DialsOverlay />
 }
