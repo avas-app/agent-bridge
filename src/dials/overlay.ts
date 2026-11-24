@@ -3,6 +3,8 @@ import { type ComponentType, createElement, useSyncExternalStore } from 'react'
 import { highlighted, watchHighlight } from './highlight'
 
 const COLOR = '#C6F432'
+const EDGE = 'rgba(11,11,12,0.85)'
+const FILL = 'rgba(198,244,50,0.12)'
 const BORDER = 2
 const OFFSET = 4
 
@@ -26,20 +28,32 @@ export function DialsOverlay() {
     View,
     { pointerEvents: 'none', style: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 } },
     ...rects.map((r, i) =>
-      createElement(View, {
-        key: i,
-        pointerEvents: 'none',
-        style: {
-          position: 'absolute',
-          left: r.x - grow,
-          top: r.y - grow,
-          width: r.width + grow * 2,
-          height: r.height + grow * 2,
-          borderWidth: BORDER,
-          borderColor: COLOR,
-          borderRadius: 6,
+      // Dark rings either side of the lime one keep it visible on light and dark screens.
+      createElement(
+        View,
+        {
+          key: i,
+          pointerEvents: 'none',
+          style: {
+            position: 'absolute',
+            left: r.x - grow - 1,
+            top: r.y - grow - 1,
+            width: r.width + (grow + 1) * 2,
+            height: r.height + (grow + 1) * 2,
+            borderWidth: 1,
+            borderColor: EDGE,
+            borderRadius: 7,
+          },
         },
-      }),
+        createElement(
+          View,
+          { pointerEvents: 'none', style: { flex: 1, borderWidth: BORDER, borderColor: COLOR, borderRadius: 6 } },
+          createElement(View, {
+            pointerEvents: 'none',
+            style: { flex: 1, borderWidth: 1, borderColor: EDGE, borderRadius: 4, backgroundColor: FILL },
+          }),
+        ),
+      ),
     ),
   )
 }

@@ -104,6 +104,17 @@ main{padding:28px 36px;display:flex;flex-direction:column;gap:32px;overflow:auto
 .card .vl{font:11px var(--mono);color:var(--muted)}
 .card.orig{border:1px dashed var(--changed)}
 .card.on{border:2px solid var(--live);background:var(--raised)}
+.vcard{position:relative;display:flex;min-width:0}
+.vcard>.card{flex:1}
+.expand{position:absolute;top:6px;right:6px;width:32px;height:32px;border-radius:4px;border:1px solid var(--line2);background:rgba(11,11,12,.8);color:var(--text);font-size:16px}
+.expand:hover{border-color:var(--live)}
+#lb{width:min(1100px,94vw);height:min(900px,92vh);padding:0;border:1px solid var(--line2);border-radius:6px;background:var(--surface);color:var(--text)}
+#lb[open]{display:flex;flex-direction:column}
+#lb::backdrop{background:rgba(0,0,0,.7)}
+.lbbar{display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.lbbar h2{font-size:15px;font-weight:600;margin-right:auto}
+.lbimg{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:16px;background:var(--ground)}
+.lbimg img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
 .card.on .vl{color:var(--live)}
 
 .thumb{height:130px;background:#F7F8F5;display:flex;align-items:center;justify-content:center;padding:6px;border-bottom:1px solid var(--line)}
@@ -229,6 +240,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
 <div id="status" role="alert" hidden></div>
 <div class="shell el" id="shell"></div>
 <aside id="drawer" role="dialog" aria-modal="false" aria-labelledby="dtitle" hidden></aside>
+<dialog id="lb" aria-labelledby="lbtitle"></dialog>
 <script>
 (function () {
   "use strict"
@@ -268,7 +280,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     sec: null, el: null, dialId: null, active: null,
     filter: "", off: {},
     local: {}, touched: {}, pend: {},
-    caps: {}, thumbs: {}, busyVar: {},
+    caps: {}, thumbs: {}, full: {}, busyVar: {},
     commitOpen: false, sel: {}, note: "", revert: false, posting: false,
     copied: false, mainSig: "", ctl: {}
   }
@@ -471,7 +483,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
         var rect = union(r.rect), s = r.window && r.window.width ? img.width / r.window.width : r.scale || 1
         var x = 0, y = 0, w = img.width, hh = img.height
         if (rect && rect.width > 0 && rect.height > 0) {
-          var pad = Math.round(8 * s)
+          var pad = Math.round(14 * s)
           var x0 = Math.max(0, Math.round(rect.x * s) - pad), y0 = Math.max(0, Math.round(rect.y * s) - pad)
           var x1 = Math.min(img.width, Math.round((rect.x + rect.width) * s) + pad), y1 = Math.min(img.height, Math.round((rect.y + rect.height) * s) + pad)
           if (x1 > x0 && y1 > y0) { x = x0; y = y0; w = x1 - x0; hh = y1 - y0 }
@@ -536,11 +548,43 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       return Promise.all(keys.map(function (k) {
         var r = normRes(res[k]).filter(function (x) { return x && x.png })[0]
         if (!r) return null
+        var full = S.full[id] || (S.full[id] = {})
+        full[k] = String(r.png).indexOf("data:") === 0 ? r.png : "data:image/png;base64," + r.png
         return crop(r).then(function (url) { out[k] = url }, function () {})
       }))
     }).catch(function (e) { showError(e.message) }).then(function () {
       S.busyVar[id] = false; S.mainSig = ""; renderMain()
     })
+  }
+
+  /* ---------- big variant preview ---------- */
+  var LB = { id: null, name: null, mode: "element" }
+  function openPreview(id, name) {
+    LB.id = id; LB.name = name
+    drawPreview()
+    var dlg = $("lb")
+    if (!dlg.open) dlg.showModal()
+  }
+  function drawPreview() {
+    var dlg = $("lb"), d = find(LB.id)
+    if (!d) return
+    var names = (d.options || []).map(String).filter(function (n) { return (S.thumbs[d.id] || {})[n] })
+    var i = names.indexOf(LB.name)
+    var src = LB.mode === "screen" ? (S.full[d.id] || {})[LB.name] : (S.thumbs[d.id] || {})[LB.name]
+    function go(step) { LB.name = names[(i + step + names.length) % names.length]; drawPreview() }
+    function mode(m) { return h("button", { type: "button", "aria-pressed": LB.mode === m ? "true" : "false", onclick: function () { LB.mode = m; drawPreview() }, text: m === "element" ? "Element" : "Screen" }) }
+    var on = String(d.value) === LB.name
+    dlg.textContent = ""
+    dlg.appendChild(h("div", { class: "lbbar" }, [
+      h("h2", { id: "lbtitle", text: lab(d) + " · " + LB.name }),
+      h("div", { class: "seg" }, [mode("element"), mode("screen")]),
+      h("button", { type: "button", class: "btn", "aria-label": "Previous", onclick: function () { go(-1) }, text: "←" }),
+      h("button", { type: "button", class: "btn", "aria-label": "Next", onclick: function () { go(1) }, text: "→" }),
+      h("button", { type: "button", class: "btn primary", disabled: on, onclick: function () { release(d.id, LB.name); dlg.close() }, text: on ? "Live" : "Use " + LB.name }),
+      h("button", { type: "button", class: "btn", onclick: function () { dlg.close() }, text: "Close" })
+    ]))
+    dlg.appendChild(h("div", { class: "lbimg" }, src ? h("img", { src: src, alt: LB.name }) : h("span", { class: "empty", text: "No capture" })))
+    dlg.onkeydown = function (e) { if (e.key === "ArrowLeft") go(-1); else if (e.key === "ArrowRight") go(1) }
   }
 
   /* ---------- controls ---------- */
@@ -714,7 +758,9 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
         h("span", { class: "row" }, [h("span", { text: it.name }), h("span", { class: "tag" })])
       ])
       nodes[it.name] = b
-      return b
+      if (!it.url) return b
+      var big = h("button", { type: "button", class: "expand", "aria-label": "Preview " + it.name, onclick: function () { openPreview(d.id, it.name) } }, "⤢")
+      return h("div", { class: "vcard" }, [b, big])
     }))
     var busy = !!S.busyVar[d.id]
     var cap = S.data.capture === false ? null : h("button", { type: "button", class: "btn", disabled: busy, onclick: function () { captureVariants(d.id) }, text: busy ? "Capturing…" : "Capture variants" })
@@ -762,7 +808,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       el.className = "dial" + (changed(d) ? " changed" : "")
       now.textContent = fmt(d, d.value)
       was.textContent = changed(d) ? "was " + fmt(d, d.original) : ""
-      reset.hidden = !changed(d)
+      reset.style.visibility = changed(d) ? "" : "hidden"
+      reset.disabled = !changed(d)
       c.refresh(d)
     }
     refresh(d)
@@ -927,7 +974,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       var srcs = first && first.source && first.source.file ? first.source.file + (first.source.line ? ":" + first.source.line : "") : ""
       main.appendChild(h("div", { class: "mh" }, [
         h("div", { class: "col" }, [h("h1", { text: el.name }), h("span", { class: "sub", text: sub + srcs })]),
-        h("button", { type: "button", class: "btn sm", style: "border:1px solid var(--line2)", hidden: !nChanged(el.dials), "data-fk": "resetel", onclick: function () { el.dials.filter(changed).forEach(function (x) { resetDial(x.id) }) }, text: "Reset element" })
+        h("button", { type: "button", class: "btn sm", style: "border:1px solid var(--line2)" + (nChanged(el.dials) ? "" : ";visibility:hidden"), disabled: !nChanged(el.dials), "data-fk": "resetel", onclick: function () { el.dials.filter(changed).forEach(function (x) { resetDial(x.id) }) }, text: "Reset element" })
       ]))
       el.dials.forEach(function (d) {
         var b = dialBlock(d, false)
@@ -1008,7 +1055,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var shown = lay === "dial" ? dials().filter(function (d) { return d.id === S.dialId }) : el ? el.dials : []
     shown.forEach(function (d) { var c = S.ctl[d.id]; if (c) c.refresh(d) })
     var rb = document.querySelector('[data-fk="resetel"]')
-    if (rb && el) rb.hidden = !nChanged(el.dials)
+    if (rb && el) { rb.style.visibility = nChanged(el.dials) ? "" : "hidden"; rb.disabled = !nChanged(el.dials) }
     updateBig()
     renderCommit()
   }

@@ -44,6 +44,31 @@ function read<T extends DialValue>(id: string, spec: Spec): T {
   return value as T
 }
 
+type Comp = React.ComponentType<Record<string, unknown>>
+const isComponent = (v: unknown) =>
+  typeof v === 'function' || (!!v && typeof v === 'object' && '$$typeof' in (v as object))
+
+const hosts = new Map<string, Comp>()
+const latest = new Map<string, { spec: Spec; variants: Record<string, Comp> }>()
+
+// Component variants render through one stable host per dial, so each rendered
+// instance (each card) is a reader to outline, not the screen that picked it.
+function variantHost(id: string, spec: Spec, variants: Record<string, Comp>): Comp {
+  register(id, spec)
+  latest.set(id, { spec, variants })
+  let Host = hosts.get(id)
+  if (!Host) {
+    Host = function DialVariant(props: Record<string, unknown>) {
+      const now = latest.get(id)!
+      const key = read<string>(id, now.spec)
+      const C = now.variants[key] ?? now.variants[now.spec.def as string]
+      return C ? React.createElement(C, props) : null
+    }
+    hosts.set(id, Host)
+  }
+  return Host
+}
+
 /** Tunable values the agent puts in app code. Release builds return the default. */
 export const dial = {
   color: (id: string, def: string, meta?: DialMeta): string => read(id, { type: 'color', def, meta }),
@@ -54,7 +79,9 @@ export const dial = {
   text: (id: string, def: string, meta?: DialMeta): string => read(id, { type: 'text', def, meta }),
   /** Pick one of `variants` by key: `dial.variant('card', { roomy: RoomyCard, tiles: TileCard }, 'roomy')`. */
   variant: <T>(id: string, variants: Record<string, T>, def: string, meta?: DialMeta): T => {
-    const key = read<string>(id, { type: 'variant', def, options: Object.keys(variants), meta })
+    const spec: Spec = { type: 'variant', def, options: Object.keys(variants), meta }
+    if (Object.values(variants).every(isComponent)) return variantHost(id, spec, variants as Record<string, Comp>) as T
+    const key = read<string>(id, spec)
     return (variants[key] ?? variants[def]) as T
   },
   /** The value of the picked theme token (starts at `tokenPath`), or `fallback` when it can't be resolved. */

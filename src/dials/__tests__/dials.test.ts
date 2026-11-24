@@ -198,17 +198,30 @@ describe('tokens', () => {
 })
 
 describe('variant', () => {
-  const A = () => 'a'
-  const B = () => 'b'
-  test('returns the picked variant; list shows keys as options', async () => {
-    let C: () => string = () => ''
-    mount(() => (C = dial.variant('card', { roomy: A, tiles: B }, 'roomy')))
-    expect(C).toBe(A)
+  test('plain values: returns the picked one; list shows keys as options', async () => {
+    let v = ''
+    mount(() => (v = dial.variant('gap', { tight: 'a', roomy: 'b' }, 'tight')))
+    expect(v).toBe('a')
     const [d] = (await call('dial.list')) as { type: string; options: string[]; value: string }[]
-    expect(d).toMatchObject({ type: 'variant', options: ['roomy', 'tiles'], value: 'roomy' })
+    expect(d).toMatchObject({ type: 'variant', options: ['tight', 'roomy'], value: 'tight' })
+    await call('dial.set', 'gap', 'roomy')
+    expect(v).toBe('b')
+    expect(() => call('dial.set', 'gap', 'nope')).toThrow('"tight", "roomy"')
+  })
+
+  test('components: one stable host renders the picked component', async () => {
+    const A = () => null
+    const B = () => null
+    let Host: (p: object) => unknown = () => null
+    mount(() => (Host = dial.variant('card', { roomy: A, tiles: B }, 'roomy') as never))
+    const first = Host
+    let el: { type: unknown } | null = null
+    mount(() => (el = Host({}) as never))
+    expect(el!.type).toBe(A)
     await call('dial.set', 'card', 'tiles')
-    expect(C).toBe(B)
-    expect(() => call('dial.set', 'card', 'nope')).toThrow('"roomy", "tiles"')
+    expect(el!.type).toBe(B)
+    mount(() => (Host = dial.variant('card', { roomy: A, tiles: B }, 'roomy') as never))
+    expect(Host).toBe(first)
   })
 })
 
