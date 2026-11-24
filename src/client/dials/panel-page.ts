@@ -462,7 +462,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       var png = String(r.png || "")
       var img = new Image()
       img.onload = function () {
-        var rect = union(r.rect), s = r.scale || 1
+        // Screenshot tools may return points or pixels; the window width tells which.
+        var rect = union(r.rect), s = r.window && r.window.width ? img.width / r.window.width : r.scale || 1
         var x = 0, y = 0, w = img.width, hh = img.height
         if (rect && rect.width > 0 && rect.height > 0) {
           var pad = Math.round(8 * s)

@@ -37,7 +37,7 @@ export type PanelSnapshot = {
 }
 export type Rect = { x: number; y: number; width: number; height: number }
 export type Capture =
-  | { device: string; png: string; rect: Rect | null; rects: Rect[]; scale: number }
+  | { device: string; png: string; rect: Rect | null; rects: Rect[]; scale: number; window?: { width: number; height: number } }
   | { device: string; error: string }
 
 export type DialsServerOptions = {
@@ -222,9 +222,9 @@ export function createDialsServer(options: DialsServerOptions = {}) {
         const png = await screenshot(session)
         const rects = await callTool(session, 'dial.rects', [id])
         if (!rects.ok) throw new Error(rects.error)
-        const value = rects.value as { rects?: Rect[]; scale?: number }
+        const value = rects.value as { rects?: Rect[]; scale?: number; window?: { width: number; height: number } }
         const list = Array.isArray(value.rects) ? value.rects : []
-        return { device, png, rect: list[0] ?? null, rects: list, scale: value.scale ?? 1 }
+        return { device, png, rect: list[0] ?? null, rects: list, scale: value.scale ?? 1, ...(value.window && { window: value.window }) }
       } catch (error) {
         return { device, error: error instanceof Error ? error.message : String(error) }
       } finally {
