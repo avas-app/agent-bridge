@@ -42,6 +42,19 @@ export const getTheme = () => theme
 
 const COLOR = /^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(rgb|hsl)a?\(.+\)|[a-z]+)$/i
 
+/** Leaf token paths in the same top-level group as `path` (colors.* for colors.accent). */
+export function tokenPaths(path: string): string[] {
+  const top = path.split('.')[0]!
+  const out: string[] = []
+  const walk = (node: unknown, at: string) => {
+    if (typeof node === 'string' || typeof node === 'number') out.push(at)
+    else if (node && typeof node === 'object')
+      for (const [k, v] of Object.entries(node)) walk(v, `${at}.${k}`)
+  }
+  walk(resolveToken(top), top)
+  return out
+}
+
 export function resolveToken(path: string): unknown {
   let node: unknown
   try {
@@ -81,9 +94,11 @@ export function validate(d: Dial, value: unknown): DialValue {
     case 'text':
       if (typeof value !== 'string') bad('a string')
       return value as string
-    case 'token':
-      if (typeof value !== 'string' && typeof value !== 'number') bad('a string or number (a token value)')
-      return value as DialValue
+    case 'token': {
+      const leaf = typeof value === 'string' ? resolveToken(value) : undefined
+      if (typeof leaf !== 'string' && typeof leaf !== 'number') bad(tokenPaths(d.tokenPath!).join(', ') || 'a token path')
+      return value as string
+    }
   }
 }
 
@@ -115,23 +130,14 @@ export function register(id: string, spec: Spec): Entry {
     ...(spec.tokenPath !== undefined && { tokenPath: spec.tokenPath }),
   }
   entries.set(id, entry)
-  if (entry.type === 'token') {
-    const resolved = resolveToken(entry.tokenPath!)
-    if (typeof resolved === 'string' || typeof resolved === 'number') entry.value = entry.original = resolved
-  }
   if (held.has(id)) {
     try {
       entry.value = validate(entry, held.get(id))
-      pushToken(entry)
     } catch {
       held.delete(id)
     }
   }
   return entry
-}
-
-const pushToken = (d: Entry) => {
-  if (d.type === 'token') theme?.set?.(d.tokenPath!, d.value)
 }
 
 const emit = (id: string) => {
@@ -167,7 +173,6 @@ export function set(id: string, value: unknown): Dial {
   const next = validate(e, value)
   if (!Object.is(e.value, next)) {
     e.value = next
-    pushToken(e)
     emit(id)
   }
   return publicDial(e)
@@ -199,7 +204,6 @@ const putBack = (e: Entry) => {
   held.delete(e.id)
   if (Object.is(e.value, e.original)) return false
   e.value = e.original
-  pushToken(e)
   emit(e.id)
   return true
 }

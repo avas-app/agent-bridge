@@ -147,7 +147,7 @@ describe('apply, reset, restore', () => {
 })
 
 describe('tokens', () => {
-  const tree = { color: { brand: '#0a0' }, space: { md: 12 } }
+  const tree = { color: { brand: '#0a0', accent: '#00f' }, space: { md: 12 } }
   const sets: [string, unknown][] = []
   beforeEach(() => {
     sets.length = 0
@@ -161,17 +161,18 @@ describe('tokens', () => {
     expect(await call('dial.tokens')).toBeNull()
   })
 
-  test('token dial resolves the path, records it, writes through the theme', async () => {
+  test('token dial picks another path from the same group and returns its value', async () => {
     let v: string | number = ''
     mount(() => (v = dial.token('brand', 'color.brand', '#fff')))
     expect(v).toBe('#0a0')
-    const [d] = (await call('dial.list')) as { type: string; tokenPath: string }[]
-    expect(d).toMatchObject({ type: 'token', tokenPath: 'color.brand' })
-    await call('dial.set', 'brand', '#f00')
-    expect(sets).toEqual([['color.brand', '#f00']])
-    expect(v).toBe('#f00')
+    const [d] = (await call('dial.list')) as { type: string; tokenPath: string; value: string }[]
+    expect(d).toMatchObject({ type: 'token', tokenPath: 'color.brand', value: 'color.brand', original: 'color.brand' })
+    await call('dial.set', 'brand', 'color.accent')
+    expect(v).toBe('#00f')
+    expect(() => call('dial.set', 'brand', '#f00')).toThrow('color.brand, color.accent')
     await call('dial.restore')
-    expect(sets.at(-1)).toEqual(['color.brand', '#0a0'])
+    expect(v).toBe('#0a0')
+    expect(sets).toEqual([])
   })
 
   test('unresolvable path returns the fallback', () => {

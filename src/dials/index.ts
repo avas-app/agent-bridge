@@ -43,11 +43,12 @@ export const dial = {
     read(id, { type: 'enum', def, options: [...options], meta }),
   boolean: (id: string, def: boolean, meta?: DialMeta): boolean => read(id, { type: 'boolean', def, meta }),
   text: (id: string, def: string, meta?: DialMeta): string => read(id, { type: 'text', def, meta }),
-  /** The theme token at `tokenPath`, or `fallback` when it can't be resolved. */
+  /** The value of the picked theme token (starts at `tokenPath`), or `fallback` when it can't be resolved. */
   token: <T extends string | number>(id: string, tokenPath: string, fallback: T, meta?: DialMeta): T => {
-    const existing = resolveToken(tokenPath)
-    const def = (typeof existing === 'string' || typeof existing === 'number' ? existing : fallback) as DialValue
-    return read(id, { type: 'token', def, tokenPath, meta }) as T
+    // The dial holds a token path; the user picks another path from the same group.
+    const path = read<string>(id, { type: 'token', def: tokenPath, tokenPath, meta })
+    const leaf = resolveToken(path)
+    return (typeof leaf === 'string' || typeof leaf === 'number' ? leaf : fallback) as T
   },
 }
 
