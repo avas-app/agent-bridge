@@ -9,7 +9,9 @@ import {
   createDialsStore,
   dialsPath,
   mergeDials,
+  readCommit,
   readDials,
+  writeCommit,
   writeDials,
 } from '../dials-store'
 
@@ -25,8 +27,9 @@ describe('mergeDials', () => {
   test('skips a dial still at its original, saves a changed one with its history', () => {
     const first = mergeDials({}, [dial('a', 0), dial('b', 5)], 10)
     expect(Object.keys(first.next)).toEqual(['b'])
+    expect(first.next.b?.history).toEqual([0])
     const second = mergeDials(first.next, [dial('b', 7)], 20)
-    expect(second.next.b).toEqual({ value: 7, original: 0, type: 'number', history: [5], updatedAt: 20 })
+    expect(second.next.b).toEqual({ value: 7, original: 0, type: 'number', history: [0, 5], updatedAt: 20 })
     expect(mergeDials(second.next, [dial('b', 7)]).changed).toBe(false)
   })
 
@@ -91,5 +94,29 @@ describe('createDialsStore', () => {
     store.record([dial('b', 2)])
     store.flush()
     expect(Object.keys(readDials(project))).toEqual(['b'])
+  })
+})
+
+describe('commit request', () => {
+  const commit = {
+    id: 'c1',
+    ids: ['a'],
+    revertOthers: false,
+    values: { a: { value: 3, original: 0, type: 'number' } },
+    status: 'requested' as const,
+    at: 1,
+  }
+
+  test('sits beside the dials, survives writes and clear, is not a dial', () => {
+    writeDials(project, mergeDials({}, [dial('a', 3)]).next)
+    writeCommit(project, commit)
+    expect(Object.keys(readDials(project))).toEqual(['a'])
+    writeDials(project, mergeDials(readDials(project), [dial('a', 4)]).next)
+    expect(readCommit(project)?.id).toBe('c1')
+    clearDials(project)
+    expect(readDials(project)).toEqual({})
+    expect(readCommit(project)?.status).toBe('requested')
+    writeCommit(project, null)
+    expect(existsSync(dialsPath(project))).toBe(false)
   })
 })

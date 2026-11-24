@@ -1,6 +1,9 @@
 // The local web panel's server: one key, every route, fans out to the project's live sessions.
-import { execFileSync } from 'node:child_process'
-import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { execFileSync, execFile } from 'node:child_process'
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   type IncomingMessage,
   type Server,
@@ -10,23 +13,32 @@ import {
 import type { AddressInfo } from 'node:net'
 
 import { sessionRequest } from '../session/client'
-import { readDials } from '../session/dials-store'
-import type { DialInfo } from '../session/dials-store'
+import { readCommit, readDials, writeCommit } from '../session/dials-store'
+import type { CommitRequest, DialInfo } from '../session/dials-store'
 import {
   type SessionState,
   inProject,
   listSessions,
   projectRoot,
 } from '../session/state'
+import { scanDialCalls } from './cli'
 import { PANEL_HTML } from './panel-page'
 
 export type PanelDevice = { name: string; platform: string; session: string }
-export type PanelDial = DialInfo & { saved: boolean }
+export type DialSource = { file: string; line: number }
+export type PanelDial = DialInfo & { saved: boolean; source?: DialSource }
 export type PanelSnapshot = {
   devices: PanelDevice[]
   dials: PanelDial[]
   tokens: unknown
+  labels: Record<string, string>
+  commit: CommitRequest | null
+  capture: boolean
 }
+export type Rect = { x: number; y: number; width: number; height: number }
+export type Capture =
+  | { device: string; png: string; rect: Rect | null; rects: Rect[]; scale: number }
+  | { device: string; error: string }
 
 export type DialsServerOptions = {
   /** Default: the project at the current directory. */
@@ -41,6 +53,10 @@ export type DialsServerOptions = {
   pollMs?: number
   /** Sessions to fan out to. Default: live sessions in the project. */
   sessions?: () => SessionState[]
+  /** Shell command that writes a PNG to `{out}`, for apps without screen.capture. Default: env AGENT_BRIDGE_DIALS_SCREENSHOT. */
+  screenshotCmd?: string
+  /** Pause after setting a variant, before its screenshot. Default 100 ms. */
+  renderWaitMs?: number
 }
 
 type ToolResult = { ok: true; value: unknown } | { ok: false; error: string }
@@ -61,6 +77,36 @@ async function callTool(
   }
 }
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+/** Runs the user's screenshot command with a temp file for {out}; the file is gone before this returns. */
+function runScreenshotCmd(cmd: string): Promise<string> {
+  const dir = mkdtempSync(join(tmpdir(), 'dials-shot-'))
+  const out = join(dir, 'shot.png')
+  return new Promise<string>((resolve, reject) => {
+    execFile(
+      '/bin/sh',
+      ['-c', cmd.replaceAll('{out}', `'${out}'`)],
+      { timeout: 30_000 },
+      (error, _stdout, stderr) => {
+        try {
+          if (error) throw new Error(`screenshot command failed: ${stderr.trim() || error.message}`)
+          resolve(readFileSync(out).toString('base64'))
+        } catch (e) {
+          reject(e instanceof Error ? e : new Error(String(e)))
+        } finally {
+          rmSync(dir, { recursive: true, force: true })
+        }
+      },
+    )
+  })
+}
+
+const isTokens = (v: unknown): v is { tokens: unknown; labels?: Record<string, string> } =>
+  !!v && typeof v === 'object' && 'tokens' in v
+
+const ROUTES = new Set(['/api/highlight', '/api/capture', '/api/capture-variants', '/api/commit'])
+
 export function createDialsServer(options: DialsServerOptions = {}) {
   const project = options.project ?? projectRoot()
   const host = options.host ?? '127.0.0.1'
@@ -68,6 +114,22 @@ export function createDialsServer(options: DialsServerOptions = {}) {
   const pollMs = options.pollMs ?? 500
   const sessions =
     options.sessions ?? (() => listSessions().filter((s) => inProject(s.project, project)))
+
+  const screenshotCmd = options.screenshotCmd ?? process.env.AGENT_BRIDGE_DIALS_SCREENSHOT
+  const renderWaitMs = options.renderWaitMs ?? 100
+
+  let scanned: { at: number; calls: ReturnType<typeof scanDialCalls> } | undefined
+  const sourceOf = (id: string): DialSource | undefined => {
+    if (!scanned || Date.now() - scanned.at > 5000) {
+      try {
+        scanned = { at: Date.now(), calls: scanDialCalls(project) }
+      } catch {
+        scanned = { at: Date.now(), calls: [] }
+      }
+    }
+    const call = scanned.calls.find((c) => c.id === id)
+    return call && { file: call.file, line: call.line }
+  }
 
   const authorized = (req: IncomingMessage, url: URL) => {
     const given = url.searchParams.get('key') ?? req.headers['x-dials-key']
@@ -89,6 +151,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
     const devices: PanelDevice[] = []
     const byId = new Map<string, DialInfo>()
     let tokens: unknown = null
+    let labels: Record<string, string> = {}
     for (const { session, list, tokens: t } of lists) {
       // An app with no dials answers "Unknown tool": not a device for the panel.
       if (!list.ok || !Array.isArray(list.value)) continue
@@ -98,20 +161,126 @@ export function createDialsServer(options: DialsServerOptions = {}) {
         session: session.name,
       })
       for (const dial of list.value as DialInfo[]) if (!byId.has(dial.id)) byId.set(dial.id, dial)
-      if (tokens === null && t.ok && t.value) tokens = t.value
+      if (tokens === null && t.ok && t.value) {
+        // Older apps return the bare tree.
+        tokens = isTokens(t.value) ? t.value.tokens : t.value
+        if (isTokens(t.value) && t.value.labels) labels = t.value.labels
+      }
     }
     const saved = readDials(project)
     const dials = [...byId.values()].map((dial) => ({
       ...dial,
       saved: JSON.stringify(saved[dial.id]?.value) === JSON.stringify(dial.value),
+      source: sourceOf(dial.id),
     }))
-    return { devices, dials, tokens }
+    return {
+      devices,
+      dials,
+      tokens,
+      labels,
+      commit: readCommit(project),
+      capture: devices.length > 0 && (!!screenshotCmd || lists.some((l) => l.list.ok)),
+    }
+  }
+
+  const pick = (only?: string[]) =>
+    sessions().filter((s) => !only?.length || only.includes(s.device.name) || only.includes(s.name))
+
+  const highlighted = new Map<string, string | null>()
+  const queues = new Map<string, Promise<unknown>>()
+  // One capture at a time per device: each one clears and restores the outline.
+  const serial = <T>(session: SessionState, run: () => Promise<T>): Promise<T> => {
+    const next = (queues.get(session.name) ?? Promise.resolve()).then(run, run)
+    queues.set(session.name, next.catch(() => {}))
+    return next
+  }
+
+  async function highlight(id: string | null, only?: string[]) {
+    return Promise.all(
+      pick(only).map(async (session) => {
+        const res = await callTool(session, 'dial.highlight', [id])
+        if (res.ok) highlighted.set(session.name, id)
+        return { device: session.device.name, session: session.name, ...res }
+      }),
+    )
+  }
+
+  async function screenshot(session: SessionState): Promise<string> {
+    const shot = await callTool(session, 'screen.capture', [{ base64: true }])
+    const base64 = shot.ok ? (shot.value as { base64?: unknown } | null)?.base64 : undefined
+    if (typeof base64 === 'string' && base64) return base64
+    if (screenshotCmd) return runScreenshotCmd(screenshotCmd)
+    throw new Error('no screenshot source')
+  }
+
+  const captureOne = (session: SessionState, id: string): Promise<Capture> =>
+    serial(session, async () => {
+      const device = session.device.name
+      const wasOn = highlighted.get(session.name) ?? null
+      try {
+        await callTool(session, 'dial.highlight', [null])
+        const png = await screenshot(session)
+        const rects = await callTool(session, 'dial.rects', [id])
+        if (!rects.ok) throw new Error(rects.error)
+        const value = rects.value as { rects?: Rect[]; scale?: number }
+        const list = Array.isArray(value.rects) ? value.rects : []
+        return { device, png, rect: list[0] ?? null, rects: list, scale: value.scale ?? 1 }
+      } catch (error) {
+        return { device, error: error instanceof Error ? error.message : String(error) }
+      } finally {
+        if (wasOn) await callTool(session, 'dial.highlight', [wasOn])
+      }
+    })
+
+  const capture = (id: string, only?: string[]) =>
+    Promise.all(pick(only).map((session) => captureOne(session, id)))
+
+  async function captureVariants(id: string, only?: string[]) {
+    const session = pick(only)[0]
+    if (!session) throw new Error('no device connected')
+    const list = await callTool(session, 'dial.list', [])
+    const dial = list.ok && Array.isArray(list.value) ? (list.value as DialInfo[]).find((d) => d.id === id) : undefined
+    if (!dial?.options) throw new Error(`${id} is not a variant dial`)
+    const out: Record<string, Capture> = {}
+    try {
+      for (const option of dial.options) {
+        const set = await callTool(session, 'dial.set', [id, option])
+        if (set.ok) await sleep(renderWaitMs)
+        out[String(option)] = set.ok
+          ? await captureOne(session, id)
+          : { device: session.device.name, error: set.error }
+      }
+    } finally {
+      await callTool(session, 'dial.set', [id, dial.value])
+    }
+    return out
+  }
+
+  async function requestCommit(body: { ids?: unknown; note?: unknown; revertOthers?: unknown }) {
+    if (!Array.isArray(body.ids) || !body.ids.length) throw new Error('ids must be a non-empty list')
+    const ids = body.ids.map(String)
+    const { dials } = await snapshot()
+    const unknown = ids.filter((id) => !dials.some((d) => d.id === id))
+    if (unknown.length) throw new Error(`Unknown dials: ${unknown.join(', ')}`)
+    const commit: CommitRequest = {
+      id: randomUUID(),
+      ids,
+      ...(typeof body.note === 'string' && body.note ? { note: body.note } : {}),
+      revertOthers: body.revertOthers === true,
+      values: Object.fromEntries(
+        dials
+          .filter((d) => ids.includes(d.id))
+          .map((d) => [d.id, { value: d.value, original: d.original, type: d.type, source: d.source }]),
+      ),
+      status: 'requested',
+      at: Date.now(),
+    }
+    writeCommit(project, commit)
+    return commit
   }
 
   async function setDial(id: string, value: unknown, only?: string[]) {
-    const targets = sessions().filter(
-      (s) => !only?.length || only.includes(s.device.name) || only.includes(s.name),
-    )
+    const targets = pick(only)
     return Promise.all(
       targets.map(async (session) => ({
         device: session.device.name,
@@ -176,6 +345,36 @@ export function createDialsServer(options: DialsServerOptions = {}) {
         const results = await setDial(body.id, body.value, only)
         void poll()
         return json(res, 200, { results })
+      }
+      if (req.method === 'POST' && ROUTES.has(url.pathname)) {
+        let body: Record<string, unknown>
+        try {
+          body = JSON.parse((await readBody(req)) || '{}') as Record<string, unknown>
+        } catch {
+          return json(res, 400, { error: 'Body must be JSON' })
+        }
+        const only = Array.isArray(body.devices) ? body.devices.map(String) : undefined
+        const id = typeof body.id === 'string' ? body.id : null
+        try {
+          switch (url.pathname) {
+            case '/api/highlight':
+              if (body.id !== null && id === null) return json(res, 400, { error: 'id must be a string or null' })
+              return json(res, 200, { results: await highlight(id, only) })
+            case '/api/capture':
+              if (!id) return json(res, 400, { error: 'id must be a string' })
+              return json(res, 200, { results: await capture(id, only) })
+            case '/api/capture-variants':
+              if (!id) return json(res, 400, { error: 'id must be a string' })
+              return json(res, 200, await captureVariants(id, only))
+            default: {
+              const commit = await requestCommit(body)
+              void poll()
+              return json(res, 200, { commit })
+            }
+          }
+        } catch (error) {
+          return json(res, 400, { error: error instanceof Error ? error.message : String(error) })
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/events') {
         res.writeHead(200, {

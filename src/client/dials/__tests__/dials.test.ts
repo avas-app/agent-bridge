@@ -79,7 +79,14 @@ describe('dials server', () => {
     expect((await fetch(`${base}/?key=${'k'.repeat(32)}`)).status).toBe(200)
     const res = await fetch(`${base}/api/dials`, { headers: { 'x-dials-key': 'k'.repeat(32) } })
     expect(res.status).toBe(200)
-    expect(await res.json()).toEqual({ devices: [], dials: [], tokens: null })
+    expect(await res.json()).toEqual({
+      devices: [],
+      dials: [],
+      tokens: null,
+      labels: {},
+      commit: null,
+      capture: false,
+    })
     const post = await fetch(`${base}/api/dials/set`, { method: 'POST', body: '{}' })
     expect(post.status).toBe(401)
   })

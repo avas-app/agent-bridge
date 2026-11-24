@@ -8,9 +8,12 @@ import {
   type DialInfo,
   clearDials,
   dialsPath,
+  readCommit,
   readDials,
   savedValues,
+  writeCommit,
 } from '../session/dials-store'
+import type { CommitRequest } from '../session/dials-store'
 import { createDialsServer, tailscaleAddress } from './server'
 
 export type DialsFlags = {
@@ -19,13 +22,16 @@ export type DialsFlags = {
   port?: string
   host?: string
   tailscale?: boolean
+  timeout?: string
+  message?: string
+  'screenshot-cmd'?: string
 }
 
 type WithBridge = (fn: (bridge: AgentBridge) => Promise<void>) => Promise<void>
 
 const SKIP = new Set(['node_modules', 'dist', 'build', '.agent-bridge', '.git'])
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/
-const CALL = /\bdial\.(color|number|enum|boolean|text|token)\(\s*(['"`])((?:(?!\2).)*)\2/g
+const CALL = /\bdial\.(color|number|enum|boolean|text|token|variant)\(\s*(['"`])((?:(?!\2).)*)\2/g
 
 export type DialCall = { file: string; line: number; type: string; id: string }
 
@@ -56,6 +62,20 @@ export function scanDialCalls(root: string): DialCall[] {
   return found
 }
 
+const STATUSES = ['writing', 'done', 'failed'] as const
+
+function describeCommit(commit: CommitRequest): string {
+  const lines = [`Commit requested (${commit.id}): ${commit.ids.length} dial(s)`]
+  if (commit.note) lines.push(`Note: ${commit.note}`)
+  for (const [id, v] of Object.entries(commit.values))
+    lines.push(
+      `  ${id}: ${JSON.stringify(v.original)} -> ${JSON.stringify(v.value)}${v.source ? `  (${v.source.file}:${v.source.line})` : ''}`,
+    )
+  if (commit.revertOthers) lines.push('Revert every other dial to its original.')
+  lines.push('When you start editing run `agent-bridge dials commit-status writing`, then `done` or `failed --message <why>`.')
+  return lines.join('\n')
+}
+
 /** App dials, or none when the app has no dial tools. */
 async function appDials(bridge: AgentBridge): Promise<DialInfo[]> {
   if (!bridge.tools().some((t) => t.name === 'dial.list')) return []
@@ -67,8 +87,8 @@ export async function dialsCommand(
   rest: string[],
   flags: DialsFlags,
   withBridge: WithBridge,
+  project = projectRoot(),
 ): Promise<void> {
-  const project = projectRoot()
   switch (sub) {
     case 'list': {
       let app: DialInfo[] = []
@@ -133,7 +153,12 @@ export async function dialsCommand(
       const port = flags.port === undefined ? undefined : Number(flags.port)
       if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536))
         throw new Error(`--port must be 0-65535, got "${flags.port}"`)
-      const panel = createDialsServer({ project, host: tail?.ip ?? flags.host, port })
+      const panel = createDialsServer({
+        project,
+        host: tail?.ip ?? flags.host,
+        port,
+        screenshotCmd: flags['screenshot-cmd'],
+      })
       const bound = await panel.listen()
       console.log(`http://${tail?.name ?? (bound.host === '0.0.0.0' ? 'localhost' : bound.host)}:${bound.port}/?key=${panel.key}`)
       console.error('Dials panel running; Ctrl-C to stop.')
@@ -143,7 +168,42 @@ export async function dialsCommand(
       await panel.close()
       return
     }
+    case 'wait': {
+      const seconds = flags.timeout === undefined ? undefined : Number(flags.timeout)
+      if (seconds !== undefined && !(seconds >= 0)) throw new Error(`--timeout is in seconds, got "${flags.timeout}"`)
+      const deadline = seconds === undefined ? Infinity : Date.now() + seconds * 1000
+      for (;;) {
+        const commit = readCommit(project)
+        if (commit?.status === 'requested') {
+          const taken = { ...commit, status: 'taken' as const }
+          writeCommit(project, taken)
+          console.log(flags.json ? JSON.stringify(taken, null, 2) : describeCommit(taken))
+          return
+        }
+        if (Date.now() >= deadline) {
+          console.error('No commit requested before the timeout.')
+          process.exitCode = 2
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      }
+    }
+    case 'commit-status': {
+      const status = rest[0]
+      if (!status || !STATUSES.includes(status as (typeof STATUSES)[number]))
+        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [--message <text>]`)
+      const commit = readCommit(project)
+      if (!commit) throw new Error('No commit request to update.')
+      const { message: _old, ...rest2 } = commit
+      writeCommit(project, {
+        ...rest2,
+        status: status as (typeof STATUSES)[number],
+        ...(flags.message ? { message: flags.message } : {}),
+      })
+      console.log(`commit ${commit.id.slice(0, 8)}: ${status}`)
+      return
+    }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H]')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed> [--message <text>]')
   }
 }
