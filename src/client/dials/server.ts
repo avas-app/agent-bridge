@@ -86,7 +86,7 @@ function runScreenshotCmd(cmd: string): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     execFile(
       '/bin/sh',
-      ['-c', cmd.replaceAll('{out}', `'${out}'`)],
+      ['-c', cmd.replaceAll('{out}', '"$1"'), 'sh', out],
       { timeout: 30_000 },
       (error, _stdout, stderr) => {
         try {
@@ -179,7 +179,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       tokens,
       labels,
       commit: readCommit(project),
-      capture: devices.length > 0 && (!!screenshotCmd || lists.some((l) => l.list.ok)),
+      capture: devices.length > 0 && (!!screenshotCmd || (await anyCanCapture(lists.filter((l) => l.list.ok).map((l) => l.session)))),
     }
   }
 
@@ -205,6 +205,18 @@ export function createDialsServer(options: DialsServerOptions = {}) {
     )
   }
 
+  const probes = new Map<string, Promise<boolean>>()
+  const canCapture = (session: SessionState) => {
+    const k = `${session.name}:${session.startedAt}`
+    let probe = probes.get(k)
+    if (!probe) {
+      probe = serial(session, () => callTool(session, 'screen.capture', [{ base64: true, format: 'jpg', quality: 0.1, maxBase64: 1 }])).then((r) => r.ok)
+      probes.set(k, probe)
+    }
+    return probe
+  }
+  const anyCanCapture = async (sessions: SessionState[]) => (await Promise.all(sessions.map(canCapture))).some(Boolean)
+
   async function screenshot(session: SessionState): Promise<string> {
     // The panel is not an agent's context, so it can take a full-size JPEG.
     const opts = { base64: true, format: 'jpg', quality: 0.8, maxBase64: 3_000_000 }
@@ -212,13 +224,14 @@ export function createDialsServer(options: DialsServerOptions = {}) {
     const base64 = shot.ok ? (shot.value as { base64?: unknown } | null)?.base64 : undefined
     if (typeof base64 === 'string' && base64) return `data:image/jpeg;base64,${base64}`
     if (screenshotCmd) return runScreenshotCmd(screenshotCmd)
+    if (shot.ok && typeof (shot.value as { path?: unknown } | null)?.path === 'string')
+      throw new Error('screenshot too large to send (over 3 MB); set --screenshot-cmd to capture it another way')
     throw new Error('no screenshot source')
   }
 
   const captureOne = (session: SessionState, id: string): Promise<Capture> =>
     serial(session, async () => {
       const device = session.device.name
-      const wasOn = highlighted.get(session.name) ?? null
       try {
         await callTool(session, 'dial.highlight', [null])
         const rects = await callTool(session, 'dial.rects', [id])
@@ -230,7 +243,9 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       } catch (error) {
         return { device, error: error instanceof Error ? error.message : String(error) }
       } finally {
-        if (wasOn) await callTool(session, 'dial.highlight', [wasOn])
+        // Re-read: a highlight sent while this ran must win over the one from before.
+        const on = highlighted.get(session.name)
+        if (on) await callTool(session, 'dial.highlight', [on])
       }
     })
 
@@ -302,7 +317,10 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       let text = ''
       req.on('data', (chunk: Buffer) => {
         text += chunk
-        if (text.length > 1_000_000) reject(new Error('Body too large'))
+        if (text.length > 1_000_000) {
+          reject(new Error('Body too large'))
+          req.destroy()
+        }
       })
       req.on('end', () => resolve(text))
       req.on('error', reject)

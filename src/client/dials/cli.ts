@@ -1,7 +1,7 @@
 // `agent-bridge dials list|resume|clear|check|serve`
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, relative, resolve } from 'node:path'
 
 import type { AgentBridge } from '../index'
 import { projectRoot } from '../session/state'
@@ -33,7 +33,7 @@ type WithBridge = (fn: (bridge: AgentBridge) => Promise<void>) => Promise<void>
 
 const SKIP = new Set(['node_modules', 'dist', 'build', '.agent-bridge', '.git'])
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/
-const CALL = /\bdial\.(color|number|enum|boolean|text|token|variant)\(\s*(['"`])((?:(?!\2).)*)\2/g
+const CALL = /\bdial\.(color|number|enum|boolean|text|token|variant)\(\s*(['"`])((?:(?!\2)[^\n])*)\2/g
 
 export type DialCall = { file: string; line: number; type: string; id: string }
 
@@ -52,11 +52,11 @@ export function scanDialCalls(root: string): DialCall[] {
       }
       if (stat.isDirectory()) walk(path)
       else if (SOURCE.test(entry) && !entry.endsWith('.d.ts')) {
-        const lines = readFileSync(path, 'utf8').split('\n')
-        lines.forEach((text, i) => {
-          for (const m of text.matchAll(CALL))
-            found.push({ file: relative(root, path), line: i + 1, type: m[1] as string, id: m[3] as string })
-        })
+        const text = readFileSync(path, 'utf8')
+        for (const m of text.matchAll(CALL)) {
+          const line = text.slice(0, m.index).split('\n').length
+          found.push({ file: relative(root, path), line, type: m[1] as string, id: m[3] as string })
+        }
       }
     }
   }
@@ -155,6 +155,8 @@ export async function dialsCommand(
       const port = flags.port === undefined ? undefined : Number(flags.port)
       if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536))
         throw new Error(`--port must be 0-65535, got "${flags.port}"`)
+      if (!agentBridgeIgnored(project))
+        console.error('Warning: .agent-bridge/ is not git-ignored, so the panel key could be committed. Add `.agent-bridge/` to .gitignore.')
       const panel = createDialsServer({
         project,
         key: panelKey(project, !!flags['new-key']),
@@ -211,17 +213,33 @@ export async function dialsCommand(
   }
 }
 
+/** Looks for an `.agent-bridge/` line in .gitignore files from the project up to the repo root. */
+function agentBridgeIgnored(project: string): boolean {
+  for (let dir = resolve(project); ; dir = dirname(dir)) {
+    try {
+      if (/^\/?\.agent-bridge\/?\s*$/m.test(readFileSync(join(dir, '.gitignore'), 'utf8'))) return true
+    } catch {}
+    if (existsSync(join(dir, '.git')) || dirname(dir) === dir) return false
+  }
+}
+
 /** The panel key kept in <project>/.agent-bridge/dials-key, so a restart keeps the link; `rotate` makes a new one. */
 export function panelKey(project: string, rotate = false): string {
-  const file = join(project, '.agent-bridge', 'dials-key')
+  const dir = join(project, '.agent-bridge')
+  const file = join(dir, 'dials-key')
   if (!rotate) {
     try {
       const saved = readFileSync(file, 'utf8').trim()
-      if (/^[0-9a-f]{32}$/.test(saved)) return saved
+      if (/^[0-9a-f]{32}$/.test(saved)) {
+        if ((statSync(file).mode & 0o077) !== 0) chmodSync(file, 0o600)
+        return saved
+      }
     } catch {}
   }
   const key = randomBytes(16).toString('hex')
-  mkdirSync(join(project, '.agent-bridge'), { recursive: true })
-  writeFileSync(file, `${key}\n`, { mode: 0o600 })
+  mkdirSync(dir, { recursive: true })
+  const temp = join(dir, `dials-key.${process.pid}.${randomBytes(4).toString('hex')}.tmp`)
+  writeFileSync(temp, `${key}\n`, { flag: 'wx', mode: 0o600 })
+  renameSync(temp, file)
   return key
 }
