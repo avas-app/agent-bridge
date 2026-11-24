@@ -174,6 +174,7 @@ from the real state.
 | Run many calls at once, write a flow file, or measure timing | [references/flows.md](references/flows.md) |
 | Understand what restore undoes, or fix a value restore got wrong | [references/restore.md](references/restore.md) |
 | Add a scenario to the app | [references/writing-scenarios.md](references/writing-scenarios.md) |
+| Tune colours, sizes, tokens or a component with the user in a web panel, then write the result into source (`dial.*`, `agent-bridge dials`) | [references/dials.md](references/dials.md) |
 
 The app may expose its own tools for hooks the bridge has no tool for
 (`queue.flush`, `realtime.reconnect`); `tools` lists them. There is no

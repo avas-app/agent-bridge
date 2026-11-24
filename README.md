@@ -113,6 +113,7 @@ The screen tools measure with Fabric, so they need React Native's New Architectu
 
 - [Built-in tools and restore](docs/built-in-tools.md)
 - [The CLI, flows and the client](docs/cli.md)
+- [Dials](docs/dials.md) (beta): tune values live in a web panel, then write them into source
 - [Scenarios](docs/scenarios.md): signed-in state, strict network, fixtures, gates
 - [Adapters](docs/adapters.md): TanStack Query, Zustand, Redux, Jotai, MMKV, AsyncStorage, SecureStore, Expo Router, React Navigation, network
 - [WebViews](docs/webviews.md)

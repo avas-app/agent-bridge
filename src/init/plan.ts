@@ -448,6 +448,15 @@ export function plan(
     }
   }
 
+  const ignore = join(d.dir, '.gitignore')
+  const gitignored = [ignore, join(d.repoRoot, '.gitignore')].some((f) =>
+    /^\/?\.agent-bridge\/?\s*$/m.test(fs.read(f) ?? ''),
+  )
+  if (!gitignored) {
+    actions.push({ kind: 'append', path: ignore, line: '.agent-bridge/' })
+    files.push({ path: '.gitignore', status: fs.exists(ignore) ? 'appended' : 'written' })
+  }
+
   const spec = `${PACKAGE}@^${o.version}`
   const install = installCommand(d.pm, spec)
   if (!d.installed && o.install) actions.unshift({ kind: 'install', command: install, cwd: d.dir })
