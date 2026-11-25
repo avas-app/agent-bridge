@@ -5,9 +5,11 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -74,28 +76,49 @@ export const HISTORY_CAP = 20
 export const dialsPath = (project: string) =>
   join(project, '.agent-bridge', 'dials.json')
 
-const waiterPath = (project: string) => join(project, '.agent-bridge', 'dials-waiter')
+const waitersDir = (project: string) => join(project, '.agent-bridge', 'dials-waiters')
 
-/** Marks that `dials wait` is listening in this process; call the result to unmark. */
-export function markWaiter(project: string): () => void {
-  const file = waiterPath(project)
+/** A waiter whose file wasn't refreshed for this long is gone (killed, or its pid reused). */
+export const WAITER_STALE_MS = 3000
+
+/** Marks that `dials wait` is listening in this process. Call `beat` while waiting and `unmark` when done. */
+export function markWaiter(project: string): { beat: () => void; unmark: () => void } {
+  const file = join(waitersDir(project), String(process.pid))
   mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, String(process.pid))
-  return () => {
-    try {
-      if (readFileSync(file, 'utf8') === String(process.pid)) rmSync(file)
-    } catch {}
+  writeFileSync(file, '')
+  return {
+    beat: () => {
+      try {
+        const now = new Date()
+        utimesSync(file, now, now)
+      } catch {
+        try {
+          writeFileSync(file, '')
+        } catch {}
+      }
+    },
+    unmark: () => rmSync(file, { force: true }),
   }
 }
 
 /** Whether a live `dials wait` is listening for this project's commits. */
-export function agentWaiting(project: string): boolean {
+export function agentWaiting(project: string, now = Date.now()): boolean {
+  let names: string[]
   try {
-    const pid = Number(readFileSync(waiterPath(project), 'utf8'))
-    return Number.isInteger(pid) && pid > 0 && isAlive(pid)
+    names = readdirSync(waitersDir(project))
   } catch {
     return false
   }
+  return names.some((name) => {
+    const file = join(waitersDir(project), name)
+    try {
+      if (now - statSync(file).mtimeMs < WAITER_STALE_MS && isAlive(Number(name))) return true
+    } catch {
+      return false
+    }
+    rmSync(file, { force: true })
+    return false
+  })
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)

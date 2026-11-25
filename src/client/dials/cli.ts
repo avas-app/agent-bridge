@@ -82,6 +82,9 @@ export function scanDialCalls(root: string): DialCall[] {
 
 const STATUSES = ['writing', 'done', 'failed', 'cancelled'] as const
 
+const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
+const SIGNO: Partial<Record<NodeJS.Signals, number>> = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }
+
 function describeCommit(commit: CommitRequest): string {
   const lines = [`Commit requested (${commit.id}): ${commit.ids.length} dial(s)`]
   if (commit.note) lines.push(`Note: ${commit.note}`)
@@ -192,31 +195,41 @@ export async function dialsCommand(
       const bound = await panel.listen()
       console.log(`http://${tail?.name ?? (bound.host === '0.0.0.0' ? 'localhost' : bound.host)}:${bound.port}/?key=${panel.key}`)
       console.error('Dials panel running; Ctrl-C to stop.')
-      const stopped = new Promise<void>((resolve) => {
-        for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, resolve)
-      })
+      // `on`, not `once`: a second Ctrl-C during the session start must not skip stopping it.
+      let quit = () => {}
+      const stopped = new Promise<void>((resolve) => (quit = resolve))
+      const onSignal = () => quit()
+      for (const sig of STOP_SIGNALS) process.on(sig, onSignal)
       // The panel reads the app through a session; start one if the project has none, and stop only that one.
-      let own: SessionState | undefined
-      if (!flags['no-session'] && !listSessions().some((s) => inProject(s.project, project))) {
-        try {
-          own = await start(
-            { metro: flags.metro, device: flags.device, idle: flags.idle ?? '8h' },
-            { cwd: project, base: 'dials' },
-          )
-          console.error(`Started session "${own.name}" (${own.device.name}); it stops when the panel does.`)
-        } catch (error) {
-          console.error(
-            `Couldn't start a bridge session (${error instanceof Error ? error.message : String(error)}). The panel stays empty until \`agent-bridge session start\` runs in the project.`,
-          )
-        }
-      }
+      let starting: Promise<SessionState | undefined> = Promise.resolve(undefined)
+      if (!flags['no-session'] && !listSessions().some((s) => inProject(s.project, project)))
+        starting = start(
+          { metro: flags.metro, device: flags.device, idle: flags.idle ?? '8h' },
+          { cwd: project, base: 'dials' },
+        ).then(
+          (own) => {
+            console.error(`Started session "${own.name}" (${own.device.name}); it stops when the panel does.`)
+            return own
+          },
+          (error: unknown) => {
+            console.error(
+              `Couldn't start a bridge session (${error instanceof Error ? error.message : String(error)}). The panel stays empty until \`agent-bridge session start\` runs in the project.`,
+            )
+            return undefined
+          },
+        )
       if (!flags.exec && !agentWaiting(project))
         console.error('Run `agent-bridge dials wait --json` in the background, or pass --exec, to receive commits from the panel.')
       await stopped
-      if (own) {
-        // --keep: leave the app as the user tuned it.
-        const res = await sessionRequest(own, { op: 'stop', keep: true }).catch(() => null)
-        if (res && !res.error) console.error(`Stopped session "${own.name}".`)
+      try {
+        const own = await starting
+        if (own) {
+          // --keep: leave the app as the user tuned it.
+          const res = await sessionRequest(own, { op: 'stop', keep: true }).catch(() => null)
+          if (res && !res.error) console.error(`Stopped session "${own.name}".`)
+        }
+      } finally {
+        for (const sig of STOP_SIGNALS) process.off(sig, onSignal)
       }
       await panel.close()
       return
@@ -225,15 +238,16 @@ export async function dialsCommand(
       const seconds = flags.timeout === undefined ? undefined : Number(flags.timeout)
       if (seconds !== undefined && !(seconds >= 0)) throw new Error(`--timeout is in seconds, got "${flags.timeout}"`)
       const deadline = seconds === undefined ? Infinity : Date.now() + seconds * 1000
-      const unmark = markWaiter(project)
+      const waiter = markWaiter(project)
       // A signal skips `finally`; unmark on the way out so the panel stops saying an agent listens.
       const onSignal = (sig: NodeJS.Signals) => {
-        unmark()
-        process.kill(process.pid, sig)
+        waiter.unmark()
+        process.exit(128 + (SIGNO[sig] ?? 1))
       }
-      for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, onSignal)
+      for (const sig of STOP_SIGNALS) process.on(sig, onSignal)
       try {
         for (;;) {
+          waiter.beat()
           const taken = takeCommit(project)
           if (taken) {
             console.log(flags.json ? JSON.stringify(taken, null, 2) : describeCommit(taken))
@@ -247,8 +261,8 @@ export async function dialsCommand(
           await new Promise((resolve) => setTimeout(resolve, 300))
         }
       } finally {
-        for (const sig of ['SIGINT', 'SIGTERM'] as const) process.off(sig, onSignal)
-        unmark()
+        for (const sig of STOP_SIGNALS) process.off(sig, onSignal)
+        waiter.unmark()
       }
     }
     case 'commit-status': {

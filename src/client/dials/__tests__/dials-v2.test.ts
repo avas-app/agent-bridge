@@ -499,6 +499,19 @@ describe('serve and sessions', () => {
     expect(errs.join('\n')).toContain('Started session "dials"')
   })
 
+  test('a stop signal during a slow session start still stops that session', async () => {
+    const { got, state } = await stopRecorder('dials')
+    const run = dialsCommand('serve', [], { port: '0' }, async () => {}, project, async () => {
+      await new Promise((r) => setTimeout(r, 400))
+      return state
+    })
+    await new Promise((r) => setTimeout(r, 150))
+    process.emit('SIGINT')
+    process.emit('SIGINT')
+    await run
+    expect(got.map((r) => [r.op, r.keep])).toEqual([['stop', true]])
+  })
+
   test('reuses a running session and never stops it', async () => {
     const { got, state } = await stopRecorder('mine')
     writeFileSync(join(stateDir, 'mine.json'), JSON.stringify(state))
@@ -520,14 +533,23 @@ describe('serve and sessions', () => {
 })
 
 describe('commit listener', () => {
-  test('a live wait marks the project; a dead pid or unmark does not', () => {
+  test('any live, fresh waiter counts; dead, stale or unmarked ones do not', () => {
+    const waiters = join(dir, '.agent-bridge', 'dials-waiters')
     expect(agentWaiting(dir)).toBe(false)
-    const unmark = markWaiter(dir)
+    const me = markWaiter(dir)
     expect(agentWaiting(dir)).toBe(true)
-    unmark()
+    // A second waiter finishing leaves the first one counted.
+    writeFileSync(join(waiters, String(process.ppid)), '')
+    rmSync(join(waiters, String(process.ppid)))
+    expect(agentWaiting(dir)).toBe(true)
+    // No heartbeat for a while: killed, or its pid reused.
+    expect(agentWaiting(dir, Date.now() + 10_000)).toBe(false)
+    me.beat()
+    expect(agentWaiting(dir)).toBe(true)
+    me.unmark()
+    writeFileSync(join(waiters, '999999999'), '')
     expect(agentWaiting(dir)).toBe(false)
-    writeFileSync(join(dir, '.agent-bridge', 'dials-waiter'), '999999999')
-    expect(agentWaiting(dir)).toBe(false)
+    expect(readdirSync(waiters)).toEqual([])
   })
 
   test('wait listens while it runs, and the snapshot says so', async () => {
@@ -581,6 +603,38 @@ describe('serve --exec', () => {
     await start(app.state, { exec: 'printf %s "$DIALS_COMMIT_ID" > env.txt' })
     await until(() => existsSync(join(dir, 'env.txt')))
     expect(readFileSync(join(dir, 'env.txt'), 'utf8')).toBe('queued-1')
+  })
+
+  test('output does not fail the commit, and a timeout stops what the command started', async () => {
+    const app = await fakeSession()
+    const loud = await start(app.state, { exec: 'head -c 3000000 /dev/zero' })
+    await loud.post('/api/commit', { ids: ['card.accent'] })
+    await until(() => !loud.panel.running())
+    expect(readCommit(dir)?.status).toBe('taken')
+    writeCommit(dir, null)
+
+    const slow = await start(app.state, { exec: 'sh -c \'echo $$ > gc.pid; exec sleep 30\' & wait', execTimeoutMs: 300 })
+    await slow.post('/api/commit', { ids: ['card.accent'] })
+    await until(() => readCommit(dir)?.status === 'failed')
+    expect(readCommit(dir)?.message).toBe('--exec failed: timed out after 0 s')
+    const gc = Number(readFileSync(join(dir, 'gc.pid'), 'utf8'))
+    await until(() => {
+      try {
+        process.kill(gc, 0)
+        return false
+      } catch {
+        return true
+      }
+    })
+  })
+
+  test('closing the panel mid-command puts the commit back in the queue', async () => {
+    const app = await fakeSession()
+    const { post, panel } = await start(app.state, { exec: 'sleep 30' })
+    await post('/api/commit', { ids: ['card.accent'] })
+    await until(() => readCommit(dir)?.status === 'taken')
+    await panel.close()
+    expect(readCommit(dir)?.status).toBe('requested')
   })
 
   test('dials show prints the current commit', async () => {

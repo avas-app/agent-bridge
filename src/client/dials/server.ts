@@ -1,5 +1,5 @@
 // The local web panel's server: one key, every route, fans out to the project's live sessions.
-import { execFileSync, execFile } from 'node:child_process'
+import { type ChildProcess, execFileSync, execFile, spawn } from 'node:child_process'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -299,29 +299,54 @@ export function createDialsServer(options: DialsServerOptions = {}) {
 
   /** Hands a requested commit to `exec`; a failing command marks the commit failed so the panel shows why. */
   const execTimeoutMs = options.execTimeoutMs ?? 60_000
+  const running = new Map<ChildProcess, string>()
+  let closing = false
+  const failCommit = (id: string, message: string) =>
+    updateCommit(project, (c) => (c?.id === id && c.status === 'taken' ? { ...c, status: 'failed', message } : undefined))
+  // Its own process group, so a timeout or close stops whatever the command started too.
+  const killGroup = (child: ChildProcess) => {
+    try {
+      if (child.pid) process.kill(-child.pid, 'SIGKILL')
+    } catch {}
+  }
   function deliver(): Promise<void> {
     const cmd = options.exec
-    const commit = cmd ? takeCommit(project) : null
+    const commit = cmd && !closing ? takeCommit(project) : null
     if (!cmd || !commit) return Promise.resolve()
     return new Promise<void>((resolve) => {
-      const child = execFile(
-        '/bin/sh',
-        ['-c', cmd],
-        {
-          cwd: project,
-          timeout: execTimeoutMs,
-          env: { ...process.env, DIALS_COMMIT_ID: commit.id, DIALS_NOTE: commit.note ?? '', DIALS_PROJECT: project },
-        },
-        (error, _stdout, stderr) => {
-          if (error)
-            updateCommit(project, (c) =>
-              c?.id === commit.id && c.status === 'taken'
-                ? { ...c, status: 'failed', message: `--exec failed: ${stderr.trim() || error.message}` }
-                : undefined,
-            )
-          void poll().finally(resolve)
-        },
+      const child = spawn('/bin/sh', ['-c', cmd], {
+        cwd: project,
+        detached: true,
+        stdio: ['pipe', 'ignore', 'pipe'],
+        env: { ...process.env, DIALS_COMMIT_ID: commit.id, DIALS_NOTE: commit.note ?? '', DIALS_PROJECT: project },
+      })
+      running.set(child, commit.id)
+      let stderr = ''
+      child.stderr?.on('data', (chunk: Buffer) => {
+        stderr = (stderr + chunk.toString()).slice(-4000)
+      })
+      let timedOut = false
+      const timer = setTimeout(() => {
+        timedOut = true
+        killGroup(child)
+      }, execTimeoutMs)
+      const finish = (problem?: string) => {
+        clearTimeout(timer)
+        if (!running.delete(child)) return resolve()
+        if (problem) failCommit(commit.id, `--exec failed: ${problem}`)
+        void poll().finally(resolve)
+      }
+      // `exit`, not `close`: a command that backgrounds a job may leave stderr open.
+      child.once('exit', (code, signal) =>
+        finish(
+          timedOut
+            ? `timed out after ${Math.round(execTimeoutMs / 1000)} s`
+            : code === 0
+              ? undefined
+              : stderr.trim() || `exit ${code ?? signal}`,
+        ),
       )
+      child.once('error', (error) => finish(error.message))
       child.stdin?.on('error', () => {})
       child.stdin?.end(JSON.stringify(commit))
     })
@@ -506,7 +531,16 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       return { host, port: (server.address() as AddressInfo).port }
     },
     deliver,
+    /** Whether an `exec` command is still running. */
+    running: () => running.size > 0,
     async close() {
+      closing = true
+      // A commit whose command was cut off goes back in the queue for the next listener.
+      for (const [child, id] of running) {
+        running.delete(child)
+        killGroup(child)
+        updateCommit(project, (c) => (c?.id === id && c.status === 'taken' ? { ...c, status: 'requested' } : undefined))
+      }
       clearInterval(poller)
       for (const res of streams) res.end()
       server.closeAllConnections?.()
