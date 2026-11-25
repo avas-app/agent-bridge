@@ -30,6 +30,7 @@ mock.module('react', () => ({
   },
 }))
 
+mock.module('react-native', () => ({ View: 'View' }))
 const { dial, dialTools } = await import('../index')
 const { resetHighlight } = await import('../highlight')
 const { addOwner, ownersOf } = await import('../registry')
@@ -379,5 +380,68 @@ describe('release stub', () => {
     expect(noop.DialsOverlay()).toBeNull()
     expect(noop.dialTools()).toEqual({})
     expect(noop.useDials()).toEqual({})
+  })
+})
+
+describe('outline brackets', () => {
+  const host = (id: string, meta?: { outline?: { color: string } }) => {
+    const f = { tag: 0, child: { tag: 5, stateNode: { getBoundingClientRect: () => ({ x: 10, y: 20, width: 100, height: 60 }), checkVisibility: () => true }, child: null, sibling: null, return: null, memoizedProps: {} }, sibling: null, return: null, stateNode: null, memoizedProps: {} }
+    const shared = (realReact as unknown as Record<string, { A: unknown }>)['__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE']!
+    const prev = shared.A
+    shared.A = { getOwner: () => f }
+    mount(() => dial.number(id, 1, meta))
+    shared.A = prev
+  }
+  const colors = (node: unknown): string[] => {
+    const out: string[] = []
+    const walk = (n: unknown) => {
+      const el = n as { props?: { style?: { borderColor?: string }; children?: unknown }; type?: unknown }
+      if (!el || typeof el !== 'object') return
+      if (el.props?.style?.borderColor) out.push(el.props.style.borderColor)
+      for (const c of [el.props?.children].flat()) walk(c)
+    }
+    walk(node)
+    return out
+  }
+  const render = async () => {
+    const { DialsOverlay } = await import('../overlay')
+    return DialsOverlay() as unknown
+  }
+
+  test('draws four brackets in the default colour, each with a dark edge', async () => {
+    host('n')
+    await call('dial.highlight', 'n')
+    const cs = colors(await render())
+    expect(cs.filter((c) => c === '#3D7BFF')).toHaveLength(4)
+    expect(cs.filter((c) => c.startsWith('rgba'))).toHaveLength(4)
+  })
+
+  test('colour order: dial > session > app > default', async () => {
+    const { setOutlineColor } = await import('../highlight')
+    host('n')
+    host('own', { outline: { color: '#111111' } })
+    const pick = async (id: string, session?: string) => {
+      await call('dial.highlight', id, session ? { color: session } : undefined)
+      return colors(await render()).find((c) => !c.startsWith('rgba'))
+    }
+    expect(await pick('n')).toBe('#3D7BFF')
+    setOutlineColor('#222222')
+    expect(await pick('n')).toBe('#222222')
+    expect(await pick('n', '#333333')).toBe('#333333')
+    expect(await pick('own', '#333333')).toBe('#111111')
+  })
+
+  test('dial.highlight(id) with one arg works; hides on a change and shows 350 ms after the last', async () => {
+    host('n')
+    await call('dial.highlight', 'n')
+    expect(await render()).not.toBeNull()
+    await call('dial.set', 'n', 2)
+    expect(await render()).toBeNull()
+    await new Promise((r) => setTimeout(r, 200))
+    await call('dial.set', 'n', 3)
+    await new Promise((r) => setTimeout(r, 200))
+    expect(await render()).toBeNull()
+    await new Promise((r) => setTimeout(r, 250))
+    expect(await render()).not.toBeNull()
   })
 })

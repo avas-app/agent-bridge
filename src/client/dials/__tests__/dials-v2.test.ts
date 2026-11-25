@@ -132,6 +132,14 @@ describe('highlight and capture', () => {
     expect(app.tool('dial.highlight').map(([, a]) => a)).toEqual([['card.accent'], [null]])
   })
 
+  test('--outline reaches dial.highlight; clearing and no flag send plain args', async () => {
+    const app = await fakeSession()
+    const { post } = await start(app.state, { outline: '#FF3EA5' })
+    await post('/api/highlight', { id: 'card.accent' })
+    await post('/api/highlight', { id: null })
+    expect(app.tool('dial.highlight').map(([, a]) => a)).toEqual([['card.accent', { color: '#FF3EA5' }], [null]])
+  })
+
   test('/api/capture clears the outline, shoots, reads rects, restores the outline', async () => {
     const app = await fakeSession({ capture: true })
     const { post } = await start(app.state)

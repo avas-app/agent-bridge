@@ -3,6 +3,9 @@ import { measureHost } from '../runtime/find-text-core'
 import { firstHost } from '../runtime/screen/elements'
 import { get, ownersOf, subscribe } from './registry'
 
+export const DEFAULT_OUTLINE = '#3D7BFF'
+const SHOW_AGAIN_MS = 350
+
 export type DialRects = { rects: Rect[]; scale: number; window: { width: number; height: number } }
 
 const MAX_RECTS = 20
@@ -64,9 +67,32 @@ let current: Rect[] = []
 let timer: ReturnType<typeof setInterval> | undefined
 let unsub: (() => void) | undefined
 let lastCall = 0
+let appColor: string | undefined
+let sessionColor: string | undefined
+let hidden = false
+let showTimer: ReturnType<typeof setTimeout> | undefined
+export type OutlineView = { rects: Rect[]; color: string; hidden: boolean }
+let view: OutlineView = { rects: [], color: DEFAULT_OUTLINE, hidden: false }
 const watchers = new Set<() => void>()
 
+/** The colour from `useDials({ outline })`; a dial's own colour and the panel's `--outline` win over it. */
+export const setOutlineColor = (color: string | undefined) => {
+  appColor = color
+}
+const resolveColor = () => {
+  const own = active === null ? undefined : get(active).outline?.color
+  return own || sessionColor || appColor || DEFAULT_OUTLINE
+}
+const notify = () => {
+  const color = resolveColor()
+  if (view.rects === current && view.color === color && view.hidden === hidden) return
+  view = { rects: current, color, hidden }
+  for (const w of [...watchers]) w()
+}
 const stop = () => {
+  if (showTimer) clearTimeout(showTimer)
+  showTimer = undefined
+  hidden = false
   if (timer) clearInterval(timer)
   timer = undefined
   unsub?.()
@@ -77,7 +103,7 @@ const same = (a: Rect[], b: Rect[]) =>
 const publish = (next: Rect[]) => {
   if (same(current, next)) return
   current = next
-  for (const w of [...watchers]) w()
+  notify()
 }
 const refresh = () => {
   if (active === null) return
@@ -95,24 +121,40 @@ const refresh = () => {
 }
 
 /** Outline the components reading `id`; null clears. Follows layout until 30 s pass with no call. */
-export function highlight(id: string | null): { rects: Rect[] } {
+export function highlight(id: string | null, options?: { color?: string }): { rects: Rect[] } {
   if (id !== null) get(id)
   stop()
   lastCall = Date.now()
+  sessionColor = id === null ? undefined : options?.color || undefined
   if (id === null) {
     active = null
     publish([])
+    notify()
     return { rects: [] }
   }
   active = id
   // A value change re-renders the readers; measure after they commit.
-  unsub = subscribe(id)(() => setTimeout(refresh, 0))
+  // The outline hides while the value changes and comes back 350 ms after the last change.
+  unsub = subscribe(id)(() => {
+    hidden = true
+    notify()
+    if (showTimer) clearTimeout(showTimer)
+    showTimer = setTimeout(() => {
+      showTimer = undefined
+      hidden = false
+      refresh()
+      notify()
+    }, SHOW_AGAIN_MS)
+    setTimeout(refresh, 0)
+  })
   timer = setInterval(refresh, REFRESH_MS)
   refresh()
+  notify()
   return { rects: current }
 }
 
 export const highlighted = () => current
+export const outlineView = () => view
 export const watchHighlight = (cb: () => void) => {
   watchers.add(cb)
   return () => void watchers.delete(cb)
@@ -123,5 +165,8 @@ export function resetHighlight() {
   stop()
   active = null
   current = []
+  appColor = undefined
+  sessionColor = undefined
+  view = { rects: [], color: DEFAULT_OUTLINE, hidden: false }
   watchers.clear()
 }

@@ -24,7 +24,7 @@ import {
   tokens,
 } from './registry'
 
-import { highlight, rects } from './highlight'
+import { highlight, rects, setOutlineColor } from './highlight'
 import { installRefreshRecovery } from './recover'
 
 export { DialsOverlay } from './overlay'
@@ -33,7 +33,7 @@ export { DIALS_MARKER }
 export type { Dial, DialMeta, DialTheme, NumberMeta }
 export type { DialRects } from './highlight'
 
-export type DialsOptions = { theme?: DialTheme }
+export type DialsOptions = { theme?: DialTheme; outline?: { color?: string } }
 
 function read<T extends DialValue>(id: string, spec: Spec): T {
   const entry = register(id, spec)
@@ -112,6 +112,7 @@ const unwrapRun = (run: (...a: never[]) => unknown) => run as never
  */
 export function dialTools(options: DialsOptions = {}): Tools {
   setTheme(options.theme)
+  setOutlineColor(options.outline?.color)
   installRefreshRecovery()
   return {
     'dial.list': {
@@ -145,9 +146,9 @@ export function dialTools(options: DialsOptions = {}): Tools {
       run: unwrapRun((id: string) => rects(id)),
     },
     'dial.highlight': {
-      description: 'dial.highlight(id | null): outline the components reading the dial (needs <DialsOverlay/>); null clears.',
-      maxArgs: 1,
-      run: unwrapRun((id: string | null) => highlight(id ?? null)),
+      description: 'dial.highlight(id | null, { color }?): outline the components reading the dial (needs <DialsOverlay/>); null clears.',
+      maxArgs: 2,
+      run: unwrapRun((id: string | null, opts?: { color?: string }) => highlight(id ?? null, opts)),
     },
     'dial.restore': {
       description: 'Put every dial back to its original value.',

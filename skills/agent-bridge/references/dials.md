@@ -38,6 +38,8 @@ Give the user the URL it prints. It is the same across restarts; `--new-key` rep
 
 Do not edit the files being tuned, unless they ask. Adding or removing a dial or a blocking bug is also fine.
 
+Outline colour (default `#3D7BFF`): per dial `{ outline: { color } }` in the meta, then `dials serve --outline <color>`, then `useDials({ outline: { color } })`, then the default; the first one set wins.
+
 ## 5. Commit
 
 When `dials wait` returns a request:

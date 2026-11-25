@@ -31,6 +31,7 @@ export type DialsFlags = {
   timeout?: string
   message?: string
   'screenshot-cmd'?: string
+  outline?: string
   'new-key'?: boolean
   'no-reload'?: boolean
   metro?: string
@@ -158,6 +159,7 @@ export async function dialsCommand(
       return
     }
     case 'serve': {
+      if (flags.outline !== undefined && !flags.outline.trim()) throw new Error('--outline needs a colour, e.g. --outline "#FF3EA5"')
       const tail = flags.tailscale ? tailscaleAddress() : undefined
       const port = flags.port === undefined ? undefined : Number(flags.port)
       if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536))
@@ -170,6 +172,7 @@ export async function dialsCommand(
         host: tail?.ip ?? flags.host,
         port,
         screenshotCmd: flags['screenshot-cmd'],
+        outline: flags.outline?.trim(),
       })
       const bound = await panel.listen()
       console.log(`http://${tail?.name ?? (bound.host === '0.0.0.0' ? 'localhost' : bound.host)}:${bound.port}/?key=${panel.key}`)
@@ -230,7 +233,7 @@ export async function dialsCommand(
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
   }
 }
 
