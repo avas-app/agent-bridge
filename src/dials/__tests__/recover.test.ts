@@ -16,6 +16,12 @@ function env() {
 
 beforeEach(resetRecoveryForTests)
 
+// Installed at t=0, errors arrive after the app has settled.
+const settled = () => {
+  let t = 0
+  return { clock: () => t, later: () => void (t = 10_000) }
+}
+
 test('recognises both hook-count errors only', () => {
   expect(isHookCountError(hooks)).toBe(true)
   expect(isHookCountError(new Error('Rendered more hooks than during the previous render.'))).toBe(true)
@@ -26,7 +32,9 @@ test('recognises both hook-count errors only', () => {
 test('a hook-count error through the global handler reloads once and is not passed on', async () => {
   const reload = mock(() => {})
   const { e, calls, handler } = env()
-  expect(installRefreshRecovery(e, reload)).toBe(true)
+  const c = settled()
+  expect(installRefreshRecovery(e, reload, c.clock)).toBe(true)
+  c.later()
   handler()(hooks, true)
   handler()(hooks, true)
   await new Promise((r) => setTimeout(r, 80))
@@ -37,7 +45,9 @@ test('a hook-count error through the global handler reloads once and is not pass
 test('a hook-count error logged with console.error reloads and still logs', async () => {
   const reload = mock(() => {})
   const { e, calls } = env()
-  installRefreshRecovery(e, reload)
+  const c = settled()
+  installRefreshRecovery(e, reload, c.clock)
+  c.later()
   e.console.error('x', hooks)
   await new Promise((r) => setTimeout(r, 80))
   expect(reload).toHaveBeenCalledTimes(1)
@@ -59,4 +69,15 @@ test('other errors pass through untouched and install is once-only', async () =>
 
 test('does nothing without ErrorUtils', () => {
   expect(installRefreshRecovery({}, () => {})).toBe(false)
+})
+
+test('a hook-count error right after start is shown, not reloaded, so a real hook bug cannot loop', async () => {
+  const reload = mock(() => {})
+  const { e, calls, handler } = env()
+  installRefreshRecovery(e, reload, () => 0)
+  handler()(hooks, true)
+  e.console.error(hooks)
+  await new Promise((r) => setTimeout(r, 80))
+  expect(reload).not.toHaveBeenCalled()
+  expect(calls).toEqual([['previous', hooks, true], ['console', hooks]])
 })
