@@ -1,5 +1,11 @@
 # @avasapp/agent-bridge
 
+## 0.8.0-beta.2
+
+### Patch Changes
+
+- aa33eef: Dials: adding or removing `dial.*` calls no longer crashes the app under Fast Refresh. React Refresh can't see the hooks inside `dial.*`, so the screen died with "Rendered fewer/more hooks"; the app now reloads itself when that error appears.
+
 ## 0.8.0-beta.1
 
 ### Patch Changes
