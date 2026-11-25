@@ -1,6 +1,7 @@
 // The `agent-bridge session ...` commands and the hidden daemon entry point.
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 import type { ResultMessage } from '../../shared/protocol'
 import type { TransportName } from '../connection'
@@ -79,15 +80,19 @@ function chosen(flags: SessionFlags): SessionState {
   )
 }
 
-function freeName(): string {
+function freeName(base = 'default'): string {
   const taken = new Set(listSessions().map((s) => s.name))
-  let name = 'default'
-  for (let n = 2; taken.has(name); n++) name = `default-${n}`
+  let name = base
+  for (let n = 2; taken.has(name); n++) name = `${base}-${n}`
   return name
 }
 
-async function start(flags: SessionFlags) {
-  const name = checkName(flags.name ?? freeName())
+/** Spawns a session daemon in `cwd` (its project) and resolves once it has connected. */
+export async function startSession(
+  flags: SessionFlags,
+  { cwd, base }: { cwd?: string; base?: string } = {},
+): Promise<SessionState> {
+  const name = checkName(flags.name ?? freeName(base))
   const running = readSession(name)
   if (running)
     throw new Error(`Session "${name}" is already running (pid ${running.pid})`)
@@ -107,10 +112,11 @@ async function start(flags: SessionFlags) {
   if (flags.timeout) args.push('--timeout', flags.timeout)
   const child = spawn(
     process.execPath,
-    [...process.execArgv, process.argv[1] as string, ...args],
+    [...process.execArgv, resolve(process.argv[1] as string), ...args],
     {
       detached: true,
       stdio: 'ignore',
+      cwd,
       windowsHide: true,
       // By environment, so the command isn't in the daemon's argv (`ps`).
       env: flags['on-activity']
@@ -146,6 +152,11 @@ async function start(flags: SessionFlags) {
     }, 50)
   })
   child.unref()
+  return state
+}
+
+async function start(flags: SessionFlags) {
+  const state = await startSession(flags)
   const idle = state.idleMs
     ? `, stops after ${formatDuration(state.idleMs)} idle`
     : ''

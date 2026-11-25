@@ -32,7 +32,7 @@ agent-bridge dials serve --tailscale    # or without the flag for local
 agent-bridge dials wait --json          # run in the background; returns when the user presses Commit
 ```
 
-Give the user the URL it prints. It is the same across restarts; `--new-key` replaces it.
+Run both in the background; `serve` starts a session if none is running. Without `wait`, a Commit just sits queued, so the step is not done until both run. If your harness can take a message from a shell command (`paseo send --no-wait "$PASEO_AGENT_ID" ...`, `tmux send-keys -t "$TMUX_PANE" ...`), pass it as `serve --exec '<cmd>'` instead of running `wait`, then read the commit with `dials show --json`. Give the user the URL `serve` prints. It is the same across restarts; `--new-key` replaces it.
 
 ## 4. While the user tunes
 
