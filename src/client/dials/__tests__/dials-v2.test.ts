@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { agentWaiting, markWaiter, readCommit, readDials } from '../../session/dials-store'
+import { agentWaiting, markWaiter, readCommit, readDials, writeCommit } from '../../session/dials-store'
 import { encodeLine } from '../../session/protocol'
 import type { SessionRequest } from '../../session/protocol'
 import type { SessionState } from '../../session/state'
@@ -547,6 +547,55 @@ describe('commit listener', () => {
     } finally {
       console.error = err
     }
+  })
+})
+
+describe('serve --exec', () => {
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 100 && !ok(); i++) await new Promise((r) => setTimeout(r, 30))
+    expect(ok()).toBe(true)
+  }
+
+  test('runs the command with the commit on stdin and in the environment, and takes it', async () => {
+    const app = await fakeSession()
+    const { post, get } = await start(app.state, { exec: 'cat > got.json; printf %s "$DIALS_COMMIT_ID|$DIALS_NOTE" > env.txt' })
+    expect(((await (await get('/api/dials')).json()) as { waiting: boolean }).waiting).toBe(true)
+    const { commit } = (await (await post('/api/commit', { ids: ['card.accent'], note: 'ship it' })).json()) as { commit: { id: string } }
+    await until(() => existsSync(join(dir, 'env.txt')))
+    expect(readFileSync(join(dir, 'env.txt'), 'utf8')).toBe(`${commit.id}|ship it`)
+    expect(JSON.parse(readFileSync(join(dir, 'got.json'), 'utf8'))).toMatchObject({ id: commit.id, ids: ['card.accent'], status: 'taken' })
+    expect(readCommit(dir)?.status).toBe('taken')
+  })
+
+  test('a failing command marks the commit failed with its error', async () => {
+    const app = await fakeSession()
+    const { post } = await start(app.state, { exec: 'echo no harness here >&2; exit 3' })
+    await post('/api/commit', { ids: ['card.accent'] })
+    await until(() => readCommit(dir)?.status === 'failed')
+    expect(readCommit(dir)?.message).toBe('--exec failed: no harness here')
+  })
+
+  test('a commit queued before the panel started is handed over on listen', async () => {
+    writeCommit(dir, { id: 'queued-1', ids: ['card.accent'], revertOthers: false, values: {}, status: 'requested', at: Date.now() })
+    const app = await fakeSession()
+    await start(app.state, { exec: 'printf %s "$DIALS_COMMIT_ID" > env.txt' })
+    await until(() => existsSync(join(dir, 'env.txt')))
+    expect(readFileSync(join(dir, 'env.txt'), 'utf8')).toBe('queued-1')
+  })
+
+  test('dials show prints the current commit', async () => {
+    const out: string[] = []
+    const log = console.log
+    console.log = (...a: unknown[]) => void out.push(a.join(' '))
+    try {
+      await dialsCommand('show', [], { json: true }, async () => {}, dir)
+      writeCommit(dir, { id: 'c-2', ids: ['card.accent'], note: 'n', revertOthers: false, values: {}, status: 'taken', at: 1 })
+      await dialsCommand('show', [], { json: true }, async () => {}, dir)
+    } finally {
+      console.log = log
+    }
+    expect(out[0]).toBe('null')
+    expect(JSON.parse(out[1] ?? '')).toMatchObject({ id: 'c-2', status: 'taken', note: 'n' })
   })
 })
 

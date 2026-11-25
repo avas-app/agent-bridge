@@ -1,4 +1,4 @@
-// `agent-bridge dials list|resume|clear|check|serve`
+// `agent-bridge dials list|resume|clear|check|serve|wait|show|commit-status|cancel`
 import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -42,6 +42,7 @@ export type DialsFlags = {
   device?: string
   idle?: string
   'no-session'?: boolean
+  exec?: string
 }
 
 type WithBridge = (fn: (bridge: AgentBridge) => Promise<void>) => Promise<void>
@@ -186,6 +187,7 @@ export async function dialsCommand(
         port,
         screenshotCmd: flags['screenshot-cmd'],
         outline: flags.outline?.trim(),
+        exec: flags.exec,
       })
       const bound = await panel.listen()
       console.log(`http://${tail?.name ?? (bound.host === '0.0.0.0' ? 'localhost' : bound.host)}:${bound.port}/?key=${panel.key}`)
@@ -208,8 +210,8 @@ export async function dialsCommand(
           )
         }
       }
-      if (!agentWaiting(project))
-        console.error('Run `agent-bridge dials wait --json` in the background to receive commits from the panel.')
+      if (!flags.exec && !agentWaiting(project))
+        console.error('Run `agent-bridge dials wait --json` in the background, or pass --exec, to receive commits from the panel.')
       await stopped
       if (own) {
         // --keep: leave the app as the user tuned it.
@@ -275,13 +277,21 @@ export async function dialsCommand(
       }
       return
     }
+    case 'show': {
+      const commit = readCommit(project)
+      if (flags.json) return void console.log(JSON.stringify(commit, null, 2))
+      if (!commit) return void console.log('No commit.')
+      console.log(`Status: ${commit.status}${commit.message ? ` (${commit.message})` : ''}`)
+      console.log(describeCommit(commit))
+      return
+    }
     case 'cancel': {
       const commit = cancelCommit(project)
       console.log(commit ? `commit ${commit.id.slice(0, 8)}: cancelled` : 'No commit in flight.')
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] [--metro H] [--device D] [--idle 8h] [--no-session] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] [--metro H] [--device D] [--idle 8h] [--no-session] [--exec <cmd>] | wait [--timeout <s>] [--json] | show [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
   }
 }
 

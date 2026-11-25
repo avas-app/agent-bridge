@@ -13,7 +13,7 @@ import {
 import type { AddressInfo } from 'node:net'
 
 import { sessionRequest } from '../session/client'
-import { agentWaiting, cancelCommit, inFlight, readCommit, readDials, updateCommit } from '../session/dials-store'
+import { agentWaiting, cancelCommit, inFlight, readCommit, readDials, takeCommit, updateCommit } from '../session/dials-store'
 import type { CommitRequest, DialInfo } from '../session/dials-store'
 import {
   type SessionState,
@@ -59,6 +59,13 @@ export type DialsServerOptions = {
   sessions?: () => SessionState[]
   /** Shell command that writes a PNG to `{out}`, for apps without screen.capture. Default: env AGENT_BRIDGE_DIALS_SCREENSHOT. */
   screenshotCmd?: string
+  /**
+   * Shell command run when the panel asks for a commit, in place of a `dials wait`. It gets the
+   * commit as JSON on stdin and DIALS_COMMIT_ID, DIALS_NOTE, DIALS_PROJECT in its environment.
+   */
+  exec?: string
+  /** How long `exec` may run before the commit is marked failed. Default 60 s. */
+  execTimeoutMs?: number
   /** Colour sent with every `dial.highlight`; a dial's own `outline` still wins on the device. */
   outline?: string
   /** Pause after setting a variant, before its screenshot. Default 100 ms. */
@@ -195,7 +202,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       tokens,
       labels,
       commit: readCommit(project),
-      waiting: agentWaiting(project),
+      waiting: !!options.exec || agentWaiting(project),
       capture: devices.length > 0 && (!!screenshotCmd || (await anyCanCapture(lists.filter((l) => l.list.ok).map((l) => l.session)))),
     }
   }
@@ -288,6 +295,36 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       await callTool(session, 'dial.set', [id, dial.value], false)
     }
     return out
+  }
+
+  /** Hands a requested commit to `exec`; a failing command marks the commit failed so the panel shows why. */
+  const execTimeoutMs = options.execTimeoutMs ?? 60_000
+  function deliver(): Promise<void> {
+    const cmd = options.exec
+    const commit = cmd ? takeCommit(project) : null
+    if (!cmd || !commit) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const child = execFile(
+        '/bin/sh',
+        ['-c', cmd],
+        {
+          cwd: project,
+          timeout: execTimeoutMs,
+          env: { ...process.env, DIALS_COMMIT_ID: commit.id, DIALS_NOTE: commit.note ?? '', DIALS_PROJECT: project },
+        },
+        (error, _stdout, stderr) => {
+          if (error)
+            updateCommit(project, (c) =>
+              c?.id === commit.id && c.status === 'taken'
+                ? { ...c, status: 'failed', message: `--exec failed: ${stderr.trim() || error.message}` }
+                : undefined,
+            )
+          void poll().finally(resolve)
+        },
+      )
+      child.stdin?.on('error', () => {})
+      child.stdin?.end(JSON.stringify(commit))
+    })
   }
 
   async function requestCommit(body: { ids?: unknown; note?: unknown; revertOthers?: unknown }) {
@@ -414,6 +451,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
             default: {
               const commit = await requestCommit(body)
               void poll()
+              void deliver()
               return json(res, 200, { commit })
             }
           }
@@ -463,8 +501,11 @@ export function createDialsServer(options: DialsServerOptions = {}) {
           resolve()
         })
       })
+      // A commit queued before the panel started.
+      void deliver()
       return { host, port: (server.address() as AddressInfo).port }
     },
+    deliver,
     async close() {
       clearInterval(poller)
       for (const res of streams) res.end()

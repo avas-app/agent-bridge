@@ -74,7 +74,21 @@ Open the link it prints. It stays the same across restarts; `--new-key` replaces
 
 The panel reads the app through a bridge session. `serve` uses the project's running session, or starts one (`--metro`, `--device`, `--idle 8h`) and stops it with `--keep` when the panel stops; `--no-session` skips that.
 
-Commits reach the agent only while `agent-bridge dials wait --json` runs. With none running, the panel marks a commit as queued, and `dials list` shows it.
+A commit reaches the agent one of two ways. Without either, the panel marks it as queued and `dials list` shows it.
+
+- `agent-bridge dials wait --json`, run in the background: it exits with the commit, which wakes an agent whose harness re-invokes it when a background task ends.
+- `dials serve --exec '<cmd>'`: `serve` takes each commit and runs the command, with the commit as JSON on stdin and `DIALS_COMMIT_ID`, `DIALS_NOTE` and `DIALS_PROJECT` in its environment. The command should only tell the agent and return (it is stopped after 60 s); if it fails, the commit is marked failed with its error. The agent reads the commit with `agent-bridge dials show --json`.
+
+`--exec` recipes:
+
+```sh
+# Paseo: a message into the agent's chat
+--exec 'paseo send "$PASEO_AGENT_ID" "Dials commit $DIALS_COMMIT_ID: run agent-bridge dials show --json and apply it"'
+# A terminal agent in tmux (Claude Code, Codex, OpenCode...): type into its own pane
+--exec 'tmux send-keys -t "$TMUX_PANE" "Dials commit $DIALS_COMMIT_ID: run agent-bridge dials show --json and apply it" Enter'
+# A fresh headless agent per commit; long jobs go in the background
+--exec 'claude -p "Apply the dials commit from agent-bridge dials show --json" > .agent-bridge/commit.log 2>&1 &'
+```
 
 - Left: sections and elements, with the number of changed dials. Middle: the element's dials. Right: before and after crops of the element.
 - Hover a dial and the element gets blue corner brackets on the device. They hide while the value changes and return 350 ms after the last change. Release the dial and the crop updates in about a second.
