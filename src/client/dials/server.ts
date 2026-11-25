@@ -531,7 +531,6 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       return { host, port: (server.address() as AddressInfo).port }
     },
     deliver,
-    /** Whether an `exec` command is still running. */
     running: () => running.size > 0,
     async close() {
       closing = true

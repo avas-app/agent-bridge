@@ -200,7 +200,6 @@ export async function dialsCommand(
       const stopped = new Promise<void>((resolve) => (quit = resolve))
       const onSignal = () => quit()
       for (const sig of STOP_SIGNALS) process.on(sig, onSignal)
-      // The panel reads the app through a session; start one if the project has none, and stop only that one.
       let starting: Promise<SessionState | undefined> = Promise.resolve(undefined)
       if (!flags['no-session'] && !listSessions().some((s) => inProject(s.project, project)))
         starting = start(
