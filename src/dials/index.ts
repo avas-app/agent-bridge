@@ -25,6 +25,7 @@ import {
 } from './registry'
 
 import { highlight, rects } from './highlight'
+import { installRefreshRecovery } from './recover'
 
 export { DialsOverlay } from './overlay'
 // Exported so the string stays in the bundle: `assert-absent` looks for it.
@@ -111,6 +112,7 @@ const unwrapRun = (run: (...a: never[]) => unknown) => run as never
  */
 export function dialTools(options: DialsOptions = {}): Tools {
   setTheme(options.theme)
+  installRefreshRecovery()
   return {
     'dial.list': {
       description: 'Every dial: id, type, value, original, constraints, tokenPath and how often it rendered.',
