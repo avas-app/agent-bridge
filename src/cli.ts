@@ -86,7 +86,7 @@ Dials: tune values live from a web panel (see docs/dials.md)
                                           --exec runs <cmd> on each Commit (JSON on stdin, $DIALS_COMMIT_ID), in place of dials wait
   agent-bridge dials wait [--timeout <s>] [--json]   Block until the panel asks for a commit (exit 2 on timeout)
   agent-bridge dials show [--json]                    The current commit request and its status
-  agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>] [--no-reload]
+  agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>] [--reload]
   agent-bridge dials cancel                            Cancel a commit that is stuck
 
 Options
@@ -179,6 +179,7 @@ async function main() {
       tailscale: { type: 'boolean' },
       'new-key': { type: 'boolean' },
       'no-reload': { type: 'boolean' },
+      reload: { type: 'boolean' },
       message: { type: 'string' },
       'screenshot-cmd': { type: 'string' },
       outline: { type: 'string' },

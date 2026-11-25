@@ -673,3 +673,30 @@ describe('reloadApps', () => {
     expect(await reloadApps('127.0.0.1:1', 1000)).toBe(false)
   })
 })
+
+describe('commit-status done and Metro', () => {
+  test('does not ask Metro to reload unless --reload is passed', async () => {
+    const { WebSocketServer } = await import('ws')
+    const dir = mkdtempSync(join(tmpdir(), 'dials-done-'))
+    const server = new WebSocketServer({ port: 0, path: '/message' })
+    await new Promise((resolve) => server.once('listening', resolve))
+    const messages: string[] = []
+    server.on('connection', (socket) => socket.on('message', (d) => messages.push(String(d))))
+    const { port } = server.address() as { port: number }
+    const metro = `127.0.0.1:${port}`
+    const log = console.log
+    console.log = () => {}
+    try {
+      for (const flags of [{ metro }, { metro, reload: true }]) {
+        writeCommit(dir, { id: 'abc', ids: [], revertOthers: false, values: {}, status: 'taken' } as never)
+        await dialsCommand('commit-status', ['done'], flags, async () => {}, dir)
+        await new Promise((r) => setTimeout(r, 100))
+      }
+      expect(messages).toHaveLength(1)
+    } finally {
+      console.log = log
+      server.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
