@@ -1,5 +1,16 @@
 # @avasapp/agent-bridge
 
+## 0.8.0-beta.3
+
+### Minor Changes
+
+- 029390f: Dials: the device outline is now four corner brackets (blue by default), hidden while a value changes. Set the colour per dial (`outline: { color }`), per panel session (`dials serve --outline`) or for the app (`useDials({ outline })`).
+- Dials: `dials serve` starts a bridge session when the project has none (`--metro`, `--device`, `--idle`; `--no-session` skips it) and stops it on exit. `dials serve --exec '<cmd>'` runs a command on each Commit (the request as JSON on stdin), so no `dials wait` is needed; `dials show` prints the current request. The panel says when no session is running or no agent is listening.
+
+### Patch Changes
+
+- 718a957: Dials: `dials commit-status done` no longer reloads the app through Metro by default. The app already reloads itself after a hook-count error, and the second reload could quit Expo Go mid-load. `--reload` brings the Metro reload back.
+
 ## 0.8.0-beta.2
 
 ### Patch Changes
