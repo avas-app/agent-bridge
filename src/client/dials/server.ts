@@ -55,6 +55,8 @@ export type DialsServerOptions = {
   sessions?: () => SessionState[]
   /** Shell command that writes a PNG to `{out}`, for apps without screen.capture. Default: env AGENT_BRIDGE_DIALS_SCREENSHOT. */
   screenshotCmd?: string
+  /** Colour sent with every `dial.highlight`; a dial's own `outline` still wins on the device. */
+  outline?: string
   /** Pause after setting a variant, before its screenshot. Default 100 ms. */
   renderWaitMs?: number
 }
@@ -124,6 +126,8 @@ export function createDialsServer(options: DialsServerOptions = {}) {
 
   const screenshotCmd = options.screenshotCmd ?? process.env.AGENT_BRIDGE_DIALS_SCREENSHOT
   const renderWaitMs = options.renderWaitMs ?? 100
+  const outline = options.outline
+  const highlightArgs = (id: string | null) => (id !== null && outline ? [id, { color: outline }] : [id])
 
   let scanned: { at: number; calls: ReturnType<typeof scanDialCalls> } | undefined
   const sourceOf = (id: string): DialSource | undefined => {
@@ -205,7 +209,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
   async function highlight(id: string | null, only?: string[]) {
     return Promise.all(
       pick(only).map(async (session) => {
-        const res = await callTool(session, 'dial.highlight', [id])
+        const res = await callTool(session, 'dial.highlight', highlightArgs(id))
         if (res.ok) highlighted.set(session.name, id)
         return { device: session.device.name, session: session.name, ...res }
       }),
@@ -252,7 +256,7 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       } finally {
         // Re-read: a highlight sent while this ran must win over the one from before.
         const on = highlighted.get(session.name)
-        if (on) await callTool(session, 'dial.highlight', [on])
+        if (on) await callTool(session, 'dial.highlight', highlightArgs(on))
       }
     })
 

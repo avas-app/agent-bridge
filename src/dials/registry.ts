@@ -1,7 +1,7 @@
 export type DialType = 'color' | 'number' | 'enum' | 'boolean' | 'text' | 'token' | 'variant'
 export type DialValue = string | number | boolean
 
-export type DialMeta = { label?: string; group?: string }
+export type DialMeta = { label?: string; group?: string; outline?: { color?: string } }
 export type NumberMeta = DialMeta & { min?: number; max?: number; step?: number }
 
 export type Dial = {
@@ -11,6 +11,8 @@ export type Dial = {
   original: DialValue
   label?: string
   group?: string
+  /** Colour of this dial's device outline, when it sets one. */
+  outline?: { color?: string }
   min?: number
   max?: number
   step?: number
@@ -119,7 +121,7 @@ const sameList = (a?: string[], b?: string[]) =>
 /** Later registrations (Fast Refresh) update constraints and options, never the value or original. */
 function refresh(e: Entry, spec: Spec) {
   const m = spec.meta ?? {}
-  const next = { label: m.label, group: m.group, min: m.min, max: m.max, step: m.step } as Record<string, unknown>
+  const next = { label: m.label, group: m.group, outline: m.outline, min: m.min, max: m.max, step: m.step } as Record<string, unknown>
   for (const [k, v] of Object.entries(next)) {
     if (v === undefined) delete (e as Record<string, unknown>)[k]
     else (e as Record<string, unknown>)[k] = v
@@ -147,6 +149,7 @@ export function register(id: string, spec: Spec): Entry {
     renders: 0,
     ...(m.label !== undefined && { label: m.label }),
     ...(m.group !== undefined && { group: m.group }),
+    ...(m.outline !== undefined && { outline: m.outline }),
     ...(m.min !== undefined && { min: m.min }),
     ...(m.max !== undefined && { max: m.max }),
     ...(m.step !== undefined && { step: m.step }),
@@ -191,7 +194,7 @@ export const subscribeAll = (cb: () => void) => {
 }
 
 const publicDial = (e: Entry): Dial => {
-  return { ...e, ...(e.options && { options: [...e.options] }) }
+  return { ...e, ...(e.options && { options: [...e.options] }), ...(e.outline && { outline: { ...e.outline } }) }
 }
 
 export const list = (): Dial[] => [...entries.values()].map(publicDial)

@@ -73,10 +73,19 @@ agent-bridge dials serve --tailscale  # reachable from your other machines
 Open the link it prints. It stays the same across restarts; `--new-key` replaces it.
 
 - Left: sections and elements, with the number of changed dials. Middle: the element's dials. Right: before and after crops of the element.
-- Hover a dial and the element is outlined on the device. Release it and the crop updates in about a second.
+- Hover a dial and the element gets blue corner brackets on the device. They hide while the value changes and return 350 ms after the last change. Release the dial and the crop updates in about a second.
 - Changes go to every connected device. Picks are saved in `.agent-bridge/dials.json` and come back after a reload or a new session.
 - Variant dials show one thumbnail per option (Capture variants).
 - Reset all, Copy values (to paste into a chat), and Commit.
+
+## Outline colour
+
+The brackets are `#3D7BFF` by default. The first one that is set wins:
+
+1. The dial: `dial.number('card.radius', 16, { outline: { color: '#FF3EA5' } })` (any dial type).
+2. The panel session: `agent-bridge dials serve --outline '#FF3EA5'`.
+3. The app: `useDials({ theme, outline: { color: '#FF3EA5' } })`.
+4. The default.
 
 ## Commit
 

@@ -80,7 +80,7 @@ Dials: tune values live from a web panel (see docs/dials.md)
   agent-bridge dials resume               Apply the saved picks to the app
   agent-bridge dials clear [id...]        Drop saved picks (after the values are committed)
   agent-bridge dials check [--live]       Exit 1 if dial.* calls are left in source (--live: app dials with no source call)
-  agent-bridge dials serve [--port N] [--host H] [--tailscale] [--screenshot-cmd '<cmd {out}>'] [--new-key]
+  agent-bridge dials serve [--port N] [--host H] [--tailscale] [--screenshot-cmd '<cmd {out}>'] [--outline <color>] [--new-key]
                                           Panel server; prints one URL with a key (kept in .agent-bridge/dials-key; --new-key replaces it)
   agent-bridge dials wait [--timeout <s>] [--json]   Block until the panel asks for a commit (exit 2 on timeout)
   agent-bridge dials commit-status <writing|done|failed|cancelled> [<id>] [--message <text>] [--no-reload]
@@ -178,6 +178,7 @@ async function main() {
       'no-reload': { type: 'boolean' },
       message: { type: 'string' },
       'screenshot-cmd': { type: 'string' },
+      outline: { type: 'string' },
       yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
     },

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from 'bun:test'
 
 // A minimal hook host: each "component" re-runs when a store it subscribed to changes.
 type Comp = { fn: () => void; renders: number; cleanups: (() => void)[]; subs: unknown[] }
@@ -379,5 +379,152 @@ describe('release stub', () => {
     expect(noop.DialsOverlay()).toBeNull()
     expect(noop.dialTools()).toEqual({})
     expect(noop.useDials()).toEqual({})
+  })
+})
+
+describe('outline brackets', () => {
+  const host = (id: string, meta?: { outline?: { color: string } }) => {
+    const f = { tag: 0, child: { tag: 5, stateNode: { getBoundingClientRect: () => ({ x: 10, y: 20, width: 100, height: 60 }), checkVisibility: () => true }, child: null, sibling: null, return: null, memoizedProps: {} }, sibling: null, return: null, stateNode: null, memoizedProps: {} }
+    const shared = (realReact as unknown as Record<string, { A: unknown }>)['__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE']!
+    const prev = shared.A
+    shared.A = { getOwner: () => f }
+    mount(() => dial.number(id, 1, meta))
+    shared.A = prev
+  }
+  const colors = (node: unknown): string[] => {
+    const out: string[] = []
+    const walk = (n: unknown) => {
+      const el = n as { props?: { style?: { borderColor?: string }; children?: unknown }; type?: unknown }
+      if (!el || typeof el !== 'object') return
+      if (el.props?.style?.borderColor) out.push(el.props.style.borderColor)
+      for (const c of [el.props?.children].flat()) walk(c)
+    }
+    walk(node)
+    return out
+  }
+  const render = async () => {
+    const { drawOutline } = await import('../overlay')
+    const { outlineView } = await import('../highlight')
+    return drawOutline('View' as never, outlineView()) as unknown
+  }
+
+  test('draws four brackets in the default colour, each with a dark edge', async () => {
+    host('n')
+    await call('dial.highlight', 'n')
+    const cs = colors(await render())
+    expect(cs.filter((c) => c === '#3D7BFF')).toHaveLength(4)
+    expect(cs.filter((c) => c.startsWith('rgba'))).toHaveLength(4)
+  })
+
+  test('colour order: dial > session > app > default', async () => {
+    const { setOutlineColor } = await import('../highlight')
+    host('n')
+    host('own', { outline: { color: '#111111' } })
+    const pick = async (id: string, session?: string) => {
+      await call('dial.highlight', id, session ? { color: session } : undefined)
+      return colors(await render()).find((c) => !c.startsWith('rgba'))
+    }
+    expect(await pick('n')).toBe('#3D7BFF')
+    setOutlineColor('#222222')
+    expect(await pick('n')).toBe('#222222')
+    expect(await pick('n', '#333333')).toBe('#333333')
+    expect(await pick('own', '#333333')).toBe('#111111')
+  })
+
+  test('a dial colour beats the app colour with no session colour', async () => {
+    const { setOutlineColor } = await import('../highlight')
+    setOutlineColor('#222222')
+    host('own', { outline: { color: '#111111' } })
+    await call('dial.highlight', 'own')
+    expect(colors(await render()).find((c) => !c.startsWith('rgba'))).toBe('#111111')
+  })
+
+  test('highlight(null) then highlight(id) does not reuse the old session colour', async () => {
+    host('n')
+    await call('dial.highlight', 'n', { color: '#333333' })
+    await call('dial.highlight', null)
+    await call('dial.highlight', 'n')
+    expect(colors(await render()).find((c) => !c.startsWith('rgba'))).toBe('#3D7BFF')
+  })
+
+  test('bracket size: arm is a third of a side, has a minimum, dark edge is 1 px bigger', async () => {
+    const { drawOutline } = await import('../overlay')
+    const size = (width: number, height: number) => {
+      const tree = drawOutline('View' as never, { rects: [{ x: 50, y: 60, width, height }], color: '#abcdef', hidden: false }) as any
+      const kids = [tree.props.children].flat()[0].props.children.flat() as any[]
+      const [edge, main] = [kids[0].props.style, kids[1].props.style]
+      return { edge, main }
+    }
+    // 8 px padding added: sides 98 / 68 -> arm capped at 12
+    const big = size(90, 60)
+    expect(big.main.width).toBe(12)
+    expect(big.edge.width).toBe(14)
+    expect(big.edge.left).toBe(big.main.left - 1)
+    expect(big.edge.top).toBe(big.main.top - 1)
+    expect(big.edge.borderTopWidth).toBe(4)
+    expect(big.main.borderTopWidth).toBe(2)
+    // sides 20 x 20 -> a third is ~6.67
+    expect(size(12, 12).main.width).toBeCloseTo(20 / 3)
+    // tiny rect -> minimum 4
+    expect(size(0.1, 0.1).main.width).toBe(4)
+  })
+
+  test('switching to dial B while A\'s show timer is pending leaves B visible', async () => {
+    jest.useFakeTimers()
+    try {
+      host('a')
+      host('b')
+      await call('dial.highlight', 'a')
+      await call('dial.set', 'a', 2)
+      expect(await render()).toBeNull()
+      await call('dial.highlight', 'b')
+      expect(await render()).not.toBeNull()
+      jest.advanceTimersByTime(500)
+      expect(await render()).not.toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('a re-registered colour is published on the next refresh', async () => {
+    jest.useFakeTimers()
+    try {
+      host('n')
+      await call('dial.highlight', 'n')
+      expect(colors(await render()).find((c) => !c.startsWith('rgba'))).toBe('#3D7BFF')
+      const { register } = await import('../registry')
+      register('n', { type: 'number', def: 1, meta: { outline: { color: '#444444' } } })
+      jest.advanceTimersByTime(600)
+      expect(colors(await render()).find((c) => !c.startsWith('rgba'))).toBe('#444444')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  test('dial.list returns a copy of the outline', async () => {
+    host('n', { outline: { color: '#555555' } })
+    const [d] = (await call('dial.list')) as { outline: { color: string } }[]
+    d!.outline.color = '#000000'
+    const [again] = (await call('dial.list')) as { outline: { color: string } }[]
+    expect(again!.outline.color).toBe('#555555')
+  })
+
+  test('dial.highlight(id) with one arg works; hides on a change and shows 350 ms after the last', async () => {
+    jest.useFakeTimers()
+    try {
+      host('n')
+      await call('dial.highlight', 'n')
+      expect(await render()).not.toBeNull()
+      await call('dial.set', 'n', 2)
+      expect(await render()).toBeNull()
+      jest.advanceTimersByTime(200)
+      await call('dial.set', 'n', 3)
+      jest.advanceTimersByTime(200)
+      expect(await render()).toBeNull()
+      jest.advanceTimersByTime(250)
+      expect(await render()).not.toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
