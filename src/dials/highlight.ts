@@ -118,6 +118,8 @@ const refresh = () => {
   } catch {
     publish([])
   }
+  // A Fast Refresh can change the dial's colour without moving anything.
+  notify()
 }
 
 /** Outline the components reading `id`; null clears. Follows layout until 30 s pass with no call. */

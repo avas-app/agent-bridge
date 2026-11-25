@@ -194,7 +194,7 @@ export const subscribeAll = (cb: () => void) => {
 }
 
 const publicDial = (e: Entry): Dial => {
-  return { ...e, ...(e.options && { options: [...e.options] }) }
+  return { ...e, ...(e.options && { options: [...e.options] }), ...(e.outline && { outline: { ...e.outline } }) }
 }
 
 export const list = (): Dial[] => [...entries.values()].map(publicDial)
