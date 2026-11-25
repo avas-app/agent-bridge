@@ -52,7 +52,7 @@ agent-bridge dials check                # must not list the ids you committed
 agent-bridge dials commit-status done <id> --message '<what changed>'   # or: failed <id> --message '<why>'
 ```
 
-- `done` reloads the app through Metro: removing dial calls changes the hook count, which Fast Refresh can't follow ("Rendered fewer hooks"). Pass `--metro <host:port>` if no session is running; `--no-reload` skips it.
+- Removing dial calls changes the hook count ("Rendered fewer hooks"); the app reloads itself. `done --reload` also reloads through Metro (a second reload can crash Expo Go); pass `--metro <host:port>` if no session is running.
 - Read `note` in the request. If `revertOthers` is true, put the unticked dials back to their original value in source.
 - Token dials: write the token reference (`colors.accentSoft`), not the hex.
 - Variant dial: keep the chosen component, delete the others and the variants file.

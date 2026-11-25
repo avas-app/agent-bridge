@@ -34,6 +34,7 @@ export type DialsFlags = {
   outline?: string
   'new-key'?: boolean
   'no-reload'?: boolean
+  reload?: boolean
   metro?: string
 }
 
@@ -204,7 +205,7 @@ export async function dialsCommand(
     case 'commit-status': {
       const status = rest[0]
       if (!status || !STATUSES.includes(status as (typeof STATUSES)[number]))
-        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [<commit id>] [--message <text>] [--no-reload]`)
+        throw new Error(`Usage: agent-bridge dials commit-status <${STATUSES.join('|')}> [<commit id>] [--message <text>] [--reload]`)
       const wanted = rest[1]
       const next = updateCommit(project, (commit) => {
         if (!commit) throw new Error('No commit request to update.')
@@ -218,8 +219,8 @@ export async function dialsCommand(
         return { ...kept, status: status as (typeof STATUSES)[number], ...(flags.message ? { message: flags.message } : {}) }
       })
       console.log(`commit ${next?.id.slice(0, 8)}: ${status}`)
-      if (status === 'done' && !flags['no-reload']) {
-        // Removing dial.* calls changes a component's hook count, which Fast Refresh can't follow.
+      // The app reloads itself after a hook-count error; a second reload from here crashes Expo Go mid-load.
+      if (status === 'done' && flags.reload) {
         const metro = flags.metro ?? listSessions().find((s) => inProject(s.project, project))?.metro
         const host = metroHost(metro)
         if (await reloadApps(host)) console.log(`Reloaded the app through Metro (${host}).`)
@@ -233,7 +234,7 @@ export async function dialsCommand(
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--reload] | cancel')
   }
 }
 
