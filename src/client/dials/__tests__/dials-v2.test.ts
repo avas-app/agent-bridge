@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { type Server, createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { readCommit, readDials } from '../../session/dials-store'
+import { agentWaiting, markWaiter, readCommit, readDials, writeCommit } from '../../session/dials-store'
 import { encodeLine } from '../../session/protocol'
 import type { SessionRequest } from '../../session/protocol'
 import type { SessionState } from '../../session/state'
@@ -416,7 +416,7 @@ describe('panel key file', () => {
     console.error = (...a: unknown[]) => void errs.push(a.join(' '))
     console.log = () => {}
     try {
-      const run = dialsCommand('serve', [], { port: '0' }, async () => {}, d)
+      const run = dialsCommand('serve', [], { port: '0', 'no-session': true }, async () => {}, d)
       await new Promise((r) => setTimeout(r, 200))
       process.emit('SIGTERM')
       await run
@@ -426,6 +426,230 @@ describe('panel key file', () => {
       console.log = log
       rmSync(d, { recursive: true, force: true })
     }
+  })
+})
+
+describe('serve and sessions', () => {
+  let stateDir = ''
+  let project = ''
+  const quiet = { err: console.error, log: console.log }
+  let errs: string[] = []
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'dials-state-'))
+    project = mkdtempSync(join(tmpdir(), 'dials-proj-'))
+    writeFileSync(join(project, '.gitignore'), '.agent-bridge/\n')
+    process.env.AGENT_BRIDGE_STATE_DIR = stateDir
+    errs = []
+    console.error = (...a: unknown[]) => void errs.push(a.join(' '))
+    console.log = () => {}
+  })
+  afterEach(() => {
+    console.error = quiet.err
+    console.log = quiet.log
+    delete process.env.AGENT_BRIDGE_STATE_DIR
+    rmSync(stateDir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+
+  /** A session socket that logs every request and answers stop. */
+  async function stopRecorder(name: string) {
+    const got: SessionRequest[] = []
+    const socket = join(stateDir, `${name}.sock`)
+    const server: Server = createServer((conn) => {
+      conn.on('error', () => {})
+      createInterface({ input: conn }).on('line', (line) => {
+        const req = JSON.parse(line) as SessionRequest
+        got.push(req)
+        conn.write(encodeLine(req.op === 'stop' ? { id: req.id, restore: null } : { id: req.id, error: 'nope' }))
+      })
+    })
+    await new Promise<void>((r) => server.listen(socket, r))
+    closers.push(() => server.close())
+    const state: SessionState = {
+      name,
+      pid: process.pid,
+      socket,
+      metro: 'localhost:8081',
+      device: { name: 'Phone', deviceId: 'p', platform: 'ios' },
+      project,
+      transport: 'cdp',
+      startedAt: Date.now(),
+      lastCallAt: Date.now(),
+      idleMs: 0,
+    }
+    return { got, state }
+  }
+
+  const serve = async (flags: Parameters<typeof dialsCommand>[2], start: Parameters<typeof dialsCommand>[5]) => {
+    const run = dialsCommand('serve', [], { port: '0', ...flags }, async () => {}, project, start)
+    await new Promise((r) => setTimeout(r, 200))
+    process.emit('SIGTERM')
+    await run
+  }
+
+  test('starts a session when the project has none, and stops it with keep on exit', async () => {
+    const { got, state } = await stopRecorder('dials')
+    const started: unknown[] = []
+    await serve({ metro: 'localhost:8195', device: 'iPhone Duo' }, async (flags, opts) => {
+      started.push([flags, opts])
+      return state
+    })
+    expect(started).toEqual([[{ metro: 'localhost:8195', device: 'iPhone Duo', idle: '8h' }, { cwd: project, base: 'dials' }]])
+    expect(got.map((r) => [r.op, r.keep])).toEqual([['stop', true]])
+    expect(errs.join('\n')).toContain('Started session "dials"')
+  })
+
+  test('a stop signal during a slow session start still stops that session', async () => {
+    const { got, state } = await stopRecorder('dials')
+    const run = dialsCommand('serve', [], { port: '0' }, async () => {}, project, async () => {
+      await new Promise((r) => setTimeout(r, 400))
+      return state
+    })
+    await new Promise((r) => setTimeout(r, 150))
+    process.emit('SIGINT')
+    process.emit('SIGINT')
+    await run
+    expect(got.map((r) => [r.op, r.keep])).toEqual([['stop', true]])
+  })
+
+  test('reuses a running session and never stops it', async () => {
+    const { got, state } = await stopRecorder('mine')
+    writeFileSync(join(stateDir, 'mine.json'), JSON.stringify(state))
+    let started = false
+    await serve({}, async () => {
+      started = true
+      return state
+    })
+    expect(started).toBe(false)
+    expect(got).toEqual([])
+  })
+
+  test('keeps serving when the session cannot start', async () => {
+    await serve({}, async () => {
+      throw new Error('no app on Metro')
+    })
+    expect(errs.join('\n')).toContain("Couldn't start a bridge session (no app on Metro)")
+  })
+})
+
+describe('commit listener', () => {
+  test('any live, fresh waiter counts; dead, stale or unmarked ones do not', () => {
+    const waiters = join(dir, '.agent-bridge', 'dials-waiters')
+    expect(agentWaiting(dir)).toBe(false)
+    const me = markWaiter(dir)
+    expect(agentWaiting(dir)).toBe(true)
+    // A second waiter finishing leaves the first one counted.
+    writeFileSync(join(waiters, String(process.ppid)), '')
+    rmSync(join(waiters, String(process.ppid)))
+    expect(agentWaiting(dir)).toBe(true)
+    // No heartbeat for a while: killed, or its pid reused.
+    expect(agentWaiting(dir, Date.now() + 10_000)).toBe(false)
+    me.beat()
+    expect(agentWaiting(dir)).toBe(true)
+    me.unmark()
+    writeFileSync(join(waiters, '999999999'), '')
+    expect(agentWaiting(dir)).toBe(false)
+    expect(readdirSync(waiters)).toEqual([])
+  })
+
+  test('wait listens while it runs, and the snapshot says so', async () => {
+    const panel = createDialsServer({ project: dir, key: 'k'.repeat(32), sessions: () => [] })
+    closers.push(panel.close)
+    const { port } = await panel.listen()
+    const waiting = async () =>
+      ((await (await fetch(`http://127.0.0.1:${port}/api/dials?key=${'k'.repeat(32)}`)).json()) as { waiting: boolean }).waiting
+    const err = console.error
+    console.error = () => {}
+    try {
+      const run = dialsCommand('wait', [], { timeout: '0.5' }, async () => {}, dir)
+      await new Promise((r) => setTimeout(r, 100))
+      expect(await waiting()).toBe(true)
+      await run
+      expect(await waiting()).toBe(false)
+    } finally {
+      console.error = err
+    }
+  })
+})
+
+describe('serve --exec', () => {
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 100 && !ok(); i++) await new Promise((r) => setTimeout(r, 30))
+    expect(ok()).toBe(true)
+  }
+
+  test('runs the command with the commit on stdin and in the environment, and takes it', async () => {
+    const app = await fakeSession()
+    const { post, get } = await start(app.state, { exec: 'cat > got.json; printf %s "$DIALS_COMMIT_ID|$DIALS_NOTE" > env.txt' })
+    expect(((await (await get('/api/dials')).json()) as { waiting: boolean }).waiting).toBe(true)
+    const { commit } = (await (await post('/api/commit', { ids: ['card.accent'], note: 'ship it' })).json()) as { commit: { id: string } }
+    await until(() => existsSync(join(dir, 'env.txt')))
+    expect(readFileSync(join(dir, 'env.txt'), 'utf8')).toBe(`${commit.id}|ship it`)
+    expect(JSON.parse(readFileSync(join(dir, 'got.json'), 'utf8'))).toMatchObject({ id: commit.id, ids: ['card.accent'], status: 'taken' })
+    expect(readCommit(dir)?.status).toBe('taken')
+  })
+
+  test('a failing command marks the commit failed with its error', async () => {
+    const app = await fakeSession()
+    const { post } = await start(app.state, { exec: 'echo no harness here >&2; exit 3' })
+    await post('/api/commit', { ids: ['card.accent'] })
+    await until(() => readCommit(dir)?.status === 'failed')
+    expect(readCommit(dir)?.message).toBe('--exec failed: no harness here')
+  })
+
+  test('a commit queued before the panel started is handed over on listen', async () => {
+    writeCommit(dir, { id: 'queued-1', ids: ['card.accent'], revertOthers: false, values: {}, status: 'requested', at: Date.now() })
+    const app = await fakeSession()
+    await start(app.state, { exec: 'printf %s "$DIALS_COMMIT_ID" > env.txt' })
+    await until(() => existsSync(join(dir, 'env.txt')))
+    expect(readFileSync(join(dir, 'env.txt'), 'utf8')).toBe('queued-1')
+  })
+
+  test('output does not fail the commit, and a timeout stops what the command started', async () => {
+    const app = await fakeSession()
+    const loud = await start(app.state, { exec: 'head -c 3000000 /dev/zero' })
+    await loud.post('/api/commit', { ids: ['card.accent'] })
+    await until(() => !loud.panel.running())
+    expect(readCommit(dir)?.status).toBe('taken')
+    writeCommit(dir, null)
+
+    const slow = await start(app.state, { exec: 'sh -c \'echo $$ > gc.pid; exec sleep 30\' & wait', execTimeoutMs: 300 })
+    await slow.post('/api/commit', { ids: ['card.accent'] })
+    await until(() => readCommit(dir)?.status === 'failed')
+    expect(readCommit(dir)?.message).toBe('--exec failed: timed out after 0 s')
+    const gc = Number(readFileSync(join(dir, 'gc.pid'), 'utf8'))
+    await until(() => {
+      try {
+        process.kill(gc, 0)
+        return false
+      } catch {
+        return true
+      }
+    })
+  })
+
+  test('closing the panel mid-command puts the commit back in the queue', async () => {
+    const app = await fakeSession()
+    const { post, panel } = await start(app.state, { exec: 'sleep 30' })
+    await post('/api/commit', { ids: ['card.accent'] })
+    await until(() => readCommit(dir)?.status === 'taken')
+    await panel.close()
+    expect(readCommit(dir)?.status).toBe('requested')
+  })
+
+  test('dials show prints the current commit', async () => {
+    const out: string[] = []
+    const log = console.log
+    console.log = (...a: unknown[]) => void out.push(a.join(' '))
+    try {
+      await dialsCommand('show', [], { json: true }, async () => {}, dir)
+      writeCommit(dir, { id: 'c-2', ids: ['card.accent'], note: 'n', revertOthers: false, values: {}, status: 'taken', at: 1 })
+      await dialsCommand('show', [], { json: true }, async () => {}, dir)
+    } finally {
+      console.log = log
+    }
+    expect(out[0]).toBe('null')
+    expect(JSON.parse(out[1] ?? '')).toMatchObject({ id: 'c-2', status: 'taken', note: 'n' })
   })
 })
 

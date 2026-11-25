@@ -80,11 +80,13 @@ describe('dials server', () => {
     const res = await fetch(`${base}/api/dials`, { headers: { 'x-dials-key': 'k'.repeat(32) } })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({
+      sessions: 0,
       devices: [],
       dials: [],
       tokens: null,
       labels: {},
       commit: null,
+      waiting: false,
       capture: false,
     })
     const post = await fetch(`${base}/api/dials/set`, { method: 'POST', body: '{}' })

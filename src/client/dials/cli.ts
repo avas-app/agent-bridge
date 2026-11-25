@@ -1,4 +1,4 @@
-// `agent-bridge dials list|resume|clear|check|serve`
+// `agent-bridge dials list|resume|clear|check|serve|wait|show|commit-status|cancel`
 import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -7,13 +7,17 @@ import WebSocket from 'ws'
 
 import type { AgentBridge } from '../index'
 import { metroHost } from '../discover'
-import { inProject, listSessions, projectRoot } from '../session/state'
+import { sessionRequest } from '../session/client'
+import { startSession } from '../session/cli'
+import { type SessionState, inProject, listSessions, projectRoot } from '../session/state'
 import {
   type DialInfo,
   clearDials,
   dialsPath,
+  agentWaiting,
   readCommit,
   cancelCommit,
+  markWaiter,
   readDials,
   savedValues,
   takeCommit,
@@ -35,6 +39,10 @@ export type DialsFlags = {
   'new-key'?: boolean
   'no-reload'?: boolean
   metro?: string
+  device?: string
+  idle?: string
+  'no-session'?: boolean
+  exec?: string
 }
 
 type WithBridge = (fn: (bridge: AgentBridge) => Promise<void>) => Promise<void>
@@ -74,6 +82,9 @@ export function scanDialCalls(root: string): DialCall[] {
 
 const STATUSES = ['writing', 'done', 'failed', 'cancelled'] as const
 
+const STOP_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
+const SIGNO: Partial<Record<NodeJS.Signals, number>> = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15 }
+
 function describeCommit(commit: CommitRequest): string {
   const lines = [`Commit requested (${commit.id}): ${commit.ids.length} dial(s)`]
   if (commit.note) lines.push(`Note: ${commit.note}`)
@@ -98,6 +109,7 @@ export async function dialsCommand(
   flags: DialsFlags,
   withBridge: WithBridge,
   project = projectRoot(),
+  start: typeof startSession = startSession,
 ): Promise<void> {
   switch (sub) {
     case 'list': {
@@ -121,6 +133,11 @@ export async function dialsCommand(
       for (const r of rows)
         console.log(
           `${r.id.padEnd(28)} ${r.type.padEnd(8)} ${JSON.stringify(r.value)}  (was ${JSON.stringify(r.original)})${r.saved ? '  saved' : ''}${app.some((d) => d.id === r.id) ? '' : '  not in app'}`,
+        )
+      const queued = readCommit(project)
+      if (queued?.status === 'requested')
+        console.log(
+          `\nCommit ${queued.id.slice(0, 8)} is queued (${queued.ids.length} dial${queued.ids.length === 1 ? '' : 's'}${queued.note ? `, note: ${JSON.stringify(queued.note)}` : ''}); run \`agent-bridge dials wait --json\` to take it.`,
         )
       return
     }
@@ -173,13 +190,46 @@ export async function dialsCommand(
         port,
         screenshotCmd: flags['screenshot-cmd'],
         outline: flags.outline?.trim(),
+        exec: flags.exec,
       })
       const bound = await panel.listen()
       console.log(`http://${tail?.name ?? (bound.host === '0.0.0.0' ? 'localhost' : bound.host)}:${bound.port}/?key=${panel.key}`)
       console.error('Dials panel running; Ctrl-C to stop.')
-      await new Promise<void>((resolve) => {
-        for (const sig of ['SIGINT', 'SIGTERM'] as const) process.once(sig, resolve)
-      })
+      // `on`, not `once`: a second Ctrl-C during the session start must not skip stopping it.
+      let quit = () => {}
+      const stopped = new Promise<void>((resolve) => (quit = resolve))
+      const onSignal = () => quit()
+      for (const sig of STOP_SIGNALS) process.on(sig, onSignal)
+      let starting: Promise<SessionState | undefined> = Promise.resolve(undefined)
+      if (!flags['no-session'] && !listSessions().some((s) => inProject(s.project, project)))
+        starting = start(
+          { metro: flags.metro, device: flags.device, idle: flags.idle ?? '8h' },
+          { cwd: project, base: 'dials' },
+        ).then(
+          (own) => {
+            console.error(`Started session "${own.name}" (${own.device.name}); it stops when the panel does.`)
+            return own
+          },
+          (error: unknown) => {
+            console.error(
+              `Couldn't start a bridge session (${error instanceof Error ? error.message : String(error)}). The panel stays empty until \`agent-bridge session start\` runs in the project.`,
+            )
+            return undefined
+          },
+        )
+      if (!flags.exec && !agentWaiting(project))
+        console.error('Run `agent-bridge dials wait --json` in the background, or pass --exec, to receive commits from the panel.')
+      await stopped
+      try {
+        const own = await starting
+        if (own) {
+          // --keep: leave the app as the user tuned it.
+          const res = await sessionRequest(own, { op: 'stop', keep: true }).catch(() => null)
+          if (res && !res.error) console.error(`Stopped session "${own.name}".`)
+        }
+      } finally {
+        for (const sig of STOP_SIGNALS) process.off(sig, onSignal)
+      }
       await panel.close()
       return
     }
@@ -187,18 +237,31 @@ export async function dialsCommand(
       const seconds = flags.timeout === undefined ? undefined : Number(flags.timeout)
       if (seconds !== undefined && !(seconds >= 0)) throw new Error(`--timeout is in seconds, got "${flags.timeout}"`)
       const deadline = seconds === undefined ? Infinity : Date.now() + seconds * 1000
-      for (;;) {
-        const taken = takeCommit(project)
-        if (taken) {
-          console.log(flags.json ? JSON.stringify(taken, null, 2) : describeCommit(taken))
-          return
+      const waiter = markWaiter(project)
+      // A signal skips `finally`; unmark on the way out so the panel stops saying an agent listens.
+      const onSignal = (sig: NodeJS.Signals) => {
+        waiter.unmark()
+        process.exit(128 + (SIGNO[sig] ?? 1))
+      }
+      for (const sig of STOP_SIGNALS) process.on(sig, onSignal)
+      try {
+        for (;;) {
+          waiter.beat()
+          const taken = takeCommit(project)
+          if (taken) {
+            console.log(flags.json ? JSON.stringify(taken, null, 2) : describeCommit(taken))
+            return
+          }
+          if (Date.now() >= deadline) {
+            console.error('No commit requested before the timeout.')
+            process.exitCode = 2
+            return
+          }
+          await new Promise((resolve) => setTimeout(resolve, 300))
         }
-        if (Date.now() >= deadline) {
-          console.error('No commit requested before the timeout.')
-          process.exitCode = 2
-          return
-        }
-        await new Promise((resolve) => setTimeout(resolve, 300))
+      } finally {
+        for (const sig of STOP_SIGNALS) process.off(sig, onSignal)
+        waiter.unmark()
       }
     }
     case 'commit-status': {
@@ -227,13 +290,21 @@ export async function dialsCommand(
       }
       return
     }
+    case 'show': {
+      const commit = readCommit(project)
+      if (flags.json) return void console.log(JSON.stringify(commit, null, 2))
+      if (!commit) return void console.log('No commit.')
+      console.log(`Status: ${commit.status}${commit.message ? ` (${commit.message})` : ''}`)
+      console.log(describeCommit(commit))
+      return
+    }
     case 'cancel': {
       const commit = cancelCommit(project)
       console.log(commit ? `commit ${commit.id.slice(0, 8)}: cancelled` : 'No commit in flight.')
       return
     }
     default:
-      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] | wait [--timeout <s>] [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
+      throw new Error('Usage: agent-bridge dials list [--json] | resume | clear [id...] | check [--live] | serve [--port N] [--tailscale] [--host H] [--screenshot-cmd <cmd>] [--outline <color>] [--new-key] [--metro H] [--device D] [--idle 8h] [--no-session] [--exec <cmd>] | wait [--timeout <s>] [--json] | show [--json] | commit-status <writing|done|failed|cancelled> [<commit id>] [--message <text>] [--no-reload] | cancel')
   }
 }
 
