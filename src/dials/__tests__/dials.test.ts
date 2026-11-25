@@ -30,7 +30,6 @@ mock.module('react', () => ({
   },
 }))
 
-mock.module('react-native', () => ({ View: 'View' }))
 const { dial, dialTools } = await import('../index')
 const { resetHighlight } = await import('../highlight')
 const { addOwner, ownersOf } = await import('../registry')
@@ -404,8 +403,9 @@ describe('outline brackets', () => {
     return out
   }
   const render = async () => {
-    const { DialsOverlay } = await import('../overlay')
-    return DialsOverlay() as unknown
+    const { drawOutline } = await import('../overlay')
+    const { outlineView } = await import('../highlight')
+    return drawOutline('View' as never, outlineView()) as unknown
   }
 
   test('draws four brackets in the default colour, each with a dark edge', async () => {

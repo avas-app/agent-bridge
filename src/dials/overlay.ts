@@ -1,6 +1,6 @@
 import { type ComponentType, createElement, useSyncExternalStore } from 'react'
 
-import { outlineView, watchHighlight } from './highlight'
+import { type OutlineView, outlineView, watchHighlight } from './highlight'
 
 const EDGE = 'rgba(11,11,12,0.85)'
 const THICK = 2
@@ -48,8 +48,12 @@ const corner = (View: V, key: string, x: number, y: number, arm: number, thick: 
 
 /** Draws the outline `dial.highlight` asks for. Render it once, on top of the app (the dev bridge component returns it). */
 export function DialsOverlay() {
-  const { rects, color, hidden } = useSyncExternalStore(watchHighlight, outlineView, outlineView)
-  const View = views().View as V | undefined
+  const view = useSyncExternalStore(watchHighlight, outlineView, outlineView)
+  return drawOutline(views().View as V | undefined, view)
+}
+
+/** The element tree for the current outline; split out so tests can pass their own View. */
+export function drawOutline(View: V | undefined, { rects, color, hidden }: OutlineView) {
   if (!View || hidden || !rects.length) return null
   return createElement(
     View,
