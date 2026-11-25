@@ -82,8 +82,8 @@ A commit reaches the agent one of two ways. Without either, the panel marks it a
 `--exec` recipes:
 
 ```sh
-# Paseo: a message into the agent's chat
---exec 'paseo send "$PASEO_AGENT_ID" "Dials commit $DIALS_COMMIT_ID: run agent-bridge dials show --json and apply it"'
+# Paseo: queued into the agent's chat (--no-wait: plain send blocks until the agent finishes the message)
+--exec 'paseo send --no-wait "$PASEO_AGENT_ID" "Dials commit $DIALS_COMMIT_ID: run agent-bridge dials show --json and apply it"'
 # A terminal agent in tmux (Claude Code, Codex, OpenCode...): type into its own pane
 --exec 'tmux send-keys -t "$TMUX_PANE" "Dials commit $DIALS_COMMIT_ID: run agent-bridge dials show --json and apply it" Enter'
 # A fresh headless agent per commit; long jobs go in the background
