@@ -968,7 +968,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var a = document.activeElement, fk = a && main.contains(a) && a.closest("[data-id]") ? a.closest("[data-id]").getAttribute("data-id") : null
     clear(main); S.ctl = {}
     if (!shown.length) {
-      main.appendChild(h("div", { class: "empty", text: S.loaded ? "No dials yet" : "Loading…" }))
+      main.appendChild(h("div", { class: "empty", text: !S.loaded ? "Loading…" : S.data.sessions === 0 ? "No bridge session. Run agent-bridge session start in the project." : "No dials yet" }))
       return
     }
     if (lay === "dial") {
@@ -1164,6 +1164,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
         return h("span", { class: cls, text: s })
       }).concat(failed ? [h("span", { class: "step bad", text: "failed" })] : c.status === "cancelled" ? [h("span", { class: "step bad", text: "cancelled" })] : [])))
       if (c.message) st.appendChild(h("span", { class: failed ? "cerr" : "sub", text: c.message }))
+      else if (c.status === "requested" && S.data.waiting === false) st.appendChild(h("span", { class: "cerr", text: "No agent is listening; the request is queued." }))
     }
   }
   function cancelCommitReq() {
@@ -1195,11 +1196,13 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     })
     var prev = S.data
     S.data = {
+      sessions: "sessions" in data ? data.sessions : prev.sessions,
       devices: data.devices || prev.devices || [],
       dials: data.dials,
       tokens: "tokens" in data ? data.tokens : prev.tokens,
       labels: data.labels || prev.labels || {},
       commit: "commit" in data ? data.commit : prev.commit,
+      waiting: "waiting" in data ? data.waiting : prev.waiting,
       capture: "capture" in data ? data.capture : prev.capture,
       app: data.app || prev.app || "",
       project: data.project || prev.project

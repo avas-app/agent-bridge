@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
-import { readCommit, readDials } from '../../session/dials-store'
+import { agentWaiting, markWaiter, readCommit, readDials } from '../../session/dials-store'
 import { encodeLine } from '../../session/protocol'
 import type { SessionRequest } from '../../session/protocol'
 import type { SessionState } from '../../session/state'
@@ -416,7 +416,7 @@ describe('panel key file', () => {
     console.error = (...a: unknown[]) => void errs.push(a.join(' '))
     console.log = () => {}
     try {
-      const run = dialsCommand('serve', [], { port: '0' }, async () => {}, d)
+      const run = dialsCommand('serve', [], { port: '0', 'no-session': true }, async () => {}, d)
       await new Promise((r) => setTimeout(r, 200))
       process.emit('SIGTERM')
       await run
@@ -425,6 +425,127 @@ describe('panel key file', () => {
       console.error = err
       console.log = log
       rmSync(d, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('serve and sessions', () => {
+  let stateDir = ''
+  let project = ''
+  const quiet = { err: console.error, log: console.log }
+  let errs: string[] = []
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'dials-state-'))
+    project = mkdtempSync(join(tmpdir(), 'dials-proj-'))
+    writeFileSync(join(project, '.gitignore'), '.agent-bridge/\n')
+    process.env.AGENT_BRIDGE_STATE_DIR = stateDir
+    errs = []
+    console.error = (...a: unknown[]) => void errs.push(a.join(' '))
+    console.log = () => {}
+  })
+  afterEach(() => {
+    console.error = quiet.err
+    console.log = quiet.log
+    delete process.env.AGENT_BRIDGE_STATE_DIR
+    rmSync(stateDir, { recursive: true, force: true })
+    rmSync(project, { recursive: true, force: true })
+  })
+
+  /** A session socket that logs every request and answers stop. */
+  async function stopRecorder(name: string) {
+    const got: SessionRequest[] = []
+    const socket = join(stateDir, `${name}.sock`)
+    const server: Server = createServer((conn) => {
+      conn.on('error', () => {})
+      createInterface({ input: conn }).on('line', (line) => {
+        const req = JSON.parse(line) as SessionRequest
+        got.push(req)
+        conn.write(encodeLine(req.op === 'stop' ? { id: req.id, restore: null } : { id: req.id, error: 'nope' }))
+      })
+    })
+    await new Promise<void>((r) => server.listen(socket, r))
+    closers.push(() => server.close())
+    const state: SessionState = {
+      name,
+      pid: process.pid,
+      socket,
+      metro: 'localhost:8081',
+      device: { name: 'Phone', deviceId: 'p', platform: 'ios' },
+      project,
+      transport: 'cdp',
+      startedAt: Date.now(),
+      lastCallAt: Date.now(),
+      idleMs: 0,
+    }
+    return { got, state }
+  }
+
+  const serve = async (flags: Parameters<typeof dialsCommand>[2], start: Parameters<typeof dialsCommand>[5]) => {
+    const run = dialsCommand('serve', [], { port: '0', ...flags }, async () => {}, project, start)
+    await new Promise((r) => setTimeout(r, 200))
+    process.emit('SIGTERM')
+    await run
+  }
+
+  test('starts a session when the project has none, and stops it with keep on exit', async () => {
+    const { got, state } = await stopRecorder('dials')
+    const started: unknown[] = []
+    await serve({ metro: 'localhost:8195', device: 'iPhone Duo' }, async (flags, opts) => {
+      started.push([flags, opts])
+      return state
+    })
+    expect(started).toEqual([[{ metro: 'localhost:8195', device: 'iPhone Duo', idle: '8h' }, { cwd: project, base: 'dials' }]])
+    expect(got.map((r) => [r.op, r.keep])).toEqual([['stop', true]])
+    expect(errs.join('\n')).toContain('Started session "dials"')
+  })
+
+  test('reuses a running session and never stops it', async () => {
+    const { got, state } = await stopRecorder('mine')
+    writeFileSync(join(stateDir, 'mine.json'), JSON.stringify(state))
+    let started = false
+    await serve({}, async () => {
+      started = true
+      return state
+    })
+    expect(started).toBe(false)
+    expect(got).toEqual([])
+  })
+
+  test('keeps serving when the session cannot start', async () => {
+    await serve({}, async () => {
+      throw new Error('no app on Metro')
+    })
+    expect(errs.join('\n')).toContain("Couldn't start a bridge session (no app on Metro)")
+  })
+})
+
+describe('commit listener', () => {
+  test('a live wait marks the project; a dead pid or unmark does not', () => {
+    expect(agentWaiting(dir)).toBe(false)
+    const unmark = markWaiter(dir)
+    expect(agentWaiting(dir)).toBe(true)
+    unmark()
+    expect(agentWaiting(dir)).toBe(false)
+    writeFileSync(join(dir, '.agent-bridge', 'dials-waiter'), '999999999')
+    expect(agentWaiting(dir)).toBe(false)
+  })
+
+  test('wait listens while it runs, and the snapshot says so', async () => {
+    const panel = createDialsServer({ project: dir, key: 'k'.repeat(32), sessions: () => [] })
+    closers.push(panel.close)
+    const { port } = await panel.listen()
+    const waiting = async () =>
+      ((await (await fetch(`http://127.0.0.1:${port}/api/dials?key=${'k'.repeat(32)}`)).json()) as { waiting: boolean }).waiting
+    const err = console.error
+    console.error = () => {}
+    try {
+      const run = dialsCommand('wait', [], { timeout: '0.5' }, async () => {}, dir)
+      await new Promise((r) => setTimeout(r, 100))
+      expect(await waiting()).toBe(true)
+      await run
+      expect(await waiting()).toBe(false)
+    } finally {
+      console.error = err
     }
   })
 })

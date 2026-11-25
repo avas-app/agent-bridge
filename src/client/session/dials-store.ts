@@ -12,6 +12,8 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import { isAlive } from './state'
+
 export type DialValue = unknown
 
 /** What a dial looks like on the wire (the fields the store and CLI read). */
@@ -71,6 +73,30 @@ export const HISTORY_CAP = 20
 
 export const dialsPath = (project: string) =>
   join(project, '.agent-bridge', 'dials.json')
+
+const waiterPath = (project: string) => join(project, '.agent-bridge', 'dials-waiter')
+
+/** Marks that `dials wait` is listening in this process; call the result to unmark. */
+export function markWaiter(project: string): () => void {
+  const file = waiterPath(project)
+  mkdirSync(dirname(file), { recursive: true })
+  writeFileSync(file, String(process.pid))
+  return () => {
+    try {
+      if (readFileSync(file, 'utf8') === String(process.pid)) rmSync(file)
+    } catch {}
+  }
+}
+
+/** Whether a live `dials wait` is listening for this project's commits. */
+export function agentWaiting(project: string): boolean {
+  try {
+    const pid = Number(readFileSync(waiterPath(project), 'utf8'))
+    return Number.isInteger(pid) && pid > 0 && isAlive(pid)
+  } catch {
+    return false
+  }
+}
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 

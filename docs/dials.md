@@ -72,6 +72,10 @@ agent-bridge dials serve --tailscale  # reachable from your other machines
 
 Open the link it prints. It stays the same across restarts; `--new-key` replaces it.
 
+The panel reads the app through a bridge session. `serve` uses the project's running session, or starts one (`--metro`, `--device`, `--idle 8h`) and stops it with `--keep` when the panel stops; `--no-session` skips that.
+
+Commits reach the agent only while `agent-bridge dials wait --json` runs. With none running, the panel marks a commit as queued, and `dials list` shows it.
+
 - Left: sections and elements, with the number of changed dials. Middle: the element's dials. Right: before and after crops of the element.
 - Hover a dial and the element gets blue corner brackets on the device. They hide while the value changes and return 350 ms after the last change. Release the dial and the crop updates in about a second.
 - Changes go to every connected device. Picks are saved in `.agent-bridge/dials.json` and come back after a reload or a new session.

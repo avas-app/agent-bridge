@@ -13,7 +13,7 @@ import {
 import type { AddressInfo } from 'node:net'
 
 import { sessionRequest } from '../session/client'
-import { cancelCommit, inFlight, readCommit, readDials, updateCommit } from '../session/dials-store'
+import { agentWaiting, cancelCommit, inFlight, readCommit, readDials, updateCommit } from '../session/dials-store'
 import type { CommitRequest, DialInfo } from '../session/dials-store'
 import {
   type SessionState,
@@ -28,11 +28,15 @@ export type PanelDevice = { name: string; platform: string; session: string }
 export type DialSource = { file: string; line: number }
 export type PanelDial = DialInfo & { saved: boolean; source?: DialSource }
 export type PanelSnapshot = {
+  /** Live bridge sessions in the project; 0 means the panel can't reach any app. */
+  sessions: number
   devices: PanelDevice[]
   dials: PanelDial[]
   tokens: unknown
   labels: Record<string, string>
   commit: CommitRequest | null
+  /** Whether a `dials wait` is listening, so a commit gets picked up. */
+  waiting: boolean
   capture: boolean
 }
 export type Rect = { x: number; y: number; width: number; height: number }
@@ -185,11 +189,13 @@ export function createDialsServer(options: DialsServerOptions = {}) {
       source: sourceOf(dial.id),
     }))
     return {
+      sessions: live.length,
       devices,
       dials,
       tokens,
       labels,
       commit: readCommit(project),
+      waiting: agentWaiting(project),
       capture: devices.length > 0 && (!!screenshotCmd || (await anyCanCapture(lists.filter((l) => l.list.ok).map((l) => l.session)))),
     }
   }
