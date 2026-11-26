@@ -422,6 +422,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     })
     return secs
   }
+  function visible() { var o = []; elementsOf(tree()).forEach(function (e) { o.push.apply(o, e.dials) }); return o }
   function elementsOf(secs) { var o = []; secs.forEach(function (s) { s.els.forEach(function (e) { o.push(e) }) }); return o }
   function currentElement(secs) {
     var all = elementsOf(secs)
@@ -947,7 +948,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     if (!host) return
     keepFocus(function () {
       clear(host)
-      dials().forEach(function (d) {
+      visible().forEach(function (d) {
         var g = split(d), on = d.id === S.dialId
         host.appendChild(h("button", { type: "button", class: "chip", "data-fk": "chip:" + d.id, "aria-current": on ? "true" : "false", onclick: function () { S.dialId = d.id; renderAll(true) } }, [
           valuePreview(d), g.el + " · " + lab(d), changed(d) ? h("span", { class: "dot", title: "Changed" }) : null
@@ -986,7 +987,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     if (!main) return
     var secs = tree(), el = currentElement(secs), lay = effLayout()
     if (lay === "dial") {
-      if (!find(S.dialId)) S.dialId = dials().length ? dials()[0].id : null
+      var vis = visible()
+      if (!vis.some(function (d) { return d.id === S.dialId })) S.dialId = vis.length ? vis[0].id : null
     }
     var shown = lay === "dial" ? dials().filter(function (d) { return d.id === S.dialId }) : el ? el.dials : []
     var sig = structSig(shown)

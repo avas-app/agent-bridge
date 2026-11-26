@@ -26,6 +26,9 @@ export type DialInfo = {
   original: DialValue
   label?: string
   group?: string
+  desc?: string
+  screens?: string[]
+  onScreen?: boolean
   min?: number
   max?: number
   step?: number
