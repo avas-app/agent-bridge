@@ -28,6 +28,7 @@ export function AgentBridge() {
 - `tokens` returns your theme as an object. Token dials let you pick another token from the same group.
 - `labels` gives tokens readable names in the panel, by path or group.
 - `file` is where the theme lives, for the agent.
+- `screen` tells the panel which screen the app is on, so each dial is listed under the screen it appears on. With react-navigation or expo-router, pass `screen: navScreen(ref)` (import `navScreen` from `@avasapp/agent-bridge/react-navigation` or `@avasapp/agent-bridge/expo-router`) with the navigation container ref. For another router, `screen: (set) => unsubscribe`: call `set(name)` whenever the screen changes. A screen that mounts before you visit it (preloaded stack screens, non-lazy tabs) gets the screen you were on.
 - `<DialsOverlay />` draws an outline around an element while you hover its dial.
 - `agent-bridge init` adds `.agent-bridge/` to your `.gitignore`. Do not commit it.
 
@@ -60,7 +61,8 @@ function PlantName({ plant }) {
 
 - They are hooks: call them at the top of a component, not in loops or conditions.
 - Put a dial in the component that renders the element. That component is what the panel outlines.
-- `group: 'Section / Element'` sets the panel's left list and its sub-list.
+- `group` names the part, `'Plant card / Name'`. The screen is found on its own, so leave it out of the group.
+- `desc: 'Space between cards in the plant list'` is one line shown under the dial's title in the panel, and the filter box matches it. Add it when the label alone doesn't say what the dial changes.
 - Put the alternatives for `dial.variant` in a separate file, so the others can be deleted on commit.
 
 ## The panel
@@ -90,6 +92,9 @@ A commit reaches the agent one of two ways. Without either, the panel marks it a
 --exec 'claude -p "Apply the dials commit from agent-bridge dials show --json" > .agent-bridge/commit.log 2>&1 &'
 ```
 
+- Group by (top bar): Screen, Group (`Section / Element`) or File sets the left list. Screen is the default once any dial has a screen; dials with none sit under "Not on screen".
+- This screen (next to the filter box, shown when dials have screens): lists only the dials on the screen the app is on, and follows it as you navigate.
+- Both choices are remembered per browser. A dial's small line shows its screens: `shop · card.gap · index.tsx:44`.
 - Left: sections and elements, with the number of changed dials. Middle: the element's dials. Right: before and after crops of the element.
 - Hover a dial and the element gets blue corner brackets on the device. They hide while the value changes and return 350 ms after the last change. Release the dial and the crop updates in about a second.
 - Changes go to every connected device. Picks are saved in `.agent-bridge/dials.json` and come back after a reload or a new session.

@@ -20,6 +20,8 @@ import {
   resolveToken,
   set,
   setTheme,
+  trackScreen,
+  type ScreenSource,
   subscribe,
   tokens,
 } from './registry'
@@ -33,7 +35,7 @@ export { DIALS_MARKER }
 export type { Dial, DialMeta, DialTheme, NumberMeta }
 export type { DialRects } from './highlight'
 
-export type DialsOptions = { theme?: DialTheme; outline?: { color?: string } }
+export type DialsOptions = { theme?: DialTheme; outline?: { color?: string }; screen?: ScreenSource }
 
 function read<T extends DialValue>(id: string, spec: Spec): T {
   const entry = register(id, spec)
@@ -114,9 +116,10 @@ export function dialTools(options: DialsOptions = {}): Tools {
   setTheme(options.theme)
   setOutlineColor(options.outline?.color)
   installRefreshRecovery()
+  trackScreen(options.screen)
   return {
     'dial.list': {
-      description: 'Every dial: id, type, value, original, constraints, tokenPath and how often it rendered.',
+      description: 'Every dial: id, type, value, original, constraints, desc, tokenPath and how often it rendered. With a useDials screen option: screens (where its readers mounted) and onScreen.',
       maxArgs: 0,
       run: () => list(),
     },

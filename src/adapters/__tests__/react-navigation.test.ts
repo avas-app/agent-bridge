@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import type { ToolFn, Tools } from '../../runtime/types'
-import { type NavigationRefLike, navTools } from '../react-navigation'
+import { type NavigationRefLike, navScreen, navTools } from '../react-navigation'
 
 const run = (tools: Tools, name: string, ...args: unknown[]) => {
   const t = tools[name]
@@ -308,5 +308,42 @@ describe('navTools review fixes', () => {
     })
     expect(await run(tools, 'nav.navigate', 'myapp://profile/7')).toMatchObject({ name: 'Profile' })
     expect(seen).toEqual(['/profile/7'])
+  })
+})
+
+describe('navScreen', () => {
+  test('sets the route name now and on state, and returns the unsubscribe', () => {
+    let name: string | undefined
+    let cb = () => {}
+    let off = 0
+    const ref = {
+      getCurrentRoute: () => (name ? { name } : undefined),
+      addListener: (_: 'state' | 'ready', c: () => void) => ((cb = c), () => void off++),
+    }
+    const seen: (string | undefined)[] = []
+    const stop = navScreen(ref)((n) => seen.push(n))
+    expect(seen).toEqual([undefined])
+    name = 'shop'
+    cb()
+    expect(seen).toEqual([undefined, 'shop'])
+    stop()
+    expect(off).toBe(2)
+  })
+
+  test('returns the same function per ref and listens for ready', () => {
+    const types: string[] = []
+    let name: string | undefined
+    const cbs: Record<string, () => void> = {}
+    const ref = {
+      getCurrentRoute: () => (name ? { name } : undefined),
+      addListener: (t: 'state' | 'ready', c: () => void) => (types.push(t), (cbs[t] = c), () => {}),
+    }
+    expect(navScreen(ref)).toBe(navScreen(ref))
+    const seen: (string | undefined)[] = []
+    navScreen(ref)((n) => seen.push(n))
+    expect(types.sort()).toEqual(['ready', 'state'])
+    name = 'home'
+    cbs.ready!()
+    expect(seen).toEqual([undefined, 'home'])
   })
 })
