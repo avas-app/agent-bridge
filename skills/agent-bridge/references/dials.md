@@ -7,6 +7,7 @@ Dials make a value in a component changeable live from a web panel. The user tun
 In the dev bridge file: `...useDials({ theme: { tokens, labels, file } })` in `tools`, and `return <DialsOverlay />` from the bridge component (import both from `@avasapp/agent-bridge/dials`).
 
 - `tokens: () => ({ colors: themes.light })` returns the theme as an object. Give tokens readable `labels` (`{ colors: 'Colours', 'colors.accentSoft': 'Leaf tint' }`) and keep them once set.
+- With react-navigation or expo-router, add `screen: navScreen(ref)` to `useDials` (`navScreen` from `@avasapp/agent-bridge/react-navigation` or `/expo-router`; `ref` is the navigation container ref the bridge file already uses). Other routers: `screen: (set) => unsubscribe`, calling `set(name)` on each change.
 - `react-native-view-shot` in the app makes the crops fast (about 0.5 s). Without it: `agent-bridge dials serve --screenshot-cmd '<cmd with {out}>'`.
 
 ## 2. Wrap
@@ -22,7 +23,9 @@ const Card = dial.variant('plant.card', { roomy: RoomyCard, compact: CompactCard
 - Types: `number`, `color`, `enum`, `boolean`, `text`, `token`, `variant`.
 - They are hooks: top of the component, never in loops or conditions.
 - Values in `StyleSheet.create` move inline while tuned (`style={[styles.name, { fontSize: size }]}`).
-- Groups are `'Section / Element'`.
+- `group` names the part (`'Plant card / Name'`); the screen is found on its own, so don't put it in the group.
+- Add `desc: '<what it changes>'` whenever the label alone doesn't say. One line, shown under the title and matched by the filter.
+- The panel's "Group by" (Screen, Group, File) and "This screen" toggle use the screens; "This screen" lists only the dials on the screen the app is on.
 - `dial.variant` is for whole components (named with a capital letter; anything else is treated as a plain value). Put the alternatives in a separate file.
 
 ## 3. Present

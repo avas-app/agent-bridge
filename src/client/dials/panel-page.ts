@@ -50,6 +50,9 @@ h1,h2,h3{margin:0}
 .shell.one{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 nav{border-right:1px solid var(--line);background:var(--surface);padding:14px 0;display:flex;flex-direction:column;gap:2px;overflow:auto}
 .filter{padding:0 14px 10px}
+.frow .btn[aria-pressed=true]{border-color:var(--live);color:var(--text);background:var(--raised)}
+.frow{display:flex;align-items:flex-start;padding-right:14px}
+.frow .filter{flex:1;min-width:0;padding-right:8px}
 .filter input,.field{width:100%;font-size:13px;padding:7px 10px;border-radius:4px;border:1px solid var(--line2);background:var(--ground);color:var(--text)}
 .field.mono{font-family:var(--mono)}
 ::placeholder{color:var(--muted);opacity:1}
@@ -76,6 +79,7 @@ main{padding:28px 36px;display:flex;flex-direction:column;gap:32px;overflow:auto
 .dial:hover,.dial:focus-within{background:var(--surface);box-shadow:inset 0 0 0 1px var(--live)}
 .dh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
 .dh h3{font-size:14px;font-weight:600}
+.desc{display:block;font-size:12px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
 .dh .src{display:block;font:11px var(--mono);color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
 .dv{display:flex;align-items:center;gap:8px;font:12px var(--mono)}
 .dv .now{color:var(--live)}
@@ -188,6 +192,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
 .item input{accent-color:var(--live);width:16px;height:16px}
 .item .a{display:flex;flex-direction:column;gap:2px;min-width:0}
 .item .a span:first-child{font-size:13px}
+.item .a span.desc{font:12px var(--sans)}
 .item .a span+span{font:11px var(--mono);color:var(--muted);overflow-wrap:anywhere}
 .item .d{font:12px var(--mono);display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}
 .item .d b{color:var(--live);font-weight:500}
@@ -230,6 +235,12 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
   <div class="seg" id="layoutSeg" role="group" aria-label="Layout">
     <button type="button" data-l="element" aria-pressed="true">By element</button>
     <button type="button" data-l="dial" aria-pressed="false">One dial</button>
+  </div>
+  <span class="app">Group by</span>
+  <div class="seg" id="bySeg" role="group" aria-label="Group by">
+    <button type="button" data-b="screen" aria-pressed="false">Screen</button>
+    <button type="button" data-b="group" aria-pressed="true">Group</button>
+    <button type="button" data-b="file" aria-pressed="false">File</button>
   </div>
   <div class="devs" id="devs" role="group" aria-label="Devices"></div>
   <span class="count none" id="count" role="status"></span>
@@ -278,13 +289,15 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     loaded: false,
     layout: "element",
     sec: null, el: null, dialId: null, active: null,
-    filter: "", off: {},
+    filter: "", off: {}, by: null, here: false,
     local: {}, touched: {}, pend: {},
     caps: {}, thumbs: {}, full: {}, busyVar: {},
     commitOpen: false, sel: {}, note: "", revert: false, posting: false,
     copied: false, mainSig: "", ctl: {}
   }
   try { var saved = localStorage.getItem("dials.layout"); if (saved === "dial" || saved === "element") S.layout = saved } catch (e) {}
+  try { var sb = localStorage.getItem("dials.by"); if (sb === "screen" || sb === "group" || sb === "file") S.by = sb } catch (e) {}
+  try { S.here = localStorage.getItem("dials.here") === "1" } catch (e) {}
 
   /* ---------- api ---------- */
   function api(method, path, body) {
@@ -325,6 +338,19 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     if (i < 0) return { sec: g || "General", el: g || "General" }
     var s = g.slice(0, i).trim() || "General"
     return { sec: s, el: g.slice(i + 1).trim() || s }
+  }
+  function hasScreens() { return dials().some(function (d) { return d.screens && d.screens.length }) }
+  function curBy() { return S.by || (hasScreens() ? "screen" : "group") }
+  function fileOf(d) { var f = d.source && d.source.file; return f ? String(f).split("/").pop() : "" }
+  function place(d) {
+    var by = curBy(), g = split(d)
+    if (by === "screen") return { sec: (d.screens && d.screens[0]) || "Not on screen", el: g.el }
+    if (by === "file") return { sec: fileOf(d) || "General", el: g.el }
+    return g
+  }
+  function srcLine(d) {
+    var base = d.source && d.source.file ? d.id + " · " + d.source.file + (d.source.line ? ":" + d.source.line : "") : d.id
+    return d.screens && d.screens.length ? d.screens.join(", ") + " · " + base : base
   }
   function isColor(v) { return typeof v === "string" && /^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(rgb|hsl)a?\(.*\))$/i.test(v.trim()) }
   function hex6(v) {
@@ -385,8 +411,9 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var secs = [], idx = {}
     var q = S.filter.toLowerCase()
     dials().forEach(function (d) {
-      var g = split(d)
-      if (q && (g.sec + " " + g.el + " " + lab(d) + " " + d.id).toLowerCase().indexOf(q) < 0) return
+      if (S.here && !d.onScreen) return
+      var g = place(d)
+      if (q && (g.sec + " " + g.el + " " + lab(d) + " " + d.id + " " + (d.desc || "")).toLowerCase().indexOf(q) < 0) return
       var s = idx[g.sec]
       if (!s) { s = idx[g.sec] = { name: g.sec, els: [], byName: {} }; secs.push(s) }
       var e = s.byName[g.el]
@@ -808,9 +835,9 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var c = makeControl(d, bare)
     var now = h("span", { class: "now" }), was = h("span", { class: "was" })
     var reset = h("button", { type: "button", class: "btn sm", text: "Reset", "aria-label": "Reset " + lab(d), onclick: function () { resetDial(d.id) } })
-    var src = d.source && d.source.file ? d.id + " · " + d.source.file + (d.source.line ? ":" + d.source.line : "") : d.id
+    var src = srcLine(d)
     var head = bare ? null : h("div", { class: "dh" }, [
-      h("div", null, [h("h3", { text: lab(d) }), h("span", { class: "src", text: src })]),
+      h("div", null, [h("h3", { text: lab(d) }), d.desc ? h("span", { class: "desc", text: d.desc }) : null, h("span", { class: "src", text: src })]),
       h("div", { class: "dv" }, [now, was, reset])
     ])
     var el = h("section", { class: "dial", "data-id": d.id, "aria-label": lab(d) }, [head, c.el])
@@ -930,8 +957,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
   }
 
   function structSig(parts) {
-    return JSON.stringify([effLayout(), S.sec, S.el, S.dialId, S.filter, tokenInfo().labels, S.data.capture, parts.map(function (d) {
-      return [d.id, d.type, d.options, d.min, d.max, d.step, d.label, d.group, d.source, d.tokenPath, d.original]
+    return JSON.stringify([effLayout(), curBy(), S.here, S.sec, S.el, S.dialId, S.filter, tokenInfo().labels, S.data.capture, parts.map(function (d) {
+      return [d.id, d.type, d.options, d.min, d.max, d.step, d.label, d.group, d.desc, d.screens, d.onScreen, d.source, d.tokenPath, d.original]
     }), Object.keys(S.thumbs).map(function (k) { return [k, Object.keys(S.thumbs[k]).length] }), S.busyVar, flat().length])
   }
 
@@ -939,14 +966,14 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     if (!v.group) return null
     var kids = dials().filter(function (x) {
       if (x.id === v.id || !x.group || x.group.indexOf(v.group) !== 0) return false
-      var g = split(x)
+      var g = place(x)
       return !(g.sec === el.sec && g.el === el.name)
     })
     if (!kids.length) return null
     return h("div", { class: "own" }, [
       h("span", { class: "gh", text: fmt(v, v.value) + " dials" }),
       kids.map(function (k) {
-        var g = split(k)
+        var g = place(k)
         return h("button", { type: "button", onclick: function () { S.sec = g.sec; S.el = g.el; S.dialId = k.id; S.active = k.id; renderAll(true) } }, [
           h("span", { text: g.el + " · " + lab(k) }), changed(k) ? h("span", { class: "n", text: "changed" }) : null
         ])
@@ -972,11 +999,11 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
       return
     }
     if (lay === "dial") {
-      var d = shown[0], g = split(d), blk = dialBlock(d, true)
+      var d = shown[0], g = place(d), blk = dialBlock(d, true)
       S.ctl[d.id] = blk
-      var src = d.source && d.source.file ? d.id + " · " + d.source.file + (d.source.line ? ":" + d.source.line : "") : d.id
+      var src = srcLine(d)
       main.appendChild(h("div", { class: "mh" }, [
-        h("div", { class: "col" }, [h("h1", { text: g.el + " " + lab(d).toLowerCase() }), h("span", { class: "sub", text: src })]),
+        h("div", { class: "col" }, [h("h1", { text: g.el + " " + lab(d).toLowerCase() }), d.desc ? h("span", { class: "desc", text: d.desc }) : null, h("span", { class: "sub", text: src })]),
         h("div", { class: "big" }, [h("span", { class: "was", id: "bigwas" }), h("span", { class: "v", id: "bigv" })])
       ]))
       main.appendChild(blk.el)
@@ -1009,6 +1036,13 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     w.textContent = changed(d) ? "was " + fmt(d, d.original) : ""
   }
 
+  function hereBtn() {
+    return h("button", { type: "button", class: "btn sm", id: "hereBtn", "aria-pressed": S.here ? "true" : "false", hidden: !hasScreens(), text: "This screen", onclick: function () {
+      S.here = !S.here
+      try { localStorage.setItem("dials.here", S.here ? "1" : "0") } catch (x) {}
+      renderAll(true)
+    } })
+  }
   function buildShell() {
     var shell = $("shell"), lay = effLayout()
     var want = lay === "dial" ? "one" : "el"
@@ -1023,7 +1057,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     } else {
       var inp = h("input", { type: "text", placeholder: "Filter dials", "aria-label": "Filter dials", value: S.filter })
       inp.addEventListener("input", function () { S.filter = inp.value; renderAll(true) })
-      shell.appendChild(h("nav", { id: "nav", "aria-label": "Elements" }, [h("label", { class: "filter" }, inp), h("div", { id: "navlist" })]))
+      shell.appendChild(h("nav", { id: "nav", "aria-label": "Elements" }, [h("div", { class: "frow" }, [h("label", { class: "filter" }, inp), hereBtn()]), h("div", { id: "navlist" })]))
       shell.appendChild(h("main", { id: "main" }))
       shell.appendChild(h("aside", { class: "crops", id: "crops", "aria-label": "Before and after" }))
     }
@@ -1035,6 +1069,10 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     $("app").hidden = !$("app").textContent
     var segs = $("layoutSeg").querySelectorAll("button")
     for (var i = 0; i < segs.length; i++) segs[i].setAttribute("aria-pressed", segs[i].getAttribute("data-l") === S.layout ? "true" : "false")
+    var bys = $("bySeg").querySelectorAll("button")
+    for (var j = 0; j < bys.length; j++) bys[j].setAttribute("aria-pressed", bys[j].getAttribute("data-b") === curBy() ? "true" : "false")
+    var hb = $("hereBtn")
+    if (hb) { hb.hidden = !hasScreens(); hb.setAttribute("aria-pressed", S.here ? "true" : "false") }
     var devsEl = $("devs"), sig = JSON.stringify([S.data.devices, S.off])
     if (devsEl.getAttribute("data-sig") !== sig) {
       devsEl.setAttribute("data-sig", sig)
@@ -1143,7 +1181,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
           var g = split(d)
           list.appendChild(h("label", { class: "item" }, [
             cb,
-            h("span", { class: "a" }, [h("span", { text: g.el === lab(d) ? lab(d) : g.el + " · " + lab(d) }), h("span", { text: d.source && d.source.file ? d.source.file + (d.source.line ? ":" + d.source.line : "") : d.id })]),
+            h("span", { class: "a" }, [h("span", { text: g.el === lab(d) ? lab(d) : g.el + " · " + lab(d) }), d.desc ? h("span", { class: "desc", text: d.desc }) : null, h("span", { text: d.source && d.source.file ? d.source.file + (d.source.line ? ":" + d.source.line : "") : d.id })]),
             h("span", { class: "d" }, [h("span", null, valChip(d, d.original)), h("span", { text: "→" }), h("b", null, valChip(d, d.value))])
           ]))
         })
@@ -1240,6 +1278,14 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     S.layout = b.getAttribute("data-l")
     try { localStorage.setItem("dials.layout", S.layout) } catch (x) {}
     if (S.layout === "dial" && !S.dialId && dials()[0]) S.dialId = dials()[0].id
+    renderAll(true)
+  })
+  $("bySeg").addEventListener("click", function (e) {
+    var b = e.target.closest("button")
+    if (!b) return
+    S.by = b.getAttribute("data-b")
+    try { localStorage.setItem("dials.by", S.by) } catch (x) {}
+    S.sec = null; S.el = null
     renderAll(true)
   })
   $("resetAll").addEventListener("click", function () { dials().filter(changed).forEach(function (d) { release(d.id, d.original) }) })
