@@ -411,7 +411,7 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
     var secs = [], idx = {}
     var q = S.filter.toLowerCase()
     dials().forEach(function (d) {
-      if (S.here && !d.onScreen) return
+      if (S.here && hasScreens() && !d.onScreen) return
       var g = place(d)
       if (q && (g.sec + " " + g.el + " " + lab(d) + " " + d.id + " " + (d.desc || "")).toLowerCase().indexOf(q) < 0) return
       var s = idx[g.sec]
@@ -965,7 +965,8 @@ aside.crops{border-left:1px solid var(--line);background:var(--surface);padding:
 
   function ownDials(v, secs, el) {
     if (!v.group) return null
-    var kids = dials().filter(function (x) {
+    var vis = visible()
+    var kids = vis.filter(function (x) {
       if (x.id === v.id || !x.group || x.group.indexOf(v.group) !== 0) return false
       var g = place(x)
       return !(g.sec === el.sec && g.el === el.name)

@@ -313,8 +313,12 @@ export type ScreenSource = (set: (name: string | undefined) => void) => (() => v
 
 const setScreen = (name: string | undefined) => {
   if (name === currentScreen) return
+  // Readers that mounted before the navigator was ready belong to the first screen it reports.
+  if (currentScreen === undefined && name !== undefined)
+    for (const tags of ownerTags.values()) for (const [f, t] of tags) if (t === undefined) tags.set(f, name)
   currentScreen = name
-  for (const l of [...anyListeners]) l()
+  // Often called while the bridge renders; listeners may set React state.
+  queueMicrotask(() => { for (const l of [...anyListeners]) l() })
 }
 
 /** Called every render: subscribes once, and again only when a different function comes (Fast Refresh). */

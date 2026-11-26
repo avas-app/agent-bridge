@@ -318,7 +318,7 @@ describe('navScreen', () => {
     let off = 0
     const ref = {
       getCurrentRoute: () => (name ? { name } : undefined),
-      addListener: (_: 'state', c: () => void) => ((cb = c), () => void off++),
+      addListener: (_: 'state' | 'ready', c: () => void) => ((cb = c), () => void off++),
     }
     const seen: (string | undefined)[] = []
     const stop = navScreen(ref)((n) => seen.push(n))
@@ -327,6 +327,23 @@ describe('navScreen', () => {
     cb()
     expect(seen).toEqual([undefined, 'shop'])
     stop()
-    expect(off).toBe(1)
+    expect(off).toBe(2)
+  })
+
+  test('returns the same function per ref and listens for ready', () => {
+    const types: string[] = []
+    let name: string | undefined
+    const cbs: Record<string, () => void> = {}
+    const ref = {
+      getCurrentRoute: () => (name ? { name } : undefined),
+      addListener: (t: 'state' | 'ready', c: () => void) => (types.push(t), (cbs[t] = c), () => {}),
+    }
+    expect(navScreen(ref)).toBe(navScreen(ref))
+    const seen: (string | undefined)[] = []
+    navScreen(ref)((n) => seen.push(n))
+    expect(types.sort()).toEqual(['ready', 'state'])
+    name = 'home'
+    cbs.ready!()
+    expect(seen).toEqual([undefined, 'home'])
   })
 })

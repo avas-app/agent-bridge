@@ -563,6 +563,14 @@ describe('desc and screens', () => {
     expect(await listed('n')).toMatchObject({ screens: ['home'], onScreen: false })
   })
 
+  test('readers mounted before the first screen is known get that screen', async () => {
+    withScreen()
+    mount(() => dial.number('n', 1))
+    addOwner('n', {})
+    setScreen('home')
+    expect(await listed('n')).toMatchObject({ screens: ['home'], onScreen: true })
+  })
+
   test('a shared reader under two screens lists both, and unmounting drops the tag', async () => {
     withScreen()
     mount(() => dial.number('n', 1))
@@ -583,8 +591,10 @@ describe('desc and screens', () => {
     let n = 0
     subscribeAll(() => n++)
     setScreen('home')
+    await Promise.resolve()
     expect(n).toBe(1)
     setScreen('home')
+    await Promise.resolve()
     expect(n).toBe(1)
     addOwner('n', {})
     expect(n).toBe(2)

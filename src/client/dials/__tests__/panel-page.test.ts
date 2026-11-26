@@ -173,6 +173,12 @@ describe('dials panel descriptions and screens', () => {
     expect(t.map(s => s.name)).toEqual(['index.tsx', 'home.tsx', 'misc.tsx'])
   })
 
+  test('a saved This screen is ignored when no dial has screens', () => {
+    const plain = sample.map(({ screens, onScreen, ...d }) => d)
+    const t = harness(plain, { by: 'group', here: true }).tree()
+    expect(t.flatMap((s) => s.els.flatMap((e) => e.dials)).length).toBe(plain.length)
+  })
+
   test('This screen hides off-screen dials', () => {
     const t = harness(sample, { by: 'group', here: true }).tree()
     expect(t.flatMap(s => s.els.flatMap(e => e.dials.map(d => d.id)))).toEqual(['card.gap'])

@@ -287,14 +287,24 @@ export function navTools(nav: NavigationRefLike, options: NavToolsOptions = {}):
   }
 }
 
-/** The `screen` option for `useDials`: the focused route's name, now and on every navigation. */
-export function navScreen(ref: {
+type ScreenRef = {
   getCurrentRoute(): { name: string } | undefined
-  addListener(type: 'state', callback: () => void): () => void
-}) {
-  return (set: (name: string | undefined) => void): (() => void) => {
-    const update = () => set(ref.getCurrentRoute()?.name)
-    update()
-    return ref.addListener('state', update)
+  addListener(type: 'state' | 'ready', callback: () => void): () => void
+}
+const screenFns = new WeakMap<ScreenRef, (set: (name: string | undefined) => void) => () => void>()
+
+/** The `screen` option for `useDials`: the focused route's name, now and on every navigation. Same function per ref, so re-renders don't resubscribe. */
+export function navScreen(ref: ScreenRef) {
+  let fn = screenFns.get(ref)
+  if (!fn) {
+    fn = (set) => {
+      const update = () => set(ref.getCurrentRoute()?.name)
+      update()
+      // 'state' doesn't fire for the first state; 'ready' does.
+      const offs = [ref.addListener('ready', update), ref.addListener('state', update)]
+      return () => offs.forEach((off) => off?.())
+    }
+    screenFns.set(ref, fn)
   }
+  return fn
 }
