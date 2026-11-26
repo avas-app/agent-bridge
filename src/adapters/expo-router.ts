@@ -1,6 +1,7 @@
 import { decode, isGroup, NOT_FOUND, type ParamValue, routeFromState, settle, type StateLike } from './expo-router-route'
 import { settle as settleScreen } from '../runtime/screen/settle'
 import type { Tools } from '../runtime/types'
+export { navScreen } from './react-navigation'
 
 // `href` is `never` so any router fits: with typed routes on, expo-router
 // narrows `Href` to a union of paths and objects, which `string` is not

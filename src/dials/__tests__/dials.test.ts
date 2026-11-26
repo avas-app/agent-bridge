@@ -528,3 +528,76 @@ describe('outline brackets', () => {
     }
   })
 })
+
+describe('desc and screens', () => {
+  const listed = async (id: string) => ((await call('dial.list')) as { id: string; desc?: string; screens?: string[]; onScreen?: boolean }[]).find((d) => d.id === id)!
+  let setScreen: (n: string | undefined) => void
+  const withScreen = () => {
+    tools = dialTools({ screen: (set) => ((setScreen = set), () => {}) })
+  }
+
+  test('desc is stored, refreshed, removed and listed', async () => {
+    mount(() => dial.number('n', 1, { desc: 'Gap' }))
+    expect((await listed('n')).desc).toBe('Gap')
+    mount(() => dial.number('n', 1, { desc: 'Space' }))
+    expect((await listed('n')).desc).toBe('Space')
+    mount(() => dial.number('n', 1))
+    expect('desc' in (await listed('n'))).toBe(false)
+  })
+
+  test('no screen option leaves screens and onScreen out', async () => {
+    mount(() => dial.number('n', 1))
+    addOwner('n', {})
+    const d = await listed('n')
+    expect('screens' in d).toBe(false)
+    expect('onScreen' in d).toBe(false)
+  })
+
+  test('readers are tagged at mount and onScreen follows set()', async () => {
+    withScreen()
+    mount(() => dial.number('n', 1))
+    setScreen('home')
+    addOwner('n', {})
+    expect(await listed('n')).toMatchObject({ screens: ['home'], onScreen: true })
+    setScreen('shop')
+    expect(await listed('n')).toMatchObject({ screens: ['home'], onScreen: false })
+  })
+
+  test('a shared reader under two screens lists both, and unmounting drops the tag', async () => {
+    withScreen()
+    mount(() => dial.number('n', 1))
+    setScreen('home')
+    const a = {}
+    const offA = addOwner('n', a)
+    setScreen('shop')
+    addOwner('n', {})
+    expect((await listed('n')).screens).toEqual(['home', 'shop'])
+    offA()
+    expect((await listed('n')).screens).toEqual(['shop'])
+  })
+
+  test('screen changes and mounts notify listeners', async () => {
+    withScreen()
+    mount(() => dial.number('n', 1))
+    const { subscribeAll } = await import('../registry')
+    let n = 0
+    subscribeAll(() => n++)
+    setScreen('home')
+    expect(n).toBe(1)
+    setScreen('home')
+    expect(n).toBe(1)
+    addOwner('n', {})
+    expect(n).toBe(2)
+  })
+
+  test('subscribes once per function and resubscribes on a new one', () => {
+    const calls: string[] = []
+    const mk = (name: string) => () => (calls.push(`on ${name}`), () => void calls.push(`off ${name}`))
+    const a = mk('a')
+    dialTools({ screen: a })
+    dialTools({ screen: a })
+    expect(calls).toEqual(['on a'])
+    dialTools({ screen: mk('b') })
+    expect(calls).toEqual(['on a', 'off a', 'on b'])
+  })
+})

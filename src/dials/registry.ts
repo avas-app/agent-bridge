@@ -1,7 +1,7 @@
 export type DialType = 'color' | 'number' | 'enum' | 'boolean' | 'text' | 'token' | 'variant'
 export type DialValue = string | number | boolean
 
-export type DialMeta = { label?: string; group?: string; outline?: { color?: string } }
+export type DialMeta = { label?: string; desc?: string; group?: string; outline?: { color?: string } }
 export type NumberMeta = DialMeta & { min?: number; max?: number; step?: number }
 
 export type Dial = {
@@ -10,7 +10,12 @@ export type Dial = {
   value: DialValue
   original: DialValue
   label?: string
+  desc?: string
   group?: string
+  /** Screens its mounted readers were on; only with a `screen` option. */
+  screens?: string[]
+  /** Whether a reader is on the current screen; only with a `screen` option. */
+  onScreen?: boolean
   /** Colour of this dial's device outline, when it sets one. */
   outline?: { color?: string }
   min?: number
@@ -121,7 +126,7 @@ const sameList = (a?: string[], b?: string[]) =>
 /** Later registrations (Fast Refresh) update constraints and options, never the value or original. */
 function refresh(e: Entry, spec: Spec) {
   const m = spec.meta ?? {}
-  const next = { label: m.label, group: m.group, outline: m.outline, min: m.min, max: m.max, step: m.step } as Record<string, unknown>
+  const next = { label: m.label, desc: m.desc, group: m.group, outline: m.outline, min: m.min, max: m.max, step: m.step } as Record<string, unknown>
   for (const [k, v] of Object.entries(next)) {
     if (v === undefined) delete (e as Record<string, unknown>)[k]
     else (e as Record<string, unknown>)[k] = v
@@ -148,6 +153,7 @@ export function register(id: string, spec: Spec): Entry {
     original: spec.def,
     renders: 0,
     ...(m.label !== undefined && { label: m.label }),
+    ...(m.desc !== undefined && { desc: m.desc }),
     ...(m.group !== undefined && { group: m.group }),
     ...(m.outline !== undefined && { outline: m.outline }),
     ...(m.min !== undefined && { min: m.min }),
@@ -194,7 +200,9 @@ export const subscribeAll = (cb: () => void) => {
 }
 
 const publicDial = (e: Entry): Dial => {
-  return { ...e, ...(e.options && { options: [...e.options] }), ...(e.outline && { outline: { ...e.outline } }) }
+  const screens = screensOf(e.id)
+  const live = screenTracking ? { screens, onScreen: currentScreen !== undefined && screens.includes(currentScreen) } : {}
+  return { ...e, ...live, ...(e.options && { options: [...e.options] }), ...(e.outline && { outline: { ...e.outline } }) }
 }
 
 export const list = (): Dial[] => [...entries.values()].map(publicDial)
@@ -273,11 +281,49 @@ export function tokens(): { tokens: unknown; labels: Record<string, string> } | 
 // Fibers of the mounted components that read each dial; the panel outlines their first host view.
 const owners = new Map<string, Set<object>>()
 
+// The screen current when each reader mounted, per dial.
+const ownerTags = new Map<string, Map<object, string | undefined>>()
+let currentScreen: string | undefined
+let screenTracking = false
+let screenSource: unknown
+let screenOff: (() => void) | undefined
+
+function screensOf(id: string): string[] {
+  const out: string[] = []
+  for (const s of ownerTags.get(id)?.values() ?? []) if (s !== undefined && !out.includes(s)) out.push(s)
+  return out
+}
+
 export function addOwner(id: string, fiber: object): () => void {
   let set = owners.get(id)
   if (!set) owners.set(id, (set = new Set()))
   set.add(fiber)
-  return () => void owners.get(id)?.delete(fiber)
+  let tags = ownerTags.get(id)
+  if (!tags) ownerTags.set(id, (tags = new Map()))
+  tags.set(fiber, currentScreen)
+  if (screenTracking) emit(id)
+  return () => {
+    owners.get(id)?.delete(fiber)
+    ownerTags.get(id)?.delete(fiber)
+    if (screenTracking) emit(id)
+  }
+}
+
+export type ScreenSource = (set: (name: string | undefined) => void) => (() => void) | void
+
+const setScreen = (name: string | undefined) => {
+  if (name === currentScreen) return
+  currentScreen = name
+  for (const l of [...anyListeners]) l()
+}
+
+/** Called every render: subscribes once, and again only when a different function comes (Fast Refresh). */
+export function trackScreen(source: ScreenSource | undefined) {
+  if (!source || source === screenSource) return
+  screenOff?.()
+  screenSource = source
+  screenTracking = true
+  screenOff = source(setScreen) || undefined
 }
 export const ownersOf = (id: string): object[] => [...(owners.get(id) ?? [])]
 
@@ -300,6 +346,12 @@ export function resetRegistry() {
   listeners.clear()
   subscribers.clear()
   owners.clear()
+  ownerTags.clear()
+  screenOff?.()
+  screenOff = undefined
+  screenSource = undefined
+  screenTracking = false
+  currentScreen = undefined
   anyListeners.clear()
   held.clear()
   theme = undefined

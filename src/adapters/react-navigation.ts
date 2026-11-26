@@ -286,3 +286,15 @@ export function navTools(nav: NavigationRefLike, options: NavToolsOptions = {}):
     },
   }
 }
+
+/** The `screen` option for `useDials`: the focused route's name, now and on every navigation. */
+export function navScreen(ref: {
+  getCurrentRoute(): { name: string } | undefined
+  addListener(type: 'state', callback: () => void): () => void
+}) {
+  return (set: (name: string | undefined) => void): (() => void) => {
+    const update = () => set(ref.getCurrentRoute()?.name)
+    update()
+    return ref.addListener('state', update)
+  }
+}
