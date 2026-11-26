@@ -18,8 +18,8 @@ function waterPill(c: Colors, days: number) {
 function PlantAvatar({ plant }: { plant: Plant }) {
   const c = useColors()
   const g = { group: 'Plant card / Avatar' }
-  const bg = dial.token('avatar.bg', 'colors.accentSoft', c.accentSoft, { label: 'Background', ...g })
-  const radius = dial.number('avatar.radius', 16, { min: 0, max: 26, label: 'Radius', ...g })
+  const bg = dial.token('avatar.bg', 'colors.accentSoft', c.accentSoft, { label: 'Background', desc: 'Fill behind the plant emoji', ...g })
+  const radius = dial.number('avatar.radius', 16, { min: 0, max: 26, label: 'Radius', desc: 'Corner rounding of the emoji tile', ...g })
   return (
     <View style={[styles.avatar, { backgroundColor: bg, borderRadius: radius }]}>
       <Text style={styles.emoji}>{plant.emoji}</Text>
@@ -30,9 +30,9 @@ function PlantAvatar({ plant }: { plant: Plant }) {
 function PlantName({ plant }: { plant: Plant }) {
   const c = useColors()
   const g = { group: 'Plant card / Name' }
-  const size = dial.number('name.size', 17, { min: 12, max: 24, label: 'Size', ...g })
-  const weight = dial.enum('name.weight', '700', ['400', '500', '600', '700', '800'], { label: 'Weight', ...g })
-  const color = dial.token('name.color', 'colors.text', c.text, { label: 'Colour', ...g })
+  const size = dial.number('name.size', 17, { min: 12, max: 24, label: 'Size', desc: 'Plant name text size', ...g })
+  const weight = dial.enum('name.weight', '700', ['400', '500', '600', '700', '800'], { label: 'Weight', desc: 'Plant name boldness', ...g })
+  const color = dial.token('name.color', 'colors.text', c.text, { label: 'Colour', desc: 'Plant name text colour', ...g })
   return (
     <Text style={[styles.name, { color, fontSize: size, fontWeight: weight }]}>{plant.name}</Text>
   )
@@ -41,7 +41,7 @@ function PlantName({ plant }: { plant: Plant }) {
 function RoomyCard({ plant }: { plant: Plant }) {
   const c = useColors()
   const pill = waterPill(c, plant.waterInDays)
-  const gap = dial.number('card.gap', 14, { min: 0, max: 32, label: 'Gap', group: 'Plant card / Card' })
+  const gap = dial.number('card.gap', 14, { min: 0, max: 32, label: 'Gap', group: 'Plant card / Card', desc: 'Space between the emoji tile and the text' })
   return (
     <Card style={{ ...styles.row, gap }}>
       <PlantAvatar plant={plant} />
@@ -97,7 +97,7 @@ function AddButton() {
 export default function PlantsScreen() {
   const { data: plants } = usePlants()
   const due = plants?.filter((p) => p.waterInDays <= 0).length ?? 0
-  const PlantCard = dial.variant('plant.card', { roomy: RoomyCard, compact: CompactCard }, 'roomy', { label: 'Layout', group: 'Plant card / Card' })
+  const PlantCard = dial.variant('plant.card', { roomy: RoomyCard, compact: CompactCard }, 'roomy', { label: 'Layout', group: 'Plant card / Card', desc: 'Roomy or compact plant card' })
   return (
     <Screen
       eyebrow="Good morning"

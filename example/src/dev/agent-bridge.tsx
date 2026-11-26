@@ -1,7 +1,7 @@
 import { cdpTransport, useAgentBridge } from '@avasapp/agent-bridge'
 import { DialsOverlay, useDials } from '@avasapp/agent-bridge/dials'
 import { expoTransport } from '@avasapp/agent-bridge/expo'
-import { routerTools } from '@avasapp/agent-bridge/expo-router'
+import { navScreen, routerTools } from '@avasapp/agent-bridge/expo-router'
 import { networkTools } from '@avasapp/agent-bridge/network'
 import { queryTools } from '@avasapp/agent-bridge/tanstack-query'
 import { storeTools } from '@avasapp/agent-bridge/zustand'
@@ -20,17 +20,19 @@ import { scenarios } from './scenarios'
 export function AgentBridge() {
   const queryClient = useQueryClient()
   const query = queryTools(queryClient)
+  const navigation = useNavigationContainerRef()
   useAgentBridge({
     name: 'sprout',
     transports: [expoTransport(), cdpTransport()],
     tools: {
       ...query,
       ...storeTools({ settings: useSettings, auth: useAuth }),
-      ...routerTools(router, { navigation: useNavigationContainerRef() }),
+      ...routerTools(router, { navigation }),
       ...networkTools(),
       ...realtimeDevTools,
       ...hudTools,
       ...useDials({
+        screen: navScreen(navigation),
         theme: {
           tokens: () => ({ colors: themes.light }),
           labels: {
